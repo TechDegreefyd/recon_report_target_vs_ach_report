@@ -1,0 +1,29 @@
+# Secrets & credentials
+.env
+token.json
+client_secret_*.json
+
+# Config files with sensitive data
+regular_report_config.json
+report_config.json
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+
+# IDE
+.vscode/
+.idea/
+.claude/
+
+# OS
+.DS_Store
+Thumbs.db
