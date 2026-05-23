@@ -1,0 +1,28 @@
+# Secrets — never bake into the image
+.env
+token.json
+client_secret_*.json
+regular_report_config.json
+report_config.json
+
+# Output files (generated at runtime)
+Automation Cron Job/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# IDE / OS
+.vscode/
+.idea/
+.claude/
+.git/
+.DS_Store
+Thumbs.db
+
+# Dev / CI files not needed in image
+*.md
+setup_sheets.py

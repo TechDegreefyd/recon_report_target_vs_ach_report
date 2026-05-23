@@ -219,8 +219,9 @@ def online_prepare_data(df_couns, df_adm, df_form):
             print("WARNING: Admissions found for counsellors missing from sheet")
             print(unmatched[['student_id', 'college_name', 'counsellor_name', 'fee_deposit', 'created_at']].to_string(index=False))
 
-    sup_order     = ['Varun', 'Sunil', 'Vishal Gaur', 'Siddarth Kumar']
-    display_names = {'Varun': 'Varun', 'Sunil': 'Sunil', 'Vishal Gaur': 'Vishal', 'Siddarth Kumar': 'Siddhartha'}
+    # Dynamic — order driven by Google Sheets Online_Targets row order
+    sup_order     = list(ONLINE_SUPERVISOR_TARGETS.keys())
+    display_names = {s: s for s in sup_order}   # use exact sheet name as display name
 
     # ── Counsellor fee data (MTD) ────────────────────────────────────────────
     # D1 rule: deduplicate by student before summing fees — a student with multiple
@@ -418,12 +419,11 @@ def online_generate_html(sheets):
 
     # ── Pre-build row HTML for supervisor snapshot cards ──
     # Maps display name → sheet config key (used for target lookups in Google Sheets)
-    config_key_map = {'Varun': 'Varun', 'Sunil': 'Sunil', 'Vishal': 'Vishal Gaur', 'Siddhartha': 'Siddarth Kumar'}
-
+    # Dynamic — driven by Online_Targets sheet; display name = sheet key name
     sup_card_html = ''
     sup_summary_rows = ''
 
-    for disp_name in ['Varun', 'Sunil', 'Vishal', 'Siddhartha']:
+    for disp_name in list(adm_targets.keys()):
         fee_row = sup_rev[sup_rev['Supervisor'] == disp_name]
         adm_row = sup_adm[sup_adm['Supervisor'] == disp_name]
         if fee_row.empty or adm_row.empty:
@@ -438,7 +438,7 @@ def online_generate_html(sheets):
         fee_pct_str = online_pct(fee_ach, fee_tgt)
 
         adm_ach_val = int(adm_row['Achieve'])
-        adm_tgt = adm_targets.get(config_key_map[disp_name], 0)
+        adm_tgt = adm_targets.get(disp_name, 0)
         ftd_fee = float(fee_row['FTD'])
         ftd_adm = int(adm_row['FTD'])
         bar_width = min(fee_pct_val, 100)
@@ -468,7 +468,7 @@ def online_generate_html(sheets):
 
     # ── Pre-build counsellor fee rows ──
     c_rev_rows = ''
-    for sup_name in ['Varun', 'Sunil', 'Vishal', 'Siddhartha']:
+    for sup_name in list(adm_targets.keys()):
         team = c_rev[(c_rev['Supervisor'] == sup_name) &
                      ~c_rev['Counsellor'].astype(str).str.contains('Total', na=False) &
                      (c_rev['Counsellor'].astype(str) != 'nan') &
@@ -494,7 +494,7 @@ def online_generate_html(sheets):
 
     # ── Pre-build counsellor admission rows ──
     c_adm_rows = ''
-    for sup_name in ['Varun', 'Sunil', 'Vishal', 'Siddhartha']:
+    for sup_name in list(adm_targets.keys()):
         team = c_adm[(c_adm['Supervisor'] == sup_name) &
                      ~c_adm['Counsellor'].astype(str).str.contains('Total', na=False) &
                      (c_adm['Counsellor'].astype(str) != 'nan') &

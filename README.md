@@ -129,3 +129,98 @@ python generate_all_recon_reports.py 2026-05-20
 | `REGULAR_LMS_DB_*` | Regular LMS PostgreSQL connection details |
 | `REGULAR_CGC_LMS_DB_*` | CGC PostgreSQL connection details |
 | `REGULAR_AMITY_LMS_DB_*` | Amity PostgreSQL connection details |
+| `GOOGLE_TOKEN_JSON` | Full contents of `token.json` (used by Dokploy/Docker deployments) |
+| `GOOGLE_CLIENT_SECRET_JSON` | Full contents of `client_secret_*.json` (used by Dokploy/Docker deployments) |
+
+---
+
+## Deploying on a VPS with Dokploy
+
+These scripts are packaged as a Docker image and run as a **Cron Job** in Dokploy. The container starts, runs both scripts, and exits — no long-running process needed.
+
+### Files included
+
+| File | Purpose |
+|---|---|
+| `Dockerfile` | Builds the Python image with all dependencies |
+| `entrypoint.sh` | Injects secrets from env vars, then runs the scripts |
+| `requirements.txt` | Python dependency list |
+| `.dockerignore` | Keeps `.env`, `token.json`, and output files out of the image |
+
+---
+
+### Step 1 — Push deployment files to Git
+
+```powershell
+git add requirements.txt Dockerfile entrypoint.sh .dockerignore
+git commit -m "Add Dokploy deployment config"
+git push
+```
+
+---
+
+### Step 2 — Create a Cron Job in Dokploy
+
+1. Dokploy → **New** → **Cron Job**
+2. **Source**: connect your Git repo
+3. **Build type**: Dockerfile
+4. **Schedule**: `30 3 * * *` (= 9:00 AM IST daily)
+5. **Command**: `/entrypoint.sh both`
+   - Use `/entrypoint.sh lms` to run only LMS reports
+   - Use `/entrypoint.sh recon` to run only Recon reports
+
+---
+
+### Step 3 — Set Environment Variables in Dokploy
+
+Add all of the following under the cron job's **Environment** tab:
+
+```
+# Google credentials (paste single-line minified JSON from Step 1)
+GOOGLE_TOKEN_JSON={"token":"...","refresh_token":"...","..."}
+GOOGLE_CLIENT_SECRET_JSON={"installed":{"client_id":"...","..."}}}
+
+# WhatsApp
+WHAPI_TOKEN=your_whapi_token
+WHATSAPP_GROUP=120363426619711887@g.us
+
+# Online LMS DB
+ONLINE_LMS_DB_HOST=
+ONLINE_LMS_DB_PORT=54321
+ONLINE_LMS_DB_NAME=
+ONLINE_LMS_DB_USER=
+ONLINE_LMS_DB_PASSWORD=
+
+# Regular LMS DB
+REGULAR_LMS_DB_HOST=
+REGULAR_LMS_DB_PORT=54321
+REGULAR_LMS_DB_NAME=
+REGULAR_LMS_DB_USER=
+REGULAR_LMS_DB_PASSWORD=
+
+# CGC DB
+REGULAR_CGC_LMS_DB_HOST=
+REGULAR_CGC_LMS_DB_PORT=54321
+REGULAR_CGC_LMS_DB_NAME=
+REGULAR_CGC_LMS_DB_USER=
+REGULAR_CGC_LMS_DB_PASSWORD=
+
+# Amity DB
+REGULAR_AMITY_LMS_DB_HOST=
+REGULAR_AMITY_LMS_DB_PORT=54321
+REGULAR_AMITY_LMS_DB_NAME=
+REGULAR_AMITY_LMS_DB_USER=
+REGULAR_AMITY_LMS_DB_PASSWORD=
+```
+
+> Secrets are never baked into the Docker image — `.env`, `token.json`, and `client_secret_*.json` are all gitignored and dockerignored. Everything comes in through Dokploy env vars at runtime.
+
+---
+
+### How Google auth works on the VPS (no browser needed)
+
+When the container starts, `entrypoint.sh` writes `token.json` from the `GOOGLE_TOKEN_JSON` env var. The Google client library loads it, sees a valid refresh token, and silently fetches a new access token — no browser, no URL, no manual step.
+
+The browser login (`run_local_server`) only triggers if `token.json` is missing or has no refresh token. Since you're injecting it from your already-authenticated local file, it never triggers.
+
+The refresh token does not expire unless you explicitly revoke it in your Google account. Each cron run starts fresh from the same refresh token, so there is no state to persist between runs.

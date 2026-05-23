@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
 """
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-UNIFIED REGULAR API RECON REPORTS — ALL Sources + Branded Campaigns
+UNIFIED REGULAR API RECON REPORTS — ALL Sources
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Single script that generates BOTH recon reports:
+Single script that generates the ALL Sources recon report:
   1. ALL Sources  — Every API recon entry for the day
-  2. Branded Campaigns — Only students matching branded UTM campaign patterns
 
 Usage:  cd /workspace && python3 "Automation Cron Job/generate_all_recon_reports.py"
 Environment:  .env at WORKSPACE_DIR (default /home/mohit/workspace)
@@ -70,26 +69,6 @@ RUN_STAMP = _run_ist.strftime('%Y-%m-%d_%H-%M')
 print(f"📅 Report Date: {REPORT_DATE_STR}")
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# BRANDED CAMPAIGN PATTERNS
-# ═══════════════════════════════════════════════════════════════════════════════
-
-BRANDED_PATTERNS = [
-    'LPU_Online', 'CU_Online', 'cu_online', 'Amity_Online',
-    'Amity_University', 'Partner_Amity', 'Shoolini_Online',
-    'Galgotias', 'VGU_Online', 'Manipal_Online', 'GLA_Online',
-    'GLA_University', 'IGNOU', 'UA_MBA', 'F_UA'
-]
-
-BRANDED_CAMPAIGN_IDS = {
-    '23659350616', '23807086200', '23810994645', '23814823859',
-    '23820721369', '23821027168', '23228113322', '23794794232',
-    '23794010280', '23772025619', '23779002914', '23794940566',
-    '23767340817', '23798269338', '23772157658', '23803352159',
-    '23470383548', '23502437890', '23676777747', '23534722448',
-    '23486436393', '23486463996', '23675435222'
-}
-
 STATUS_NORMALIZE = {
     'Proceed': 'Proceed',
     'Failed due to Technical Issues': 'Failed',
@@ -104,145 +83,37 @@ STATUS_NORMALIZE = {
 # ═══════════════════════════════════════════════════════════════════════════════
 
 async def fetch_all_sources(date_str):
-    """Fetch ALL recon rows for the given date."""
+    """
+    Fetch per-college counts segregated by sent_type: bot / auto / manual.
+    Each section is deduplicated independently (DISTINCT per college+type+status).
+    Total Proceed/Fail/DNP deduplicates across auto+manual combined.
+    """
     conn = await asyncpg.connect(**DB_CONFIG)
     try:
         rows = await conn.fetch("""
             SELECT
-                r.college_name,
-                r.sent_type,
-                r.api_sent_status,
-                COUNT(DISTINCT r.student_id) AS lead_count
-            FROM student_college_api_sent_status r
-            WHERE DATE(r.created_at AT TIME ZONE 'Asia/Kolkata') = $1::date
-            GROUP BY 1, 2, 3
-            ORDER BY 1, 2, 3
+                college_name,
+                -- BOT
+                COUNT(DISTINCT CASE WHEN sent_type='bot' AND api_sent_status='Submitted via Bot (Direct Portal)' THEN student_id END) AS bot_submitted,
+                COUNT(DISTINCT CASE WHEN sent_type='bot' AND api_sent_status='Failed due to Technical Issues'    THEN student_id END) AS bot_fail,
+                -- AUTO
+                COUNT(DISTINCT CASE WHEN sent_type='auto' AND api_sent_status='Proceed'                                              THEN student_id END) AS auto_proceed,
+                COUNT(DISTINCT CASE WHEN sent_type='auto' AND api_sent_status='Failed due to Technical Issues'                       THEN student_id END) AS auto_fail,
+                COUNT(DISTINCT CASE WHEN sent_type='auto' AND api_sent_status IN ('Do not Proceed','Do not Proceed (Still) ')         THEN student_id END) AS auto_dnp,
+                -- MANUAL
+                COUNT(DISTINCT CASE WHEN sent_type='manual' AND api_sent_status='Proceed'                                            THEN student_id END) AS manual_proceed,
+                COUNT(DISTINCT CASE WHEN sent_type='manual' AND api_sent_status='Failed due to Technical Issues'                     THEN student_id END) AS manual_fail,
+                COUNT(DISTINCT CASE WHEN sent_type='manual' AND api_sent_status IN ('Do not Proceed','Do not Proceed (Still) ')       THEN student_id END) AS manual_dnp,
+                -- TOTAL (deduped across auto+manual)
+                COUNT(DISTINCT CASE WHEN sent_type IN ('auto','manual') AND api_sent_status='Proceed'                                THEN student_id END) AS total_proceed,
+                COUNT(DISTINCT CASE WHEN sent_type IN ('auto','manual') AND api_sent_status='Failed due to Technical Issues'         THEN student_id END) AS total_fail,
+                COUNT(DISTINCT CASE WHEN sent_type IN ('auto','manual') AND api_sent_status IN ('Do not Proceed','Do not Proceed (Still) ') THEN student_id END) AS total_dnp
+            FROM student_college_api_sent_status
+            WHERE created_at >= $1::date - interval '5 hours 30 minutes'
+              AND created_at <  $1::date + interval '1 day' - interval '5 hours 30 minutes'
+            GROUP BY college_name
+            ORDER BY college_name
         """, datetime.strptime(date_str, '%Y-%m-%d').date())
-        return [dict(r) for r in rows]
-    finally:
-        await conn.close()
-
-
-async def fetch_branded_student_ids(date_str):
-    """Get student_ids matching branded UTM campaigns."""
-    conn = await asyncpg.connect(**DB_CONFIG)
-    try:
-        # Step 1: Get all students with recon entries for this date
-        recon_students = await conn.fetch("""
-            SELECT DISTINCT r.student_id
-            FROM student_college_api_sent_status r
-            WHERE DATE(r.created_at AT TIME ZONE 'Asia/Kolkata') = $1::date
-        """, datetime.strptime(date_str, '%Y-%m-%d').date())
-
-        recon_ids = [r['student_id'] for r in recon_students]
-        if not recon_ids:
-            return set(), {}
-
-        # Step 2: Get latest UTM data per student (DISTINCT ON)
-        utm_rows = await conn.fetch("""
-            SELECT DISTINCT ON (student_id)
-                student_id,
-                utm_campaign,
-                utm_campaign_id
-            FROM student_lead_activities
-            WHERE student_id = ANY($1::text[])
-            ORDER BY student_id, created_at DESC
-        """, recon_ids)
-
-        # Step 3: In-Python matching
-        branded_ids = set()
-        branded_info = {}
-
-        for row in utm_rows:
-            sid = row['student_id']
-            campaign = (row['utm_campaign'] or '')
-            camp_id = str(row['utm_campaign_id'] or '')
-
-            is_branded = False
-            matched = None
-
-            for pattern in BRANDED_PATTERNS:
-                if pattern.lower() in campaign.lower():
-                    is_branded = True
-                    matched = f"campaign:{pattern}"
-                    break
-
-            if not is_branded and camp_id in BRANDED_CAMPAIGN_IDS:
-                is_branded = True
-                matched = f"campaign_id:{camp_id}"
-
-            if is_branded:
-                branded_ids.add(sid)
-                branded_info[sid] = {'utm_campaign': campaign, 'utm_campaign_id': camp_id, 'matched_by': matched}
-
-        print(f"\n  Branded matching:")
-        print(f"    Recon students: {len(recon_ids)}")
-        print(f"    With UTM data:  {len(utm_rows)}")
-        print(f"    Branded match:  {len(branded_ids)}")
-
-        sample = 0
-        for sid, info in list(branded_info.items())[:5]:
-            print(f"    {sid}: campaign='{info['utm_campaign']}' match={info['matched_by']}")
-            sample += 1
-
-        return branded_ids, branded_info
-    finally:
-        await conn.close()
-
-
-async def fetch_branded_recon(date_str, branded_ids):
-    """Fetch recon rows filtered to branded students only."""
-    if not branded_ids:
-        return []
-
-    conn = await asyncpg.connect(**DB_CONFIG)
-    try:
-        rows = await conn.fetch("""
-            SELECT
-                r.college_name,
-                r.sent_type,
-                r.api_sent_status,
-                COUNT(DISTINCT r.student_id) AS lead_count
-            FROM student_college_api_sent_status r
-            WHERE DATE(r.created_at AT TIME ZONE 'Asia/Kolkata') = $1::date
-              AND r.student_id = ANY($2::text[])
-            GROUP BY 1, 2, 3
-            ORDER BY 1, 2, 3
-        """, datetime.strptime(date_str, '%Y-%m-%d').date(), list(branded_ids))
-        return [dict(r) for r in rows]
-    finally:
-        await conn.close()
-
-
-async def fetch_lms_lead_counts(date_str, branded_ids=None):
-    """Fetch LMS leads per college from student_lead_activities JOINed with recon."""
-    conn = await asyncpg.connect(**DB_CONFIG)
-    try:
-        if branded_ids:
-            rows = await conn.fetch("""
-                SELECT
-                    r.college_name,
-                    COUNT(DISTINCT la.student_id) AS lms_leads
-                FROM student_lead_activities la
-                INNER JOIN student_college_api_sent_status r
-                    ON la.student_id = r.student_id
-                WHERE DATE(r.created_at AT TIME ZONE 'Asia/Kolkata') = $1::date
-                  AND r.student_id = ANY($2::text[])
-                GROUP BY r.college_name
-                ORDER BY r.college_name
-            """, datetime.strptime(date_str, '%Y-%m-%d').date(), list(branded_ids))
-        else:
-            rows = await conn.fetch("""
-                SELECT
-                    r.college_name,
-                    COUNT(DISTINCT la.student_id) AS lms_leads
-                FROM student_lead_activities la
-                INNER JOIN student_college_api_sent_status r
-                    ON la.student_id = r.student_id
-                WHERE DATE(r.created_at AT TIME ZONE 'Asia/Kolkata') = $1::date
-                GROUP BY r.college_name
-                ORDER BY r.college_name
-            """, datetime.strptime(date_str, '%Y-%m-%d').date())
         return [dict(r) for r in rows]
     finally:
         await conn.close()
@@ -254,25 +125,11 @@ async def fetch_lms_lead_counts(date_str, branded_ids=None):
 
 def transform_to_matrix(rows):
     """
-    Transform flat rows into college-wise matrix:
-    {college: {'auto': {status: count}, 'manual': {status: count}}}
+    Rows already come deduplicated from DB.
+    Returns {college: {auto_manual_proceed, auto_manual_fail, auto_manual_dnp,
+                        bot_submitted, bot_fail}}
     """
-    matrix = {}
-    for row in rows:
-        college = row['college_name']
-        sent_type = row['sent_type']  # 'auto', 'manual', or 'bot'
-        status = STATUS_NORMALIZE.get(row['api_sent_status'], row['api_sent_status'])
-        count = row['lead_count']
-
-        if college not in matrix:
-            matrix[college] = {}
-
-        if sent_type not in matrix[college]:
-            matrix[college][sent_type] = {}
-
-        matrix[college][sent_type][status] = matrix[college][sent_type].get(status, 0) + count
-
-    return matrix
+    return {r['college_name']: dict(r) for r in rows}
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -284,129 +141,159 @@ def _v(n):
     return '&mdash;' if not n else str(n)
 
 
-def generate_html(matrix, report_date, lms_leads, title, filename):
-    """Generate HTML report matching the original dark format."""
-    lms_lookup = {l['college_name']: l['lms_leads'] for l in lms_leads}
+def generate_html(matrix, report_date, title, filename):
+    """
+    Column order: Bot (Submitted, Fail) | Auto (Proceed, Fail, DNP) |
+                  Manual (Proceed, Fail, DNP) | Total (Proceed, Fail, DNP)
+    No Total Leads column.
+    """
     colleges = sorted(matrix.keys())
 
-    # Format date nicely e.g. "20 May 2026"
-    try:
-        dt = datetime.strptime(report_date, '%Y-%m-%d')
-        date_display = dt.strftime('%-d %B %Y')
-    except ValueError:
-        try:
-            dt = datetime.strptime(report_date, '%Y-%m-%d')
-            date_display = dt.strftime('%d %B %Y').lstrip('0')
-        except Exception:
-            date_display = report_date
-    # Windows-safe date formatting (no %-d)
+    dt = datetime.strptime(report_date, '%Y-%m-%d')
     try:
         date_display = dt.strftime('%#d %B %Y')
     except Exception:
         date_display = dt.strftime('%d %B %Y').lstrip('0') or dt.strftime('%d %B %Y')
 
-    # badge label from title
-    badge = 'All Sources' if 'All' in title else 'Branded Campaigns'
-
-    # Accumulate per-college: auto and manual (bot merged into auto)
-    # statuses: Proceed, Failed→Fail, Do not Proceed→DNP
+    badge = 'All Sources'
     rows_html = ''
-    gt_auto = {'p': 0, 'f': 0, 'd': 0}
-    gt_manual = {'p': 0, 'f': 0, 'd': 0}
+    gt = {k: 0 for k in ('bot_s','bot_f','ap','af','ad','mp','mf','md','tp','tf','td')}
 
     for college in colleges:
-        data = matrix[college]
+        d = matrix[college]
+        g = lambda k: d.get(k, 0) or 0
 
-        def get(sent_type, status):
-            return data.get(sent_type, {}).get(status, 0)
+        bot_s = g('bot_submitted');  bot_f = g('bot_fail')
+        ap = g('auto_proceed');      af = g('auto_fail');   ad = g('auto_dnp')
+        mp = g('manual_proceed');    mf = g('manual_fail'); md = g('manual_dnp')
+        # Total = auto+manual (deduped) + bot
+        tp = g('total_proceed') + bot_s
+        tf = g('total_fail')    + bot_f
+        td = g('total_dnp')
 
-        # auto + bot merged into auto
-        ap = get('auto', 'Proceed') + get('bot', 'Proceed')
-        af = get('auto', 'Failed') + get('bot', 'Failed')
-        ad = get('auto', 'Do not Proceed') + get('bot', 'Do not Proceed')
-
-        mp = get('manual', 'Proceed')
-        mf = get('manual', 'Failed')
-        md = get('manual', 'Do not Proceed')
-
-        tp = ap + mp
-        tf = af + mf
-        td = ad + md
-        lms = lms_lookup.get(college, 0)
-
-        gt_auto['p'] += ap; gt_auto['f'] += af; gt_auto['d'] += ad
-        gt_manual['p'] += mp; gt_manual['f'] += mf; gt_manual['d'] += md
+        for k, v in zip(('bot_s','bot_f','ap','af','ad','mp','mf','md','tp','tf','td'),
+                        ( bot_s,  bot_f,  ap,  af,  ad,  mp,  mf,  md,  tp,  tf,  td)):
+            gt[k] += v
 
         rows_html += f"""<tr>
 <td class=td-college>{college}</td>
-<td class=bl>{_v(ap)}</td><td class=fail>{_v(af)}</td><td>{_v(ad)}</td>
-<td class=bl>{_v(mp)}</td><td class=fail>{_v(mf)}</td><td>{_v(md)}</td>
-<td class=t-proc>{_v(tp)}</td><td class=t-fail>{_v(tf)}</td><td class=t-dnp>{_v(td)}</td>
-<td class=leads>{_v(lms)}</td></tr>\n"""
-
-    # Grand total row
-    gtp = gt_auto['p'] + gt_manual['p']
-    gtf = gt_auto['f'] + gt_manual['f']
-    gtd = gt_auto['d'] + gt_manual['d']
-    gt_lms = sum(lms_lookup.values())
-    grand_total = gtp + gtf + gtd
+<td class=bot-sub>{_v(bot_s)}</td><td class="fail bl-bot">{_v(bot_f)}</td>
+<td class="t-proc bl-auto">{_v(ap)}</td><td class=fail>{_v(af)}</td><td class=dnp>{_v(ad)}</td>
+<td class="t-proc bl-man">{_v(mp)}</td><td class=fail>{_v(mf)}</td><td class=dnp>{_v(md)}</td>
+<td class="t-proc bl-tot">{_v(tp)}</td><td class=fail>{_v(tf)}</td><td class=dnp>{_v(td)}</td>
+</tr>\n"""
 
     grand_row = f"""<tr class=grand>
 <td class=td-college>Grand Total</td>
-<td class=bl>{_v(gt_auto['p'])}</td><td class=fail>{_v(gt_auto['f'])}</td><td>{_v(gt_auto['d'])}</td>
-<td class=bl>{_v(gt_manual['p'])}</td><td class=fail>{_v(gt_manual['f'])}</td><td>{_v(gt_manual['d'])}</td>
-<td class=t-proc>{_v(gtp)}</td><td class=t-fail>{_v(gtf)}</td><td class=t-dnp>{_v(gtd)}</td>
-<td class=leads>{_v(gt_lms)}</td></tr>\n"""
+<td class=bot-sub>{_v(gt['bot_s'])}</td><td class="fail bl-bot">{_v(gt['bot_f'])}</td>
+<td class="t-proc bl-auto">{_v(gt['ap'])}</td><td class=fail>{_v(gt['af'])}</td><td class=dnp>{_v(gt['ad'])}</td>
+<td class="t-proc bl-man">{_v(gt['mp'])}</td><td class=fail>{_v(gt['mf'])}</td><td class=dnp>{_v(gt['md'])}</td>
+<td class="t-proc bl-tot">{_v(gt['tp'])}</td><td class=fail>{_v(gt['tf'])}</td><td class=dnp>{_v(gt['td'])}</td>
+</tr>\n"""
 
-    # Summary row: auto total | manual total | grand total | lms
-    auto_sum = gt_auto['p'] + gt_auto['f'] + gt_auto['d']
-    manual_sum = gt_manual['p'] + gt_manual['f'] + gt_manual['d']
+    grand_total = gt['tp'] + gt['tf'] + gt['td']
 
     summary_row = f"""<tr class=summary>
 <td class=sum-label>Summary Total</td>
-<td colspan=3 style="border-left:1px solid #1e5a82">{auto_sum}</td>
-<td colspan=3 style="border-left:1px solid #1e5a82">{manual_sum}</td>
-<td colspan=3 style="border-left:1px solid #1e5a82">{grand_total}</td>
-<td class=leads>{gt_lms}</td></tr>\n"""
+<td colspan=2 class=s-bot>{gt['bot_s'] + gt['bot_f']}</td>
+<td colspan=3 class=s-auto>{gt['ap'] + gt['af'] + gt['ad']}</td>
+<td colspan=3 class=s-man>{gt['mp'] + gt['mf'] + gt['md']}</td>
+<td colspan=3 class=s-tot>{gt['tp'] + gt['tf'] + gt['td']}</td>
+</tr>\n"""
 
-    css = """@import url('https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700&family=Barlow+Condensed:wght@600;700&display=swap');
-*{box-sizing:border-box;margin:0;padding:0}.rr-root{background:#0b1623;border-radius:14px;padding:32px 36px;font-family:'Barlow',sans-serif;color:#e2eaf4}
-.rr-top-badge{display:inline-block;background:#0e3d5c;color:#39b8f5;font-size:10px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;padding:4px 12px;border-radius:5px;margin-bottom:10px;border:1px solid #1a5a80}
-.rr-header-row{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:28px}
-.rr-title{font-family:'Barlow Condensed',sans-serif;font-size:30px;font-weight:700;color:#39b8f5;letter-spacing:.04em;text-transform:uppercase;line-height:1.1}
-.rr-date-box{background:#111e2e;border:1px solid #1e3a52;border-radius:8px;padding:8px 18px;font-size:14px;font-weight:600;color:#7faec9;white-space:nowrap;align-self:center}
-.rr-table-wrap{border-radius:10px;overflow:hidden;border:1px solid #1a2e42}table{width:100%;border-collapse:collapse}
-th{text-align:center;padding:0}.th-college{text-align:left;padding:14px 16px;font-size:10px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:#4d7a99;background:#0d1e2e}
-.th-group{background:#0d1e2e;padding:13px 6px;font-size:10px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:#39b8f5;border-left:1px solid #1a2e42}
-.th-group-leads{background:#0d2a1a;padding:13px 6px;font-size:10px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:#3ddc84;border-left:2px solid #1f5c30}
-.th-sub{background:#0a1825;font-size:10px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;padding:8px 4px;border-top:1px solid #13253a}.th-sub.proc{color:#4d7a99;border-left:1px solid #1a2e42}.th-sub.fail{color:#e05c5c}.th-sub.dnp{color:#4d7a99}.th-sub.t-proc{color:#39b8f5;font-weight:700;border-left:1px solid #1a2e42}.th-sub.t-fail{color:#e05c5c;font-weight:700}.th-sub.t-dnp{color:#4d7a99;font-weight:700}
-td{text-align:center;padding:14px 4px;font-size:15px;font-weight:500;color:#b8cfe0;background:#0b1623;border-top:1px solid #13253a}
-td.td-college{text-align:left;padding:14px 16px;font-size:14px;font-weight:700;color:#d4e6f4;background:#0b1623}td.bl{border-left:1px solid #1a2e42}td.fail{color:#e05c5c}td.t-proc{color:#39b8f5;font-weight:700;border-left:1px solid #1a2e42}td.t-fail{color:#e05c5c;font-weight:700}td.t-dnp{color:#b8cfe0;font-weight:700}
-td.leads{color:#3ddc84;font-weight:700;font-size:17px;background:#081410;border-left:2px solid #1f5c30}
-tr.grand td{background:#0e2235;border-top:2px solid #1c3d5a}tr.grand td.td-college{color:#39b8f5;font-weight:700;background:#0e2235}tr.grand td{color:#39b8f5;font-weight:700}tr.grand td.fail{color:#e05c5c;font-weight:700}tr.grand td.leads{color:#3ddc84;font-weight:700;background:#060e09}
-tr.summary td{background:#163a56;border-top:2px solid #1e5a82;padding:15px 4px;font-size:17px;font-weight:700;color:#fff}tr.summary td.sum-label{text-align:left;padding-left:16px;font-size:14px;font-weight:600;color:#c8dff0}tr.summary td.leads{color:#3ddc84;font-size:20px;font-weight:700;background:#081a0e;border-left:2px solid #1f5c30}
-.rr-note{margin-top:14px;font-size:11px;color:#2e5570;text-align:right;letter-spacing:.04em}"""
+    css = """@import url('https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700;800&family=Barlow+Condensed:wght@600;700;800&display=swap');
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{background:#060e18;min-height:100%}
+body{padding:32px 24px;font-family:'Barlow',sans-serif}
+.rr-root{background:linear-gradient(160deg,#0b1a2e 0%,#081420 100%);border-radius:18px;padding:36px 40px;max-width:1400px;margin:0 auto;box-shadow:0 8px 48px rgba(0,0,0,.6);border:1px solid #12263d}
+.rr-top-badge{display:inline-block;background:linear-gradient(90deg,#0d3a5c,#0e4d7a);color:#39b8f5;font-size:10px;font-weight:800;letter-spacing:.18em;text-transform:uppercase;padding:5px 14px;border-radius:6px;margin-bottom:12px;border:1px solid #1a6a9a;box-shadow:0 0 12px rgba(57,184,245,.15)}
+.rr-header-row{display:flex;justify-content:space-between;align-items:center;margin-bottom:32px;gap:16px}
+.rr-title{font-family:'Barlow Condensed',sans-serif;font-size:34px;font-weight:800;color:#39b8f5;letter-spacing:.05em;text-transform:uppercase;line-height:1.1;text-shadow:0 0 30px rgba(57,184,245,.3)}
+.rr-date-box{background:linear-gradient(135deg,#0e2035,#111e30);border:1px solid #1e4060;border-radius:10px;padding:10px 22px;font-size:15px;font-weight:700;color:#7faec9;white-space:nowrap;box-shadow:inset 0 1px 0 rgba(255,255,255,.05)}
+.rr-table-wrap{border-radius:12px;overflow:hidden;border:1px solid #162840;box-shadow:0 4px 24px rgba(0,0,0,.4)}
+table{width:100%;border-collapse:collapse}
+th{text-align:center;padding:0}
+.th-college{text-align:left;padding:16px 18px;font-size:10px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:#3d6a88;background:#09192a}
+.th-bot {padding:14px 8px;font-size:10px;font-weight:800;letter-spacing:.14em;text-transform:uppercase;background:linear-gradient(180deg,#1a1000,#120b00);color:#f5a623;border-left:3px solid #5a3a00;text-shadow:0 0 10px rgba(245,166,35,.3)}
+.th-auto{padding:14px 8px;font-size:10px;font-weight:800;letter-spacing:.14em;text-transform:uppercase;background:linear-gradient(180deg,#091e32,#071525);color:#39b8f5;border-left:3px solid #1a4060;text-shadow:0 0 10px rgba(57,184,245,.2)}
+.th-man {padding:14px 8px;font-size:10px;font-weight:800;letter-spacing:.14em;text-transform:uppercase;background:linear-gradient(180deg,#120e2a,#0d0a20);color:#a78bfa;border-left:3px solid #3a2070;text-shadow:0 0 10px rgba(167,139,250,.2)}
+.th-tot {padding:14px 8px;font-size:10px;font-weight:800;letter-spacing:.14em;text-transform:uppercase;background:linear-gradient(180deg,#081a10,#051209);color:#3ddc84;border-left:3px solid #1a5030;text-shadow:0 0 10px rgba(61,220,132,.2)}
+.th-sub{font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;padding:9px 5px;border-top:1px solid #0e2035}
+.th-sub.s-bot {color:#f5a623;background:#0f0900;border-left:3px solid #5a3a00}
+.th-sub.s-auto{color:#39b8f5;background:#061220;border-left:3px solid #1a4060}
+.th-sub.s-man {color:#a78bfa;background:#090619;border-left:3px solid #3a2070}
+.th-sub.s-tot {color:#3ddc84;background:#040e08;border-left:3px solid #1a5030}
+.th-sub.fail{color:#e05c5c}.th-sub.dnp{color:#5a7a90}
+td{text-align:center;padding:15px 5px;font-size:15px;font-weight:600;color:#9ab8cc;background:#07111e;border-top:1px solid #0e2035}
+td.td-college{text-align:left;padding:15px 18px;font-size:14px;font-weight:700;color:#cce0f0;background:#07111e;border-right:1px solid #0e2035}
+td.fail{color:#e05c5c;font-weight:600}
+td.dnp{color:#5a7a90}
+td.bot-sub{color:#f5a623;font-weight:700;background:#0a0800}
+td.t-proc{color:#39b8f5;font-weight:700;background:#06101a}
+td.bl-bot {border-left:3px solid #5a3a00;background:#0a0800}
+td.bl-man {border-left:3px solid #3a2070;background:#08061a}
+td.bl-tot {border-left:3px solid #1a5030;background:#04100a}
+td.bl-auto{border-left:3px solid #1a4060;background:#06101a}
+tr:hover td{filter:brightness(1.12)}
+tr.grand td{border-top:3px solid #1c3d5a;font-weight:800;font-size:16px}
+tr.grand td.td-college{color:#39b8f5;background:#0a1e35;font-size:14px}
+tr.grand td{color:#c0d8ec;background:#081828}
+tr.grand td.bot-sub{color:#f5a623;background:#100e00}
+tr.grand td.t-proc{color:#39b8f5;background:#061828}
+tr.grand td.fail{color:#ff7070}
+tr.grand td.dnp{color:#6a8fa8}
+tr.grand td.bl-bot {background:#100e00;border-left:3px solid #5a3a00}
+tr.grand td.bl-auto{background:#061828;border-left:3px solid #1a4060}
+tr.grand td.bl-man {background:#0a0820;border-left:3px solid #3a2070}
+tr.grand td.bl-tot {background:#041408;border-left:3px solid #1a5030}
+tr.summary td{border-top:3px solid #1e5a82;padding:17px 8px;font-size:18px;font-weight:800}
+td.sum-label{text-align:left;padding-left:18px;font-size:14px;font-weight:700;color:#7faec9;background:#091828;border-right:1px solid #0e2035}
+td.s-bot {background:#160d00;color:#f5a623;border-left:3px solid #5a3a00;font-size:20px}
+td.s-auto{background:#071828;color:#39b8f5;border-left:3px solid #1a4060;font-size:20px}
+td.s-man {background:#0b0820;color:#a78bfa;border-left:3px solid #3a2070;font-size:20px}
+td.s-tot {background:#040e06;color:#3ddc84;border-left:3px solid #1a5030;font-size:20px}
+.rr-note{margin-top:16px;font-size:12px;color:#2a4a60;text-align:right;letter-spacing:.05em}"""
 
     html_doc = f"""<!DOCTYPE html><html><head><meta charset=UTF-8>
 <style>{css}</style></head><body><div class=rr-root>
-<div class=rr-header-row><div><div class=rr-top-badge>{badge}</div><div class=rr-title>Regular API Recon Report</div></div><div class=rr-date-box>{date_display}</div></div>
+<div class=rr-header-row>
+  <div><div class=rr-top-badge>All Sources</div><div class=rr-title>Regular API Recon Report</div></div>
+  <div class=rr-date-box>{date_display}</div>
+</div>
 <div class=rr-table-wrap><table>
-<thead><tr><th class=th-college rowspan=2>College Name</th><th class=th-group colspan=3>Auto Recon</th><th class=th-group colspan=3>Manual Recon</th><th class=th-group colspan=3>Total</th><th class=th-group-leads rowspan=2>Total<br>Leads</th></tr>
-<tr><th class="th-sub proc">Proceed</th><th class="th-sub fail">Fail</th><th class="th-sub dnp">DNP</th><th class="th-sub proc">Proceed</th><th class="th-sub fail">Fail</th><th class="th-sub dnp">DNP</th><th class="th-sub t-proc">Proceed</th><th class="th-sub t-fail">Fail</th><th class="th-sub t-dnp">DNP</th></tr></thead>
-<tbody>{rows_html}{grand_row}{summary_row}</tbody></table></div>
-<div class=rr-note>{grand_total} total records | {date_display}</div></div></body></html>"""
+<thead>
+<tr>
+  <th class=th-college rowspan=2>College Name</th>
+  <th class=th-bot  colspan=2>Bot</th>
+  <th class=th-auto colspan=3>Auto Recon</th>
+  <th class=th-man  colspan=3>Manual Recon</th>
+  <th class=th-tot  colspan=3>Total</th>
+</tr>
+<tr>
+  <th class="th-sub s-bot">Submitted</th><th class="th-sub fail">Fail</th>
+  <th class="th-sub s-auto">Proceed</th><th class="th-sub fail">Fail</th><th class="th-sub dnp">DNP</th>
+  <th class="th-sub s-man">Proceed</th><th class="th-sub fail">Fail</th><th class="th-sub dnp">DNP</th>
+  <th class="th-sub s-tot">Proceed</th><th class="th-sub fail">Fail</th><th class="th-sub dnp">DNP</th>
+</tr>
+</thead>
+<tbody>{rows_html}{grand_row}{summary_row}</tbody>
+</table></div>
+<div class=rr-note>{grand_total} total records | {date_display}</div>
+</div></body></html>"""
 
     filepath = os.path.join(OUTPUT_DIR, filename)
     with open(filepath, 'w', encoding='utf-8') as f:
         f.write(html_doc)
 
     stats = {
-        'total_proceed': gtp, 'total_fail': gtf, 'total_dnp': gtd,
-        'total_all': grand_total, 'total_lms': gt_lms,
+        'bot_submitted': gt['bot_s'], 'bot_fail': gt['bot_f'],
+        'auto_proceed': gt['ap'], 'auto_fail': gt['af'], 'auto_dnp': gt['ad'],
+        'manual_proceed': gt['mp'], 'manual_fail': gt['mf'], 'manual_dnp': gt['md'],
+        'total_proceed': gt['tp'], 'total_fail': gt['tf'], 'total_dnp': gt['td'],
         'colleges': len(colleges), 'filepath': filepath
     }
 
-    print(f"  ✅ Saved: {filename} ({grand_total} total, {gt_lms} LMS leads, {len(colleges)} colleges)")
+    print(f"  ✅ Saved: {filename} ({grand_total} total, {len(colleges)} colleges)")
     return filepath, stats
 
 
@@ -454,7 +341,7 @@ def send_via_whapi(file_path, caption):
 
 async def main():
     print("=" * 60)
-    print("📊 REGULAR API RECON REPORTS — ALL Sources + Branded")
+    print("📊 REGULAR API RECON REPORTS — ALL Sources")
     print("=" * 60)
     print(f"   Date: {REPORT_DATE_STR}")
 
@@ -463,44 +350,18 @@ async def main():
     all_rows = await fetch_all_sources(REPORT_DATE_STR)
     print(f"  Rows: {len(all_rows)}")
     for r in all_rows:
-        print(f"    {r['college_name']} | {r['sent_type']} | {r['api_sent_status']} | {r['lead_count']}")
+        print(f"    {r['college_name']} | bot={r['bot_submitted']}/{r['bot_fail']} auto={r['auto_proceed']}/{r['auto_fail']}/{r['auto_dnp']} manual={r['manual_proceed']}/{r['manual_fail']}/{r['manual_dnp']} total={r['total_proceed']}/{r['total_fail']}/{r['total_dnp']}")
 
     all_matrix = transform_to_matrix(all_rows)
     print(f"  Colleges: {len(all_matrix)}")
 
-    all_lms = await fetch_lms_lead_counts(REPORT_DATE_STR)
-    print(f"  LMS lead records: {len(all_lms)}")
-    for l in all_lms:
-        print(f"    {l['college_name']}: {l['lms_leads']}")
-
     all_file, all_stats = generate_html(
-        all_matrix, REPORT_DATE_STR, all_lms,
-        "Regular API Recon \u2014 All Sources",
+        all_matrix, REPORT_DATE_STR,
+        "Regular API Recon — All Sources",
         f"Regular_Recon_All_{RUN_STAMP}.html"
     )
 
-    # ── STEP 2: Branded Campaigns ────────────────────────────────────────
-    print("\n─── Branded Campaigns ────────────────────────────────────────────")
-    branded_ids, branded_info = await fetch_branded_student_ids(REPORT_DATE_STR)
-
-    branded_rows = await fetch_branded_recon(REPORT_DATE_STR, branded_ids)
-    print(f"  Rows: {len(branded_rows)}")
-    for r in branded_rows:
-        print(f"    {r['college_name']} | {r['sent_type']} | {r['api_sent_status']} | {r['lead_count']}")
-
-    branded_matrix = transform_to_matrix(branded_rows)
-    print(f"  Colleges: {len(branded_matrix)}")
-
-    branded_lms = await fetch_lms_lead_counts(REPORT_DATE_STR, branded_ids)
-    print(f"  Branded LMS lead records: {len(branded_lms)}")
-
-    branded_file, branded_stats = generate_html(
-        branded_matrix, REPORT_DATE_STR, branded_lms,
-        "Regular API Recon \u2014 Branded Campaigns",
-        f"Regular_Recon_Branded_{RUN_STAMP}.html"
-    )
-
-    # ── STEP 3: Summary ──────────────────────────────────────────────────
+    # ── STEP 2: Summary ──────────────────────────────────────────────────
     print("\n" + "=" * 60)
     print("SUMMARY STATS")
     print("=" * 60)
@@ -509,22 +370,16 @@ async def main():
         if k != 'filepath':
             print(f"    {k}: {v}")
 
-    print(f"\n  BRANDED — {REPORT_DATE_STR}")
-    for k, v in branded_stats.items():
-        if k != 'filepath':
-            print(f"    {k}: {v}")
-
-    # ── STEP 4: WHAPI send (best-effort) ─────────────────────────────────
+    # ── STEP 3: WHAPI send (best-effort) ─────────────────────────────────
     print("\n─── Sending to WhatsApp (best-effort) ────────────────────────────")
     files_to_send = [
         (all_file, f"API Recon — All Sources — {REPORT_DATE_STR}"),
-        (branded_file, f"API Recon — Branded Campaigns — {REPORT_DATE_STR}"),
     ]
     for fp, cap in files_to_send:
         if fp and os.path.exists(fp):
             send_via_whapi(fp, cap)
 
-    # ── STEP 5: Delivery manifest ────────────────────────────────────────
+    # ── STEP 4: Delivery manifest ────────────────────────────────────────
     manifest = {
         "date": REPORT_DATE_STR,
         "generated_at": datetime.utcnow().isoformat() + "Z",
