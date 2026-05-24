@@ -112,35 +112,37 @@ async def online_get_data():
             couns_data.append({'supervisor_name': effective_sup, 'counsellor_name': couns_name})
     df_couns = pd.DataFrame(couns_data)
 
-    adm_query = """
-        SELECT DISTINCT ON (s.student_id, uc.course_id)
-    s.student_id,
-    s.student_name,
-    s.student_email,
-    csj.created_at AT TIME ZONE 'Asia/Kolkata' AS created_at,
-    uc.course_id,
-    uc.university_name AS college_name,
-    uc.course_name,
-    INITCAP(TRIM(csj.fee_type)) AS fee_type,
-    uc.total_fees AS total_fee,
-    uc.semester_fees AS sem_fee,
-    uc.annual_fees AS annual_fee,
-    csj.deposit_amount AS fee_deposit,
-    uc.duration || ' ' || uc.duration_type AS course_duration,
-    c.counsellor_name,
-    c.counsellor_id
-FROM students s
-JOIN course_status_journeys csj ON s.student_id = csj.student_id
-JOIN university_courses uc ON csj.course_id = uc.course_id
-LEFT JOIN counsellors c ON s.assigned_counsellor_id = c.counsellor_id
-WHERE csj.course_status = 'Admission'
-  AND csj.fee_type NOT IN ('partial paid', 'Partially Paid', 'Partial Done','Partial Paid')  
-  AND s.student_id IN (SELECT student_id FROM students)
-ORDER BY s.student_id, uc.course_id, csj.created_at Asc;
+    YTD_START = f'{report_date.year}-01-01'
+
+    adm_query = f"""
+    SELECT DISTINCT ON (s.student_id, uc.course_id)
+        s.student_id,
+        s.student_name,
+        s.student_email,
+        csj.created_at AT TIME ZONE 'Asia/Kolkata' AS created_at,
+        uc.course_id,
+        uc.university_name AS college_name,
+        uc.course_name,
+        INITCAP(TRIM(csj.fee_type)) AS fee_type,
+        uc.total_fees AS total_fee,
+        uc.semester_fees AS sem_fee,
+        uc.annual_fees AS annual_fee,
+        csj.deposit_amount AS fee_deposit,
+        uc.duration || ' ' || uc.duration_type AS course_duration,
+        c.counsellor_name,
+        c.counsellor_id
+    FROM students s
+    JOIN course_status_journeys csj ON s.student_id = csj.student_id
+    JOIN university_courses uc ON csj.course_id = uc.course_id
+    LEFT JOIN counsellors c ON s.assigned_counsellor_id = c.counsellor_id
+    WHERE csj.course_status = 'Admission'
+      AND COALESCE(csj.fee_type, '') NOT ILIKE '%partial%'
+      AND csj.created_at >= '{YTD_START}'::date
+    ORDER BY s.student_id, uc.course_id, csj.created_at ASC;
     """
 
-    form_query = """
-    SELECT
+    form_query = f"""
+    SELECT DISTINCT ON (s.student_id, uc.course_id)
         s.student_id,
         uc.university_name AS college_name,
         csj.created_at AT TIME ZONE 'Asia/Kolkata' AS created_at
@@ -148,6 +150,8 @@ ORDER BY s.student_id, uc.course_id, csj.created_at Asc;
     JOIN course_status_journeys csj ON s.student_id = csj.student_id
     JOIN university_courses uc ON csj.course_id = uc.course_id
     WHERE csj.course_status = 'Application'
+      AND csj.created_at >= '{YTD_START}'::date
+    ORDER BY s.student_id, uc.course_id, csj.created_at ASC;
     """
 
     adm_rows = await conn.fetch(adm_query)
@@ -169,11 +173,8 @@ ORDER BY s.student_id, uc.course_id, csj.created_at Asc;
     if not df_couns.empty:
         df_couns = df_couns.drop_duplicates(subset=['supervisor_name', 'counsellor_name'])
 
-    # SQL DISTINCT ON (student_id, course_id) already guarantees one row per student+course.
-    # No further Python dedup on df_adm — it would incorrectly collapse re-admissions at new
-    # courses. Forms dedup stays since the form query has no DISTINCT ON.
-    if not df_form.empty:
-        df_form = df_form.sort_values(['student_id', 'college_name', 'created_at']).drop_duplicates(subset=['student_id', 'college_name'], keep='first')
+    # SQL DISTINCT ON (student_id, course_id) guarantees one row per student+course.
+    # No further Python dedup needed for either admissions or forms.
 
     return df_couns, df_adm, df_form
 
@@ -590,7 +591,7 @@ REGULAR_DB_CONFIGS = [
      "password": os.getenv("REGULAR_AMITY_LMS_DB_PASSWORD")},
 ]
 
-# Base admission SQL — optional college exclusion injected per DB
+# Base admission SQL — optional college exclusion and YTD start injected per DB
 _REG_ADM_SQL = """SELECT DISTINCT ON (s.student_id, uc.course_id)
     s.student_id, uc.university_name AS college_name,
     csj.created_at AT TIME ZONE 'Asia/Kolkata' AS created_at
@@ -599,10 +600,11 @@ JOIN course_status_journeys csj ON s.student_id = csj.student_id
 JOIN university_courses uc ON csj.course_id = uc.course_id
 WHERE csj.course_status = 'Admission'
   AND COALESCE(csj.fee_type, '') NOT ILIKE '%partial%'
+  AND csj.created_at >= '{ytd_start}'::date
   {exclude_clause}
 ORDER BY s.student_id, uc.course_id, csj.created_at ASC;"""
 
-# Base forms SQL — 'Walkin Marked' added, optional college exclusion injected per DB
+# Base forms SQL — 'Walkin Marked' added, optional college exclusion and YTD start injected per DB
 _REG_FORM_SQL = """SELECT DISTINCT ON (s.student_id, csj.course_id)
     s.student_id, uc.university_name AS college_name,
     csj.created_at AT TIME ZONE 'Asia/Kolkata' AS created_at
@@ -616,6 +618,7 @@ WHERE LOWER(csj.course_status) IN (
     'offer letter/results pending', 'offer letter/results released',
     'ready for admission'
 )
+  AND csj.created_at >= '{ytd_start}'::date
   {exclude_clause}
 ORDER BY s.student_id, csj.course_id, csj.created_at ASC;"""
 
@@ -632,6 +635,7 @@ _NO_EXCLUDE = ""
 
 
 async def regular_get_data():
+    ytd_start = f'{report_date.year}-01-01'
     all_adm, all_form = [], []
     db_excludes = {
         "REGULAR": _REGULAR_EXCLUDE,
@@ -640,8 +644,8 @@ async def regular_get_data():
     }
     for db in REGULAR_DB_CONFIGS:
         excl = db_excludes.get(db['name'], _NO_EXCLUDE)
-        adm_sql  = _REG_ADM_SQL.format(exclude_clause=excl)
-        form_sql = _REG_FORM_SQL.format(exclude_clause=excl)
+        adm_sql  = _REG_ADM_SQL.format(exclude_clause=excl, ytd_start=ytd_start)
+        form_sql = _REG_FORM_SQL.format(exclude_clause=excl, ytd_start=ytd_start)
         conn = await asyncpg.connect(host=db['host'], port=db['port'], database=db['database'],
                                      user=db['user'], password=db['password'])
         all_adm.append(pd.DataFrame([dict(r) for r in await conn.fetch(adm_sql)]))
@@ -977,27 +981,26 @@ async def main():
         regular_html = None
 
     # ── STEP 3: Send All Files (best-effort) ───────────────────────────────
-    # WHAPI integration temporarily disabled for local testing
-    # print("─── Sending to WhatsApp Group (best-effort) ───────────────────────")
+    print("─── Sending to WhatsApp Group (best-effort) ───────────────────────")
     files_to_send = [
         (online_html,  f"Online LMS Dashboard — {FTD_DATE}",  online_summary,  "Online LMS"),
         (regular_html, f"Regular LMS Dashboard — {FTD_DATE}", regular_summary, "Regular LMS"),
     ]
 
     whapi_results = {}
-    # for filepath, caption, summary, report_name in files_to_send:
-    #     if filepath and os.path.exists(filepath):
-    #         sent = send_via_whapi(filepath, caption)
-    #         whapi_results[report_name] = sent
-    #     else:
-    #         print(f"  ⚠️  Skipping (not generated): {caption}")
-    #         whapi_results[report_name] = False
+    for filepath, caption, summary, report_name in files_to_send:
+        if filepath and os.path.exists(filepath):
+            sent = send_via_whapi(filepath, caption)
+            whapi_results[report_name] = sent
+        else:
+            print(f"  ⚠️  Skipping (not generated): {caption}")
+            whapi_results[report_name] = False
 
     # ── STEP 3b: Log to Google Sheets Report_Logs ─────────────────────────
-    # print("─── Logging to Report_Logs sheet ──────────────────────────────────")
-    # for filepath, caption, summary, report_name in files_to_send:
-    #     if filepath and os.path.exists(filepath) and summary:
-    #         log_report(FTD_DATE, report_name, summary, whapi_results.get(report_name, False))
+    print("─── Logging to Report_Logs sheet ──────────────────────────────────")
+    for filepath, caption, summary, report_name in files_to_send:
+        if filepath and os.path.exists(filepath) and summary:
+            log_report(FTD_DATE, report_name, summary, whapi_results.get(report_name, False))
 
     # ── STEP 4: Write delivery manifest (for cron agent) ───────────────────
     manifest = {
