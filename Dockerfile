@@ -15,13 +15,11 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY generate_all_lms_reports.py .
 COPY generate_all_recon_reports.py .
 COPY sheets_config.py .
-COPY entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh
+COPY server.py .
 
 # Pre-create output directories so scripts don't fail on first run
 RUN mkdir -p \
     "Automation Cron Job/Target Report/local_fallback" \
     "Automation Cron Job/Recon Data"
 
-# Default: run both reports
-CMD ["/entrypoint.sh", "both"]
+CMD ["python", "server.py"]
