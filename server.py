@@ -45,8 +45,8 @@ if os.getenv('GOOGLE_CLIENT_SECRET_JSON'):
 # ═══════════════════════════════════════════════════════════════════════════════
 
 SCHEDULE = [
-    (8,  30, "generate_all_lms_reports.py",     "LMS Reports (Online + Regular)"),
-    (21,  30, "generate_all_recon_reports.py",    "Recon Report"),
+    (21,  0, "generate_all_lms_reports.py",     "LMS Reports (Online + Regular)"),
+    (8,  30, "generate_all_recon_reports.py",    "Recon Report"),
 ]
 
 
