@@ -166,9 +166,9 @@ def generate_html(matrix, report_date, title, filename):
         bot_s = g('bot_submitted');  bot_f = g('bot_fail')
         ap = g('auto_proceed');      af = g('auto_fail');   ad = g('auto_dnp')
         mp = g('manual_proceed');    mf = g('manual_fail'); md = g('manual_dnp')
-        # Total = auto+manual (deduped) + bot
-        tp = g('total_proceed') + bot_s
-        tf = g('total_fail')    + bot_f
+        # Total = auto+manual (deduped)
+        tp = g('total_proceed')
+        tf = g('total_fail')
         td = g('total_dnp')
 
         for k, v in zip(('bot_s','bot_f','ap','af','ad','mp','mf','md','tp','tf','td'),

@@ -1,0 +1,119 @@
+<!DOCTYPE html><html><head><meta charset=UTF-8>
+<style>@import url('https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700;800&family=Barlow+Condensed:wght@600;700;800&display=swap');
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{background:#060e18;min-height:100%}
+body{padding:32px 24px;font-family:'Barlow',sans-serif}
+.rr-root{background:linear-gradient(160deg,#0b1a2e 0%,#081420 100%);border-radius:18px;padding:36px 40px;max-width:1400px;margin:0 auto;box-shadow:0 8px 48px rgba(0,0,0,.6);border:1px solid #12263d}
+.rr-top-badge{display:inline-block;background:linear-gradient(90deg,#0d3a5c,#0e4d7a);color:#39b8f5;font-size:10px;font-weight:800;letter-spacing:.18em;text-transform:uppercase;padding:5px 14px;border-radius:6px;margin-bottom:12px;border:1px solid #1a6a9a;box-shadow:0 0 12px rgba(57,184,245,.15)}
+.rr-header-row{display:flex;justify-content:space-between;align-items:center;margin-bottom:32px;gap:16px}
+.rr-title{font-family:'Barlow Condensed',sans-serif;font-size:34px;font-weight:800;color:#39b8f5;letter-spacing:.05em;text-transform:uppercase;line-height:1.1;text-shadow:0 0 30px rgba(57,184,245,.3)}
+.rr-date-box{background:linear-gradient(135deg,#0e2035,#111e30);border:1px solid #1e4060;border-radius:10px;padding:10px 22px;font-size:15px;font-weight:700;color:#7faec9;white-space:nowrap;box-shadow:inset 0 1px 0 rgba(255,255,255,.05)}
+.rr-table-wrap{border-radius:12px;overflow:hidden;border:1px solid #162840;box-shadow:0 4px 24px rgba(0,0,0,.4)}
+table{width:100%;border-collapse:collapse}
+th{text-align:center;padding:0}
+.th-college{text-align:left;padding:16px 18px;font-size:10px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:#3d6a88;background:#09192a}
+.th-bot {padding:14px 8px;font-size:10px;font-weight:800;letter-spacing:.14em;text-transform:uppercase;background:linear-gradient(180deg,#1a1000,#120b00);color:#f5a623;border-left:3px solid #5a3a00;text-shadow:0 0 10px rgba(245,166,35,.3)}
+.th-auto{padding:14px 8px;font-size:10px;font-weight:800;letter-spacing:.14em;text-transform:uppercase;background:linear-gradient(180deg,#091e32,#071525);color:#39b8f5;border-left:3px solid #1a4060;text-shadow:0 0 10px rgba(57,184,245,.2)}
+.th-man {padding:14px 8px;font-size:10px;font-weight:800;letter-spacing:.14em;text-transform:uppercase;background:linear-gradient(180deg,#120e2a,#0d0a20);color:#a78bfa;border-left:3px solid #3a2070;text-shadow:0 0 10px rgba(167,139,250,.2)}
+.th-tot {padding:14px 8px;font-size:10px;font-weight:800;letter-spacing:.14em;text-transform:uppercase;background:linear-gradient(180deg,#081a10,#051209);color:#3ddc84;border-left:3px solid #1a5030;text-shadow:0 0 10px rgba(61,220,132,.2)}
+.th-sub{font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;padding:9px 5px;border-top:1px solid #0e2035}
+.th-sub.s-bot {color:#f5a623;background:#0f0900;border-left:3px solid #5a3a00}
+.th-sub.s-auto{color:#39b8f5;background:#061220;border-left:3px solid #1a4060}
+.th-sub.s-man {color:#a78bfa;background:#090619;border-left:3px solid #3a2070}
+.th-sub.s-tot {color:#3ddc84;background:#040e08;border-left:3px solid #1a5030}
+.th-sub.fail{color:#e05c5c}.th-sub.dnp{color:#5a7a90}
+td{text-align:center;padding:15px 5px;font-size:15px;font-weight:600;color:#9ab8cc;background:#07111e;border-top:1px solid #0e2035}
+td.td-college{text-align:left;padding:15px 18px;font-size:14px;font-weight:700;color:#cce0f0;background:#07111e;border-right:1px solid #0e2035}
+td.fail{color:#e05c5c;font-weight:600}
+td.dnp{color:#5a7a90}
+td.bot-sub{color:#f5a623;font-weight:700;background:#0a0800}
+td.t-proc{color:#39b8f5;font-weight:700;background:#06101a}
+td.bl-bot {border-left:3px solid #5a3a00;background:#0a0800}
+td.bl-man {border-left:3px solid #3a2070;background:#08061a}
+td.bl-tot {border-left:3px solid #1a5030;background:#04100a}
+td.bl-auto{border-left:3px solid #1a4060;background:#06101a}
+tr:hover td{filter:brightness(1.12)}
+tr.grand td{border-top:3px solid #1c3d5a;font-weight:800;font-size:16px}
+tr.grand td.td-college{color:#39b8f5;background:#0a1e35;font-size:14px}
+tr.grand td{color:#c0d8ec;background:#081828}
+tr.grand td.bot-sub{color:#f5a623;background:#100e00}
+tr.grand td.t-proc{color:#39b8f5;background:#061828}
+tr.grand td.fail{color:#ff7070}
+tr.grand td.dnp{color:#6a8fa8}
+tr.grand td.bl-bot {background:#100e00;border-left:3px solid #5a3a00}
+tr.grand td.bl-auto{background:#061828;border-left:3px solid #1a4060}
+tr.grand td.bl-man {background:#0a0820;border-left:3px solid #3a2070}
+tr.grand td.bl-tot {background:#041408;border-left:3px solid #1a5030}
+tr.summary td{border-top:3px solid #1e5a82;padding:17px 8px;font-size:18px;font-weight:800}
+td.sum-label{text-align:left;padding-left:18px;font-size:14px;font-weight:700;color:#7faec9;background:#091828;border-right:1px solid #0e2035}
+td.s-bot {background:#160d00;color:#f5a623;border-left:3px solid #5a3a00;font-size:20px}
+td.s-auto{background:#071828;color:#39b8f5;border-left:3px solid #1a4060;font-size:20px}
+td.s-man {background:#0b0820;color:#a78bfa;border-left:3px solid #3a2070;font-size:20px}
+td.s-tot {background:#040e06;color:#3ddc84;border-left:3px solid #1a5030;font-size:20px}
+.rr-note{margin-top:16px;font-size:12px;color:#2a4a60;text-align:right;letter-spacing:.05em}</style></head><body><div class=rr-root>
+<div class=rr-header-row>
+  <div><div class=rr-top-badge>All Sources</div><div class=rr-title>Regular API Recon Report</div></div>
+  <div class=rr-date-box>27 May 2026</div>
+</div>
+<div class=rr-table-wrap><table>
+<thead>
+<tr>
+  <th class=th-college rowspan=2>College Name</th>
+  <th class=th-bot  colspan=2>Bot</th>
+  <th class=th-auto colspan=3>Auto Recon</th>
+  <th class=th-man  colspan=3>Manual Recon</th>
+  <th class=th-tot  colspan=3>Total</th>
+</tr>
+<tr>
+  <th class="th-sub s-bot">Submitted</th><th class="th-sub fail">Fail</th>
+  <th class="th-sub s-auto">Proceed</th><th class="th-sub fail">Fail</th><th class="th-sub dnp">DNP</th>
+  <th class="th-sub s-man">Proceed</th><th class="th-sub fail">Fail</th><th class="th-sub dnp">DNP</th>
+  <th class="th-sub s-tot">Proceed</th><th class="th-sub fail">Fail</th><th class="th-sub dnp">DNP</th>
+</tr>
+</thead>
+<tbody><tr>
+<td class=td-college>Chandigarh Group of Colleges, Landran (CGC)</td>
+<td class=bot-sub>&mdash;</td><td class="fail bl-bot">&mdash;</td>
+<td class="t-proc bl-auto">196</td><td class=fail>59</td><td class=dnp>79</td>
+<td class="t-proc bl-man">3</td><td class=fail>&mdash;</td><td class=dnp>&mdash;</td>
+<td class="t-proc bl-tot">199</td><td class=fail>59</td><td class=dnp>79</td>
+</tr>
+<tr>
+<td class=td-college>Chandigarh University, Lucknow</td>
+<td class=bot-sub>9</td><td class="fail bl-bot">1</td>
+<td class="t-proc bl-auto">&mdash;</td><td class=fail>&mdash;</td><td class=dnp>&mdash;</td>
+<td class="t-proc bl-man">1</td><td class=fail>&mdash;</td><td class=dnp>&mdash;</td>
+<td class="t-proc bl-tot">1</td><td class=fail>&mdash;</td><td class=dnp>&mdash;</td>
+</tr>
+<tr>
+<td class=td-college>Chandigarh University, Mohali</td>
+<td class=bot-sub>178</td><td class="fail bl-bot">46</td>
+<td class="t-proc bl-auto">58</td><td class=fail>&mdash;</td><td class=dnp>30</td>
+<td class="t-proc bl-man">6</td><td class=fail>&mdash;</td><td class=dnp>7</td>
+<td class="t-proc bl-tot">64</td><td class=fail>&mdash;</td><td class=dnp>35</td>
+</tr>
+<tr>
+<td class=td-college>Lovely Professional University</td>
+<td class=bot-sub>&mdash;</td><td class="fail bl-bot">&mdash;</td>
+<td class="t-proc bl-auto">12</td><td class=fail>&mdash;</td><td class=dnp>3</td>
+<td class="t-proc bl-man">2</td><td class=fail>&mdash;</td><td class=dnp>4</td>
+<td class="t-proc bl-tot">14</td><td class=fail>&mdash;</td><td class=dnp>7</td>
+</tr>
+<tr class=grand>
+<td class=td-college>Grand Total</td>
+<td class=bot-sub>187</td><td class="fail bl-bot">47</td>
+<td class="t-proc bl-auto">266</td><td class=fail>59</td><td class=dnp>112</td>
+<td class="t-proc bl-man">12</td><td class=fail>&mdash;</td><td class=dnp>11</td>
+<td class="t-proc bl-tot">278</td><td class=fail>59</td><td class=dnp>121</td>
+</tr>
+<tr class=summary>
+<td class=sum-label>Summary Total</td>
+<td colspan=2 class=s-bot>234</td>
+<td colspan=3 class=s-auto>437</td>
+<td colspan=3 class=s-man>23</td>
+<td colspan=3 class=s-tot>458</td>
+</tr>
+</tbody>
+</table></div>
+<div class=rr-note>458 total records | 27 May 2026</div>
+</div></body></html>
