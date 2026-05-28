@@ -53,20 +53,40 @@ DB_CONFIG = {
     "password": os.getenv("REGULAR_LMS_DB_PASSWORD"),
 }
 
-# ─── DATE LOGIC (IST, before 6AM = previous day) ────────────────────────────────
+# ─── DATE LOGIC ────────────────────────────────────────────────────────────────
+# Usage: python script.py [date YYYY-MM-DD] [cutoff_hour IST (optional)] [start_hour IST (optional)]
+#   10 AM  → yesterday full day      → date=yesterday, no cutoff
+#   12 PM  → today midnight→12 PM    → date=today,     cutoff=12
+#   4 PM   → today 12 PM→4 PM        → date=today,     cutoff=16, start=12
+CUTOFF_HOUR = None
+START_HOUR = None
 if len(sys.argv) > 1:
     REPORT_DATE_STR = sys.argv[1]
+    if len(sys.argv) > 2:
+        CUTOFF_HOUR = int(sys.argv[2])
+    if len(sys.argv) > 3:
+        START_HOUR = int(sys.argv[3])
 else:
     now_utc = datetime.utcnow()
     now_ist = now_utc + timedelta(hours=5, minutes=30)
     report_date = now_ist - timedelta(days=1) if now_ist.hour < 6 else now_ist
     REPORT_DATE_STR = report_date.strftime('%Y-%m-%d')
 
-# Timestamp of this run (IST) — appended to all output filenames
 _run_ist = datetime.utcnow() + timedelta(hours=5, minutes=30)
 RUN_STAMP = _run_ist.strftime('%Y-%m-%d_%H-%M')
 
-print(f"📅 Report Date: {REPORT_DATE_STR}")
+if CUTOFF_HOUR:
+    if START_HOUR:
+        DISPLAY_LABEL = f"{REPORT_DATE_STR} ({START_HOUR}:00 → {CUTOFF_HOUR}:00 IST)"
+        STATUS_LABEL = f"{REPORT_DATE_STR}_{START_HOUR}IST_to_{CUTOFF_HOUR}IST"
+    else:
+        DISPLAY_LABEL = f"{REPORT_DATE_STR} (midnight → {CUTOFF_HOUR}:00 IST)"
+        STATUS_LABEL = f"{REPORT_DATE_STR}_until_{CUTOFF_HOUR}IST"
+else:
+    DISPLAY_LABEL = f"{REPORT_DATE_STR} (full day)"
+    STATUS_LABEL = f"{REPORT_DATE_STR}_full_day"
+
+print(f"📅 Report Date: {DISPLAY_LABEL}")
 
 
 STATUS_NORMALIZE = {
@@ -82,38 +102,60 @@ STATUS_NORMALIZE = {
 # DB QUERIES
 # ═══════════════════════════════════════════════════════════════════════════════
 
-async def fetch_all_sources(date_str):
+async def fetch_all_sources(date_str, cutoff_hour=None, start_hour=None):
     """
     Fetch per-college counts segregated by sent_type: bot / auto / manual.
-    Each section is deduplicated independently (DISTINCT per college+type+status).
-    Total Proceed/Fail/DNP deduplicates across auto+manual combined.
+    If cutoff_hour is set (e.g., 12 or 16), only include records up to that hour IST.
+    If start_hour is set (e.g., 12), start from that hour IST (default: midnight).
+    Otherwise, include the full day.
     """
     conn = await asyncpg.connect(**DB_CONFIG)
     try:
-        rows = await conn.fetch("""
-            SELECT
-                college_name,
-                -- BOT
-                COUNT(DISTINCT CASE WHEN sent_type='bot' AND api_sent_status='Submitted via Bot (Direct Portal)' THEN student_id END) AS bot_submitted,
-                COUNT(DISTINCT CASE WHEN sent_type='bot' AND api_sent_status='Failed due to Technical Issues'    THEN student_id END) AS bot_fail,
-                -- AUTO
-                COUNT(DISTINCT CASE WHEN sent_type='auto' AND api_sent_status='Proceed'                                              THEN student_id END) AS auto_proceed,
-                COUNT(DISTINCT CASE WHEN sent_type='auto' AND api_sent_status='Failed due to Technical Issues'                       THEN student_id END) AS auto_fail,
-                COUNT(DISTINCT CASE WHEN sent_type='auto' AND api_sent_status IN ('Do not Proceed','Do not Proceed (Still) ')         THEN student_id END) AS auto_dnp,
-                -- MANUAL
-                COUNT(DISTINCT CASE WHEN sent_type='manual' AND api_sent_status='Proceed'                                            THEN student_id END) AS manual_proceed,
-                COUNT(DISTINCT CASE WHEN sent_type='manual' AND api_sent_status='Failed due to Technical Issues'                     THEN student_id END) AS manual_fail,
-                COUNT(DISTINCT CASE WHEN sent_type='manual' AND api_sent_status IN ('Do not Proceed','Do not Proceed (Still) ')       THEN student_id END) AS manual_dnp,
-                -- TOTAL (deduped across auto+manual)
-                COUNT(DISTINCT CASE WHEN sent_type IN ('auto','manual') AND api_sent_status='Proceed'                                THEN student_id END) AS total_proceed,
-                COUNT(DISTINCT CASE WHEN sent_type IN ('auto','manual') AND api_sent_status='Failed due to Technical Issues'         THEN student_id END) AS total_fail,
-                COUNT(DISTINCT CASE WHEN sent_type IN ('auto','manual') AND api_sent_status IN ('Do not Proceed','Do not Proceed (Still) ') THEN student_id END) AS total_dnp
-            FROM student_college_api_sent_status
-            WHERE created_at >= $1::date - interval '5 hours 30 minutes'
-              AND created_at <  $1::date + interval '1 day' - interval '5 hours 30 minutes'
-            GROUP BY college_name
-            ORDER BY college_name
-        """, datetime.strptime(date_str, '%Y-%m-%d').date())
+        date_part = datetime.strptime(date_str, '%Y-%m-%d').date()
+        if cutoff_hour is not None:
+            lower_offset = f'{start_hour} hours' if start_hour is not None else '0 hours'
+            upper_offset = f'{cutoff_hour} hours'
+            rows = await conn.fetch(f"""
+                SELECT
+                    college_name,
+                    COUNT(DISTINCT CASE WHEN sent_type='bot' AND api_sent_status='Submitted via Bot (Direct Portal)' THEN student_id END) AS bot_submitted,
+                    COUNT(DISTINCT CASE WHEN sent_type='bot' AND api_sent_status='Failed due to Technical Issues'    THEN student_id END) AS bot_fail,
+                    COUNT(DISTINCT CASE WHEN sent_type='auto' AND api_sent_status='Proceed'                                              THEN student_id END) AS auto_proceed,
+                    COUNT(DISTINCT CASE WHEN sent_type='auto' AND api_sent_status='Failed due to Technical Issues'                       THEN student_id END) AS auto_fail,
+                    COUNT(DISTINCT CASE WHEN sent_type='auto' AND api_sent_status IN ('Do not Proceed','Do not Proceed (Still) ')         THEN student_id END) AS auto_dnp,
+                    COUNT(DISTINCT CASE WHEN sent_type='manual' AND api_sent_status='Proceed'                                            THEN student_id END) AS manual_proceed,
+                    COUNT(DISTINCT CASE WHEN sent_type='manual' AND api_sent_status='Failed due to Technical Issues'                     THEN student_id END) AS manual_fail,
+                    COUNT(DISTINCT CASE WHEN sent_type='manual' AND api_sent_status IN ('Do not Proceed','Do not Proceed (Still) ')       THEN student_id END) AS manual_dnp,
+                    COUNT(DISTINCT CASE WHEN sent_type IN ('auto','manual') AND api_sent_status='Proceed'                                THEN student_id END) AS total_proceed,
+                    COUNT(DISTINCT CASE WHEN sent_type IN ('auto','manual') AND api_sent_status='Failed due to Technical Issues'         THEN student_id END) AS total_fail,
+                    COUNT(DISTINCT CASE WHEN sent_type IN ('auto','manual') AND api_sent_status IN ('Do not Proceed','Do not Proceed (Still) ') THEN student_id END) AS total_dnp
+                FROM student_college_api_sent_status
+                WHERE created_at >= $1::date - interval '5 hours 30 minutes' + interval '{lower_offset}'
+                  AND created_at <  $1::date - interval '5 hours 30 minutes' + interval '{upper_offset}'
+                GROUP BY college_name
+                ORDER BY college_name
+            """, date_part)
+        else:
+            rows = await conn.fetch(f"""
+                SELECT
+                    college_name,
+                    COUNT(DISTINCT CASE WHEN sent_type='bot' AND api_sent_status='Submitted via Bot (Direct Portal)' THEN student_id END) AS bot_submitted,
+                    COUNT(DISTINCT CASE WHEN sent_type='bot' AND api_sent_status='Failed due to Technical Issues'    THEN student_id END) AS bot_fail,
+                    COUNT(DISTINCT CASE WHEN sent_type='auto' AND api_sent_status='Proceed'                                              THEN student_id END) AS auto_proceed,
+                    COUNT(DISTINCT CASE WHEN sent_type='auto' AND api_sent_status='Failed due to Technical Issues'                       THEN student_id END) AS auto_fail,
+                    COUNT(DISTINCT CASE WHEN sent_type='auto' AND api_sent_status IN ('Do not Proceed','Do not Proceed (Still) ')         THEN student_id END) AS auto_dnp,
+                    COUNT(DISTINCT CASE WHEN sent_type='manual' AND api_sent_status='Proceed'                                            THEN student_id END) AS manual_proceed,
+                    COUNT(DISTINCT CASE WHEN sent_type='manual' AND api_sent_status='Failed due to Technical Issues'                     THEN student_id END) AS manual_fail,
+                    COUNT(DISTINCT CASE WHEN sent_type='manual' AND api_sent_status IN ('Do not Proceed','Do not Proceed (Still) ')       THEN student_id END) AS manual_dnp,
+                    COUNT(DISTINCT CASE WHEN sent_type IN ('auto','manual') AND api_sent_status='Proceed'                                THEN student_id END) AS total_proceed,
+                    COUNT(DISTINCT CASE WHEN sent_type IN ('auto','manual') AND api_sent_status='Failed due to Technical Issues'         THEN student_id END) AS total_fail,
+                    COUNT(DISTINCT CASE WHEN sent_type IN ('auto','manual') AND api_sent_status IN ('Do not Proceed','Do not Proceed (Still) ') THEN student_id END) AS total_dnp
+                FROM student_college_api_sent_status
+                WHERE created_at >= $1::date - interval '5 hours 30 minutes'
+                  AND created_at <  $1::date + interval '1 day' - interval '5 hours 30 minutes'
+                GROUP BY college_name
+                ORDER BY college_name
+            """, date_part)
         return [dict(r) for r in rows]
     finally:
         await conn.close()
@@ -343,11 +385,36 @@ async def main():
     print("=" * 60)
     print("📊 REGULAR API RECON REPORTS — ALL Sources")
     print("=" * 60)
-    print(f"   Date: {REPORT_DATE_STR}")
+    print(f"   Date      : {DISPLAY_LABEL}")
+    print(f"   Start Hour: {START_HOUR}")
+    print(f"   Cutoff    : {CUTOFF_HOUR}")
+    print(f"   Python    : {sys.executable}")
+    print(f"   CWD       : {os.getcwd()}")
+    print(f"   Base Dir  : {BASE_DIR}")
+
+    # ── CHECK ENV ────────────────────────────────────────────────────────
+    print("\n─── Environment Check ─────────────────────────────────────────")
+    for key in ('REGULAR_LMS_DB_HOST', 'REGULAR_LMS_DB_PORT', 'REGULAR_LMS_DB_NAME',
+                'REGULAR_LMS_DB_USER', 'REGULAR_LMS_DB_PASSWORD', 'WHAPI_TOKEN',
+                'WHATSAPP_GROUP', 'GOOGLE_TOKEN_JSON', 'GOOGLE_CLIENT_SECRET_JSON'):
+        val = os.getenv(key)
+        if val:
+            masked = val[:6] + '...' + val[-4:] if len(val) > 12 else '***'
+            print(f"   ✓  {key} = {masked}")
+        else:
+            print(f"   ✗  {key} = NOT SET")
 
     # ── STEP 1: ALL Sources ──────────────────────────────────────────────
     print("\n─── ALL Sources ─────────────────────────────────────────────────")
-    all_rows = await fetch_all_sources(REPORT_DATE_STR)
+    print(f"   Calling fetch_all_sources(date={REPORT_DATE_STR}, cutoff={CUTOFF_HOUR}, start={START_HOUR})")
+    try:
+        all_rows = await fetch_all_sources(REPORT_DATE_STR, CUTOFF_HOUR, START_HOUR)
+    except Exception as e:
+        import traceback
+        print(f"❌  DB QUERY FAILED: {e}")
+        traceback.print_exc()
+        sys.exit(1)
+
     print(f"  Rows: {len(all_rows)}")
     for r in all_rows:
         print(f"    {r['college_name']} | bot={r['bot_submitted']}/{r['bot_fail']} auto={r['auto_proceed']}/{r['auto_fail']}/{r['auto_dnp']} manual={r['manual_proceed']}/{r['manual_fail']}/{r['manual_dnp']} total={r['total_proceed']}/{r['total_fail']}/{r['total_dnp']}")
@@ -355,17 +422,24 @@ async def main():
     all_matrix = transform_to_matrix(all_rows)
     print(f"  Colleges: {len(all_matrix)}")
 
-    all_file, all_stats = generate_html(
-        all_matrix, REPORT_DATE_STR,
-        "Regular API Recon — All Sources",
-        f"Regular_Recon_All_{RUN_STAMP}.html"
-    )
+    try:
+        all_file, all_stats = generate_html(
+            all_matrix, REPORT_DATE_STR,
+            f"API Recon — All Sources — {DISPLAY_LABEL}",
+            f"Regular_Recon_All_{STATUS_LABEL}_{RUN_STAMP}.html"
+        )
+        print(f"  HTML written to: {all_file}")
+    except Exception as e:
+        import traceback
+        print(f"❌  HTML GENERATION FAILED: {e}")
+        traceback.print_exc()
+        sys.exit(1)
 
     # ── STEP 2: Summary ──────────────────────────────────────────────────
     print("\n" + "=" * 60)
     print("SUMMARY STATS")
     print("=" * 60)
-    print(f"\n  ALL SOURCES — {REPORT_DATE_STR}")
+    print(f"\n  ALL SOURCES — {DISPLAY_LABEL}")
     for k, v in all_stats.items():
         if k != 'filepath':
             print(f"    {k}: {v}")
@@ -373,11 +447,21 @@ async def main():
     # ── STEP 3: WHAPI send (best-effort) ─────────────────────────────────
     print("\n─── Sending to WhatsApp (best-effort) ────────────────────────────")
     files_to_send = [
-        (all_file, f"API Recon — All Sources — {REPORT_DATE_STR}"),
+        (all_file, f"API Recon — All Sources — {DISPLAY_LABEL}"),
     ]
+    whapi_ok = 0
+    whapi_fail = 0
     for fp, cap in files_to_send:
         if fp and os.path.exists(fp):
-            send_via_whapi(fp, cap)
+            print(f"   Sending: {os.path.basename(fp)}  ({os.path.getsize(fp)} bytes)")
+            if send_via_whapi(fp, cap):
+                whapi_ok += 1
+            else:
+                whapi_fail += 1
+        else:
+            print(f"   SKIP — file not found: {fp}")
+            whapi_fail += 1
+    print(f"   WHAPI results: {whapi_ok} sent, {whapi_fail} failed/skipped")
 
     # ── STEP 4: Delivery manifest ────────────────────────────────────────
     manifest = {
@@ -397,6 +481,24 @@ async def main():
     with open(manifest_path, 'w') as f:
         json.dump(manifest, f, indent=2)
     print(f"\n  📋 Manifest: {manifest_path}")
+    print(f"  📋 Files in manifest: {len(manifest['files'])}")
+
+    # ── STEP 5: Cleanup output folder ────────────────────────────────────
+    import shutil
+    print("\n─── Cleaning up output folder ───────────────────────────────────")
+    removed = 0
+    for item in os.listdir(OUTPUT_DIR):
+        item_path = os.path.join(OUTPUT_DIR, item)
+        try:
+            if os.path.isfile(item_path):
+                os.remove(item_path)
+                removed += 1
+            elif os.path.isdir(item_path):
+                shutil.rmtree(item_path)
+                removed += 1
+        except Exception as e:
+            print(f"   ⚠️  Could not remove: {item} — {e}")
+    print(f"   Cleaned: {removed} items removed from {OUTPUT_DIR}")
 
     print("\n" + "=" * 60)
     print("✅ ALL RECON REPORTS GENERATED")

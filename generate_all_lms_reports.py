@@ -953,35 +953,43 @@ async def main():
     print()
 
     # ── STEP 1: Online LMS ─────────────────────────────────────────────────
-    print("─── Online LMS Report ─────────────────────────────────────────────")
+    print("─── STEP 1/3: Online LMS Report ────────────────────────────────────")
     online_summary = None
     try:
+        print("  [1a] Fetching online LMS data from DB...")
         df_couns, df_adm, df_form = await online_get_data()
+        print("  [1b] Preparing online LMS data...")
         online_sheets = online_prepare_data(df_couns, df_adm, df_form)
+        print("  [1c] Generating online LMS HTML report...")
         online_html, online_summary = online_generate_html(online_sheets)
+        print("  ✅ STEP 1 complete — Online LMS report generated")
         print()
     except Exception as e:
-        print(f"❌ Online LMS failed: {e}")
+        print(f"  ❌ STEP 1 FAILED: {e}")
         import traceback
-        traceback.print_exc()
+        traceback.print_exc(file=sys.stdout)
         online_html = None
 
     # ── STEP 2: Regular LMS ────────────────────────────────────────────────
-    print("─── Regular LMS Report ────────────────────────────────────────────")
+    print("─── STEP 2/3: Regular LMS Report ───────────────────────────────────")
     regular_summary = None
     try:
+        print("  [2a] Fetching regular LMS data from DB (REGULAR + CGC + AMITY)...")
         reg_adm, reg_forms = await regular_get_data()
+        print("  [2b] Preparing regular LMS data...")
         regular_sheets = regular_prepare_data(reg_adm, reg_forms)
+        print("  [2c] Generating regular LMS HTML report...")
         regular_html, regular_summary = regular_generate_html(regular_sheets)
+        print("  ✅ STEP 2 complete — Regular LMS report generated")
         print()
     except Exception as e:
-        print(f"❌ Regular LMS failed: {e}")
+        print(f"  ❌ STEP 2 FAILED: {e}")
         import traceback
-        traceback.print_exc()
+        traceback.print_exc(file=sys.stdout)
         regular_html = None
 
     # ── STEP 3: Send All Files (best-effort) ───────────────────────────────
-    print("─── Sending to WhatsApp Group (best-effort) ───────────────────────")
+    print("─── STEP 3/3: Sending to WhatsApp + Logging ────────────────────────")
     files_to_send = [
         (online_html,  f"Online LMS Dashboard — {FTD_DATE}",  online_summary,  "Online LMS"),
         (regular_html, f"Regular LMS Dashboard — {FTD_DATE}", regular_summary, "Regular LMS"),
@@ -990,14 +998,16 @@ async def main():
     whapi_results = {}
     for filepath, caption, summary, report_name in files_to_send:
         if filepath and os.path.exists(filepath):
+            print(f"  [3a] Sending {report_name} via WHAPI ({os.path.basename(filepath)})...")
             sent = send_via_whapi(filepath, caption)
             whapi_results[report_name] = sent
         else:
-            print(f"  ⚠️  Skipping (not generated): {caption}")
+            reason = "not generated (exception in earlier step)" if filepath is None else f"file missing at: {filepath}"
+            print(f"  ⚠️  Skipping {report_name}: {reason}")
             whapi_results[report_name] = False
 
     # ── STEP 3b: Log to Google Sheets Report_Logs ─────────────────────────
-    print("─── Logging to Report_Logs sheet ──────────────────────────────────")
+    print("  [3b] Logging to Google Sheets Report_Logs...")
     for filepath, caption, summary, report_name in files_to_send:
         if filepath and os.path.exists(filepath) and summary:
             log_report(FTD_DATE, report_name, summary, whapi_results.get(report_name, False))
@@ -1021,6 +1031,23 @@ async def main():
     with open(manifest_path, 'w') as f:
         json.dump(manifest, f, indent=2)
     print(f"\n📋 Delivery manifest: {manifest_path}")
+
+    # ── STEP 5: Cleanup output folder ─────────────────────────────────────
+    import shutil
+    print("\n─── Cleaning up output folder ───────────────────────────────────")
+    removed = 0
+    for item in os.listdir(OUTPUT_DIR):
+        item_path = os.path.join(OUTPUT_DIR, item)
+        try:
+            if os.path.isfile(item_path):
+                os.remove(item_path)
+                removed += 1
+            elif os.path.isdir(item_path):
+                shutil.rmtree(item_path)
+                removed += 1
+        except Exception as e:
+            print(f"   ⚠️  Could not remove: {item} — {e}")
+    print(f"   Cleaned: {removed} items removed from {OUTPUT_DIR}")
 
     print()
     print("=" * 60)
