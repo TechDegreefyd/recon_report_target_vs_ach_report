@@ -21,7 +21,7 @@ import json
 import base64
 import time
 import html as html_mod
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, UTC
 from dotenv import load_dotenv
 
 try:
@@ -67,12 +67,12 @@ if len(sys.argv) > 1:
     if len(sys.argv) > 3:
         START_HOUR = int(sys.argv[3])
 else:
-    now_utc = datetime.utcnow()
+    now_utc = datetime.now(UTC)
     now_ist = now_utc + timedelta(hours=5, minutes=30)
     report_date = now_ist - timedelta(days=1) if now_ist.hour < 6 else now_ist
     REPORT_DATE_STR = report_date.strftime('%Y-%m-%d')
 
-_run_ist = datetime.utcnow() + timedelta(hours=5, minutes=30)
+_run_ist = datetime.now(UTC) + timedelta(hours=5, minutes=30)
 RUN_STAMP = _run_ist.strftime('%Y-%m-%d_%H-%M')
 
 if CUTOFF_HOUR:
@@ -466,7 +466,7 @@ async def main():
     # ── STEP 4: Delivery manifest ────────────────────────────────────────
     manifest = {
         "date": REPORT_DATE_STR,
-        "generated_at": datetime.utcnow().isoformat() + "Z",
+        "generated_at": datetime.now(UTC).isoformat() + "Z",
         "files": []
     }
     for fp, cap in files_to_send:

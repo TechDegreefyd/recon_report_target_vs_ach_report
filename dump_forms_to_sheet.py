@@ -26,7 +26,7 @@ import sys
 if sys.stdout.encoding != 'utf-8':
     sys.stdout.reconfigure(encoding='utf-8')
 import json
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, UTC
 from dotenv import load_dotenv
 
 from google.oauth2.credentials import Credentials
@@ -45,7 +45,7 @@ load_dotenv(os.path.join(BASE_DIR, '.env'))
 if len(sys.argv) > 1:
     REPORT_DATE_STR = sys.argv[1]
 else:
-    now_utc = datetime.utcnow()
+    now_utc = datetime.now(UTC)
     now_ist = now_utc + timedelta(hours=5, minutes=30)
     report_date = now_ist - timedelta(days=1)
     REPORT_DATE_STR = report_date.strftime('%Y-%m-%d')

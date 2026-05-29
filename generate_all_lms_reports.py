@@ -31,7 +31,7 @@ if sys.stdout.encoding != 'utf-8':
 import pandas as pd
 import asyncpg
 import requests
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, UTC
 from dotenv import load_dotenv
 
 from sheets_config import load_online_config, load_regular_config, log_report
@@ -55,7 +55,7 @@ WHATSAPP_GROUP = os.getenv('WHATSAPP_GROUP', '120363426619711887@g.us')
 if os.getenv('REPORT_DATE'):
     report_date = datetime.strptime(os.getenv('REPORT_DATE'), '%Y-%m-%d')
 else:
-    now_utc = datetime.utcnow()
+    now_utc = datetime.now(UTC)
     now_ist = now_utc + timedelta(hours=5, minutes=30)
     report_date = now_ist - timedelta(days=1) if now_ist.hour < 6 else now_ist
 
@@ -66,7 +66,7 @@ MONTH_LABEL = report_date.strftime('%B %Y')
 MONTH_SHORT = report_date.strftime('%b')
 
 # Timestamp of this run (IST) — appended to all output filenames
-_run_ist = datetime.utcnow() + timedelta(hours=5, minutes=30)
+_run_ist = datetime.now(UTC) + timedelta(hours=5, minutes=30)
 RUN_STAMP = _run_ist.strftime('%Y-%m-%d_%H-%M')
 
 print(f"📅 Report Date (FTD): {FTD_DATE}")
@@ -1015,7 +1015,7 @@ async def main():
     # ── STEP 4: Write delivery manifest (for cron agent) ───────────────────
     manifest = {
         "date": FTD_DATE,
-        "generated_at": datetime.utcnow().isoformat() + "Z",
+        "generated_at": datetime.now(UTC).isoformat() + "Z",
         "files": []
     }
     for filepath, caption, _summary, _name in files_to_send:

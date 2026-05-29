@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-REPORT CRON SERVER — IST Scheduler (APScheduler)
+REPORT CRON SERVER — UTC Scheduler (APScheduler)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Long-running process that runs report scripts on schedule (Indian Standard Time).
+Long-running process that runs report scripts on schedule (UTC times, IST-equivalent).
 
   • LMS Reports (Online + Regular)  → generate_all_lms_reports.py
   • Recon Report                    → generate_all_recon_reports.py
@@ -41,32 +41,32 @@ if os.getenv('GOOGLE_CLIENT_SECRET_JSON'):
         fh.write(os.getenv('GOOGLE_CLIENT_SECRET_JSON'))
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# SCHEDULE  —  (hour, minute, script_filename, label, args_fn)  |  24h clock, IST
+# SCHEDULE  —  (hour, minute, script_filename, label, args_fn)  |  24h clock, UTC
 #                                              args_fn() → [date_str, cutoff_hour?]
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def _yesterday_full():
-    """10 AM: previous full day's recon data."""
+    """10 AM IST (4:30 UTC): previous full day's recon data."""
     now_ist = datetime.now(IST)
     yesterday = now_ist - timedelta(days=1)
     return [yesterday.strftime('%Y-%m-%d')]
 
 def _today_cutoff_12pm():
-    """12 PM: today's recon data from midnight to 12 PM IST."""
+    """12 PM IST (6:30 UTC): today's recon data from midnight to 12 PM IST."""
     now_ist = datetime.now(IST)
     return [now_ist.strftime('%Y-%m-%d'), '12']
 
 def _today_12pm_to_4pm():
-    """4 PM: today's recon data from 12 PM to 4 PM IST."""
+    """4 PM IST (10:30 UTC): today's recon data from 12 PM to 4 PM IST."""
     now_ist = datetime.now(IST)
     return [now_ist.strftime('%Y-%m-%d'), '16', '12']
 
 
 SCHEDULE = [
-    (10, 0,  "generate_all_recon_reports.py",      "Recon — Yesterday (full day)",     _yesterday_full),
-    (12, 0,  "generate_all_recon_reports.py",      "Recon — Today (until 12 PM)",      _today_cutoff_12pm),
-    (16, 0,  "generate_all_recon_reports.py",      "Recon — Today (12 PM → 4 PM)",     _today_12pm_to_4pm),
-    (20, 30, "generate_all_lms_reports.py",        "LMS Reports (Online + Regular)",   None),
+    (4, 30,  "generate_all_recon_reports.py",      "Recon — Yesterday (full day)",     _yesterday_full),
+    (6, 30,  "generate_all_recon_reports.py",      "Recon — Today (until 12 PM)",      _today_cutoff_12pm),
+    (10, 30, "generate_all_recon_reports.py",      "Recon — Today (12 PM → 4 PM)",     _today_12pm_to_4pm),
+    (15, 0,  "generate_all_lms_reports.py",        "LMS Reports (Online + Regular)",   None),
 ]
 
 
@@ -127,7 +127,7 @@ def run_script(script, label, args_fn=None):
 
 
 def main():
-    scheduler = BlockingScheduler(timezone=IST)
+    scheduler = BlockingScheduler(timezone=pytz.UTC)
 
     for hour, minute, script, label, args_fn in SCHEDULE:
         scheduler.add_job(
@@ -138,16 +138,32 @@ def main():
         )
 
     print("=" * 70, flush=True)
-    print("  REPORT CRON SERVER — APScheduler (IST)", flush=True)
+    print("  REPORT CRON SERVER — APScheduler (UTC)", flush=True)
     print("=" * 70, flush=True)
-    print(f"\n  Server time (IST): {ist_now().strftime('%Y-%m-%d %H:%M:%S %Z')}\n", flush=True)
+    print(f"\n  Server time (UTC): {datetime.now(pytz.UTC).strftime('%Y-%m-%d %H:%M:%S %Z')}", flush=True)
+    print(f"  Server time (IST): {datetime.now(IST).strftime('%Y-%m-%d %H:%M:%S %Z')}\n", flush=True)
 
     print("  SCHEDULE:", flush=True)
     for h, m, _, label, _ in SCHEDULE:
-        print(f"    {h:02d}:{m:02d} IST  —  {label}", flush=True)
+        ist_h = (h + 5) % 24
+        ist_m = m + 30
+        if ist_m >= 60:
+            ist_m -= 60
+            ist_h = (ist_h + 1) % 24
+        print(f"    {h:02d}:{m:02d} UTC ({ist_h:02d}:{ist_m:02d} IST)  —  {label}", flush=True)
 
     print(f"\n{'─' * 70}", flush=True)
     print("  Scheduler started. Waiting for jobs...\n", flush=True)
+
+    # ── DEPLOYMENT SMOKE TEST ───────────────────────────────────────────
+    # Runs immediately on startup to verify scheduler + report scripts work.
+    # Generates a real report with current server time, sent to WhatsApp.
+    print("=" * 70, flush=True)
+    print("  🔍 DEPLOY SMOKE TEST — Running recon report now...", flush=True)
+    print("=" * 70, flush=True)
+    run_script("generate_all_recon_reports.py", "SMOKE TEST — Recon (deploy verify)", _yesterday_full)
+    print("=" * 70, flush=True)
+    print("  ✅ SMOKE TEST COMPLETE — Scheduler is live.\n", flush=True)
 
     try:
         scheduler.start()
