@@ -190,7 +190,7 @@ SELECT
     uc.university_name AS institute,
     uc.course_name AS course,
     COALESCE(td.total_deposit, 0) AS course_fee_submitted,
-    to_mgr.counsellor_name AS team_owner,
+    l2_c.counsellor_name AS team_owner,
     s.student_id AS primary_lead_id,
     s.source AS source_name,
     COALESCE(sla.utm_campaign) AS camp_name_for_ref,
@@ -198,9 +198,8 @@ SELECT
 FROM first_form ff
 JOIN students s ON ff.student_id = s.student_id
 JOIN university_courses uc ON ff.course_id = uc.course_id
-LEFT JOIN counsellors l3_c ON ff.assigned_l3_counsellor_id = l3_c.counsellor_id
-LEFT JOIN counsellors to_mgr ON l3_c.assigned_to = to_mgr.counsellor_id
-    AND to_mgr.role ILIKE '%to%'
+LEFT JOIN counsellors l2_c ON s.assigned_counsellor_id = l2_c.counsellor_id
+    AND l2_c.role = 'l2'
 LEFT JOIN latest_fee_type lft ON ff.student_id = lft.student_id AND ff.course_id = lft.course_id
 LEFT JOIN total_deposit td ON ff.student_id = td.student_id AND ff.course_id = td.course_id
 LEFT JOIN deduped_sla sla ON ff.student_id = sla.student_id
@@ -263,23 +262,26 @@ async def fetch_all():
 def write_to_sheet(rows, sheet_title):
     service = get_sheets_service()
 
-    # Clear existing content (skip header row, clear from row 2 down)
+    headers = [
+        'Session', 'Lead Date', 'Lead Month', 'Form Date', 'Form Month', 'Lead Id',
+        'Student Name', 'Admission Type', 'Institute', 'Course', 'Fee Submitted',
+        'Team-Owner', 'Primary Lead ID', 'Source Name', 'Camp Name For Ref', 'Campaign Name'
+    ]
+
+    # Clear everything from A1 down
     print(f"  Clearing existing data from '{sheet_title}'...")
     service.spreadsheets().values().clear(
         spreadsheetId=TARGET_SPREADSHEET_ID,
-        range=f"'{sheet_title}'!A2:P"
+        range=f"'{sheet_title}'!A1:P"
     ).execute()
 
-    if not rows:
-        print("  ⚠️  No rows to write — sheet cleared")
-        return
-
-    # Write all rows in one batch
+    # Write headers + data in one batch
+    all_data = [headers] + rows
     service.spreadsheets().values().update(
         spreadsheetId=TARGET_SPREADSHEET_ID,
-        range=f"'{sheet_title}'!A2",
+        range=f"'{sheet_title}'!A1",
         valueInputOption='USER_ENTERED',
-        body={'values': rows}
+        body={'values': all_data}
     ).execute()
 
     print(f"  ✅ Wrote {len(rows)} rows to '{sheet_title}'")
