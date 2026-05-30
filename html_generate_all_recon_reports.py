@@ -20,7 +20,6 @@ if sys.stdout.encoding != 'utf-8':
 import json
 import base64
 import time
-import shutil
 import html as html_mod
 from datetime import datetime, timedelta, UTC
 from dotenv import load_dotenv
@@ -218,24 +217,20 @@ def generate_html(matrix, report_date, title, filename):
                         ( bot_s,  bot_f,  ap,  af,  ad,  mp,  mf,  md,  tp,  tf,  td)):
             gt[k] += v
 
-        final_tot = bot_s + bot_f + tp + tf + td
         rows_html += f"""<tr>
 <td class=td-college>{college}</td>
 <td class=bot-sub>{_v(bot_s)}</td><td class="fail bl-bot">{_v(bot_f)}</td>
 <td class="t-proc bl-auto">{_v(ap)}</td><td class=fail>{_v(af)}</td><td class=dnp>{_v(ad)}</td>
 <td class="t-proc bl-man">{_v(mp)}</td><td class=fail>{_v(mf)}</td><td class=dnp>{_v(md)}</td>
 <td class="t-proc bl-tot">{_v(tp)}</td><td class=fail>{_v(tf)}</td><td class=dnp>{_v(td)}</td>
-<td class="bl-final final-tot">{_v(final_tot)}</td>
 </tr>\n"""
 
-    gt_final = gt['bot_s'] + gt['bot_f'] + gt['tp'] + gt['tf'] + gt['td']
     grand_row = f"""<tr class=grand>
 <td class=td-college>Grand Total</td>
 <td class=bot-sub>{_v(gt['bot_s'])}</td><td class="fail bl-bot">{_v(gt['bot_f'])}</td>
 <td class="t-proc bl-auto">{_v(gt['ap'])}</td><td class=fail>{_v(gt['af'])}</td><td class=dnp>{_v(gt['ad'])}</td>
 <td class="t-proc bl-man">{_v(gt['mp'])}</td><td class=fail>{_v(gt['mf'])}</td><td class=dnp>{_v(gt['md'])}</td>
 <td class="t-proc bl-tot">{_v(gt['tp'])}</td><td class=fail>{_v(gt['tf'])}</td><td class=dnp>{_v(gt['td'])}</td>
-<td class="bl-final final-tot">{_v(gt_final)}</td>
 </tr>\n"""
 
     grand_total = gt['tp'] + gt['tf'] + gt['td']
@@ -246,7 +241,6 @@ def generate_html(matrix, report_date, title, filename):
 <td colspan=3 class=s-auto>{gt['ap'] + gt['af'] + gt['ad']}</td>
 <td colspan=3 class=s-man>{gt['mp'] + gt['mf'] + gt['md']}</td>
 <td colspan=3 class=s-tot>{gt['tp'] + gt['tf'] + gt['td']}</td>
-<td class="s-final">{gt_final}</td>
 </tr>\n"""
 
     css = """@import url('https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700;800&family=Barlow+Condensed:wght@600;700;800&display=swap');
@@ -300,11 +294,6 @@ td.s-bot {background:#160d00;color:#f5a623;border-left:3px solid #5a3a00;font-si
 td.s-auto{background:#071828;color:#39b8f5;border-left:3px solid #1a4060;font-size:20px}
 td.s-man {background:#0b0820;color:#a78bfa;border-left:3px solid #3a2070;font-size:20px}
 td.s-tot {background:#040e06;color:#3ddc84;border-left:3px solid #1a5030;font-size:20px}
-.th-final{padding:14px 8px;font-size:10px;font-weight:800;letter-spacing:.14em;text-transform:uppercase;background:linear-gradient(180deg,#1a0a1a,#130813);color:#e879f9;border-left:3px solid #6a2080;text-shadow:0 0 10px rgba(232,121,249,.2);vertical-align:middle}
-td.bl-final{border-left:3px solid #6a2080;background:#0f050f}
-td.final-tot{color:#e879f9;font-weight:800;font-size:17px}
-tr.grand td.bl-final{background:#180a18;border-left:3px solid #6a2080}
-td.s-final{background:#150a15;color:#e879f9;border-left:3px solid #6a2080;font-size:20px;font-weight:800}
 .rr-note{margin-top:16px;font-size:12px;color:#2a4a60;text-align:right;letter-spacing:.05em}"""
 
     html_doc = f"""<!DOCTYPE html><html><head><meta charset=UTF-8>
@@ -321,7 +310,6 @@ td.s-final{background:#150a15;color:#e879f9;border-left:3px solid #6a2080;font-s
   <th class=th-auto colspan=3>Auto Recon</th>
   <th class=th-man  colspan=3>Manual Recon</th>
   <th class=th-tot  colspan=3>Total</th>
-  <th class=th-final rowspan=2>Final<br>Total</th>
 </tr>
 <tr>
   <th class="th-sub s-bot">Submitted</th><th class="th-sub fail">Fail</th>
@@ -352,30 +340,6 @@ td.s-final{background:#150a15;color:#e879f9;border-left:3px solid #6a2080;font-s
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# SCREENSHOT (Playwright headless Chromium)
-# ═══════════════════════════════════════════════════════════════════════════════
-
-async def screenshot_html(html_path, png_path, viewport_width=1024):
-    try:
-        from playwright.async_api import async_playwright
-    except ImportError:
-        print("  ⚠️  playwright not installed — run: pip install playwright && playwright install chromium")
-        return False
-
-    try:
-        async with async_playwright() as pw:
-            browser = await pw.chromium.launch(args=['--no-sandbox', '--disable-setuid-sandbox'])
-            page = await browser.new_page(viewport={'width': viewport_width, 'height': 900})
-            await page.goto(f'file:///{os.path.abspath(html_path)}', wait_until='networkidle', timeout=30000)
-            await page.locator('.rr-table-wrap').screenshot(path=png_path)
-            await browser.close()
-        print(f"  ✅ Screenshot saved: {os.path.basename(png_path)}")
-        return True
-    except Exception as e:
-        print("  \u26a0\ufe0f  Screenshot failed: " + str(e))
-        return False
-
-# ═══════════════════════════════════════════════════════════════════════════════
 # WHAPI SEND
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -389,17 +353,14 @@ def send_via_whapi(file_path, caption):
     with open(file_path, 'rb') as f:
         b64 = base64.b64encode(f.read()).decode('utf-8')
 
-    is_png = filename.lower().endswith('.png')
-    mime = 'image/png' if is_png else 'text/html'
-    media_data = f'data:{mime};name={filename};base64,{b64}'
+    media_data = f'data:text/html;name={filename};base64,{b64}'
     payload = {'to': WHATSAPP_GROUP, 'media': media_data, 'caption': caption}
     headers = {'accept': 'application/json', 'authorization': f'Bearer {WHAPI_TOKEN}',
                'content-type': 'application/json'}
-    endpoint = 'messages/image' if is_png else 'messages/document'
 
     for attempt in range(2):
         try:
-            r = requests.post(f'https://gate.whapi.cloud/{endpoint}',
+            r = requests.post('https://gate.whapi.cloud/messages/document',
                               headers=headers, json=payload, timeout=20)
             if 200 <= r.status_code < 300:
                 print(f"  ✅ WHAPI sent: {filename}")
@@ -434,9 +395,8 @@ async def main():
     # ── CHECK ENV ────────────────────────────────────────────────────────
     print("\n─── Environment Check ─────────────────────────────────────────")
     for key in ('REGULAR_LMS_DB_HOST', 'REGULAR_LMS_DB_PORT', 'REGULAR_LMS_DB_NAME',
-                'REGULAR_LMS_DB_USER', 'REGULAR_LMS_DB_PASSWORD',
-                'GOOGLE_TOKEN_JSON', 'GOOGLE_CLIENT_SECRET_JSON',
-                'WHAPI_TOKEN', 'WHATSAPP_GROUP'):
+                'REGULAR_LMS_DB_USER', 'REGULAR_LMS_DB_PASSWORD', 'WHAPI_TOKEN',
+                'WHATSAPP_GROUP', 'GOOGLE_TOKEN_JSON', 'GOOGLE_CLIENT_SECRET_JSON'):
         val = os.getenv(key)
         if val:
             masked = val[:6] + '...' + val[-4:] if len(val) > 12 else '***'
@@ -484,21 +444,24 @@ async def main():
         if k != 'filepath':
             print(f"    {k}: {v}")
 
-    # ── STEP 3: Screenshot ───────────────────────────────────────────────
-    print("\n─── Taking Screenshot ───────────────────────────────────────────")
-    png_filename = f"Regular_Recon_All_{STATUS_LABEL}_{RUN_STAMP}.png"
-    png_path = os.path.join(OUTPUT_DIR, png_filename)
-    screenshot_ok = await screenshot_html(all_file, png_path)
-    if not screenshot_ok:
-        print("  \u26a0\ufe0f  Screenshot skipped - HTML still available at: " + all_file)
-
-    # ── STEP 3b: Send via WHAPI (screenshot only) ────────────────────────
-    print("\n─── Sending via WHAPI ───────────────────────────────────────────")
-    if screenshot_ok:
-        caption = f"API Recon — All Sources — {DISPLAY_LABEL}"
-        send_via_whapi(png_path, caption)
-    else:
-        print("  ⚠️  Screenshot failed — nothing sent to WhatsApp")
+    # ── STEP 3: WHAPI send (best-effort) ─────────────────────────────────
+    print("\n─── Sending to WhatsApp (best-effort) ────────────────────────────")
+    files_to_send = [
+        (all_file, f"API Recon — All Sources — {DISPLAY_LABEL}"),
+    ]
+    whapi_ok = 0
+    whapi_fail = 0
+    for fp, cap in files_to_send:
+        if fp and os.path.exists(fp):
+            print(f"   Sending: {os.path.basename(fp)}  ({os.path.getsize(fp)} bytes)")
+            if send_via_whapi(fp, cap):
+                whapi_ok += 1
+            else:
+                whapi_fail += 1
+        else:
+            print(f"   SKIP — file not found: {fp}")
+            whapi_fail += 1
+    print(f"   WHAPI results: {whapi_ok} sent, {whapi_fail} failed/skipped")
 
     # ── STEP 4: Delivery manifest ────────────────────────────────────────
     manifest = {
@@ -506,12 +469,14 @@ async def main():
         "generated_at": datetime.now(UTC).isoformat() + "Z",
         "files": []
     }
-    if screenshot_ok and os.path.exists(png_path):
-        manifest["files"].append({
-            "path": os.path.abspath(png_path),
-            "filename": os.path.basename(png_path),
-            "size_bytes": os.path.getsize(png_path)
-        })
+    for fp, cap in files_to_send:
+        if fp and os.path.exists(fp):
+            manifest["files"].append({
+                "path": os.path.abspath(fp),
+                "filename": os.path.basename(fp),
+                "caption": cap,
+                "size_bytes": os.path.getsize(fp)
+            })
     manifest_path = os.path.join(OUTPUT_DIR, f"recon_manifest_{RUN_STAMP}.json")
     with open(manifest_path, 'w') as f:
         json.dump(manifest, f, indent=2)
@@ -519,6 +484,7 @@ async def main():
     print(f"  📋 Files in manifest: {len(manifest['files'])}")
 
     # ── STEP 5: Cleanup output folder ────────────────────────────────────
+    import shutil
     print("\n─── Cleaning up output folder ───────────────────────────────────")
     removed = 0
     for item in os.listdir(OUTPUT_DIR):
@@ -534,9 +500,9 @@ async def main():
             print(f"   ⚠️  Could not remove: {item} — {e}")
     print(f"   Cleaned: {removed} items removed from {OUTPUT_DIR}")
 
-    # print("\n" + "=" * 60)
-    # print("✅ ALL RECON REPORTS GENERATED")
-    # print("=" * 60)
+    print("\n" + "=" * 60)
+    print("✅ ALL RECON REPORTS GENERATED")
+    print("=" * 60)
 
 
 if __name__ == "__main__":

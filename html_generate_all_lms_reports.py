@@ -909,14 +909,9 @@ def send_via_whapi(file_path, caption):
         '.htm': 'text/html',
         '.pdf': 'application/pdf',
         '.csv': 'text/csv',
-        '.png': 'image/png',
-        '.jpg': 'image/jpeg',
-        '.jpeg': 'image/jpeg',
     }
     mime = mime_map.get(ext, 'application/octet-stream')
     media_data = f'data:{mime};name={filename};base64,{b64}'
-    is_image = ext in ('.png', '.jpg', '.jpeg')
-    endpoint = 'messages/image' if is_image else 'messages/document'
 
     payload = {'to': WHATSAPP_GROUP, 'media': media_data, 'caption': caption}
     headers = {'accept': 'application/json', 'authorization': f'Bearer {WHAPI_TOKEN}',
@@ -924,7 +919,7 @@ def send_via_whapi(file_path, caption):
 
     for attempt in range(2):
         try:
-            r = requests.post(f'https://gate.whapi.cloud/{endpoint}',
+            r = requests.post('https://gate.whapi.cloud/messages/document',
                               headers=headers, json=payload, timeout=20)
             if 200 <= r.status_code < 300:
                 print(f"  ✅ WHAPI sent: {filename}")
@@ -942,41 +937,6 @@ def send_via_whapi(file_path, caption):
                 time.sleep(3)
     _save_fallback(file_path)
     return False
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# SCREENSHOT — per-tab
-# ═══════════════════════════════════════════════════════════════════════════════
-
-async def screenshot_html_tabs(html_path, tab_ids, png_paths, viewport_width=1024):
-    """Screenshot a tabbed HTML page once per tab by clicking each tab label.
-    tab_ids: list of the `for` attr values on each <label> (e.g. ['t1','t2',...]).
-    Returns list of booleans indicating success for each tab."""
-    try:
-        from playwright.async_api import async_playwright
-    except ImportError:
-        print("  ⚠️  playwright not installed — run: pip install playwright && playwright install chromium")
-        return [False] * len(tab_ids)
-
-    results = []
-    try:
-        async with async_playwright() as pw:
-            browser = await pw.chromium.launch(args=['--no-sandbox', '--disable-setuid-sandbox'])
-            for tab_id, png_path in zip(tab_ids, png_paths):
-                page = await browser.new_page(viewport={'width': viewport_width, 'height': 900})
-                await page.goto(f'file:///{os.path.abspath(html_path)}', wait_until='networkidle', timeout=30000)
-                await page.click(f'label[for="{tab_id}"]')
-                await page.wait_for_timeout(400)
-                await page.locator('.table-wrap:visible').first.screenshot(path=png_path)
-                await page.close()
-                print(f"  ✅ Screenshot saved: {os.path.basename(png_path)}")
-                results.append(True)
-            await browser.close()
-    except Exception as e:
-        print(f"  ⚠️  Screenshot failed: {e}")
-        while len(results) < len(tab_ids):
-            results.append(False)
-    return results
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1010,19 +970,6 @@ async def main():
         traceback.print_exc(file=sys.stdout)
         online_html = None
 
-    # ── STEP 1d: Screenshot Online (4 tabs) ───────────────────────────────
-    online_pngs = []
-    if online_html:
-        print("  [1d] Taking screenshots of Online LMS tabs...")
-        _online_tab_ids   = ['t1',        't4']
-        _online_tab_names = ['Overview', 'Colleges']
-        online_pngs = [
-            os.path.join(OUTPUT_DIR, f'Online_LMS_{name}_{RUN_STAMP}.png')
-            for name in _online_tab_names
-        ]
-        online_png_ok = await screenshot_html_tabs(online_html, _online_tab_ids, online_pngs)
-        online_pngs = [p for p, ok in zip(online_pngs, online_png_ok) if ok]
-
     # ── STEP 2: Regular LMS ────────────────────────────────────────────────
     print("─── STEP 2/3: Regular LMS Report ───────────────────────────────────")
     regular_summary = None
@@ -1041,41 +988,29 @@ async def main():
         traceback.print_exc(file=sys.stdout)
         regular_html = None
 
-    # ── STEP 2d: Screenshot Regular (2 tabs) ──────────────────────────────
-    regular_pngs = []
-    if regular_html:
-        print("  [2d] Taking screenshots of Regular LMS tabs...")
-        _reg_tab_ids   = ['tab-admissions', 'tab-forms']
-        _reg_tab_names = ['Admissions',     'Forms']
-        regular_pngs = [
-            os.path.join(OUTPUT_DIR, f'Regular_LMS_{name}_{RUN_STAMP}.png')
-            for name in _reg_tab_names
-        ]
-        reg_png_ok = await screenshot_html_tabs(regular_html, _reg_tab_ids, regular_pngs)
-        regular_pngs = [p for p, ok in zip(regular_pngs, reg_png_ok) if ok]
+    # ── STEP 3: Send All Files (best-effort) ───────────────────────────────
+    print("─── STEP 3/3: Sending to WhatsApp + Logging ────────────────────────")
+    files_to_send = [
+        (online_html,  f"Online LMS Dashboard — {FTD_DATE}",  online_summary,  "Online LMS"),
+        (regular_html, f"Regular LMS Dashboard — {FTD_DATE}", regular_summary, "Regular LMS"),
+    ]
 
-    # ── STEP 3: Send Screenshots via WhatsApp ─────────────────────────────
-    print("─── STEP 3/3: Sending Screenshots to WhatsApp + Logging ────────────")
-    _tab_labels = {
-        'Online_LMS_Overview':    'Owner wise Achievement Report - Online Business',
-        'Online_LMS_Colleges':    'Online LOB - University wise Forms & Adm',
-        'Regular_LMS_Admissions': 'Admission Target vs Achieved',
-        'Regular_LMS_Forms':      'Form Target vs Achieved',
-    }
-    all_pngs = online_pngs + regular_pngs
-    print(f"  [3a] Sending {len(all_pngs)} tab screenshots via WHAPI...")
     whapi_results = {}
-    for png_path in all_pngs:
-        base = os.path.basename(png_path)
-        key = '_'.join(base.split('_')[:3])
-        cap = _tab_labels.get(key, base)
-        sent = send_via_whapi(png_path, f"{cap} — {FTD_DATE}")
-        whapi_results[key] = sent
+    for filepath, caption, summary, report_name in files_to_send:
+        if filepath and os.path.exists(filepath):
+            print(f"  [3a] Sending {report_name} via WHAPI ({os.path.basename(filepath)})...")
+            sent = send_via_whapi(filepath, caption)
+            whapi_results[report_name] = sent
+        else:
+            reason = "not generated (exception in earlier step)" if filepath is None else f"file missing at: {filepath}"
+            print(f"  ⚠️  Skipping {report_name}: {reason}")
+            whapi_results[report_name] = False
 
     # ── STEP 3b: Log to Google Sheets Report_Logs ─────────────────────────
     print("  [3b] Logging to Google Sheets Report_Logs...")
-    log_report(FTD_DATE, "Online LMS",  online_summary  or "", any(whapi_results.get(k) for k in ('Online_LMS_Overview',)))
-    log_report(FTD_DATE, "Regular LMS", regular_summary or "", any(whapi_results.get(k) for k in ('Regular_LMS_Admissions',)))
+    for filepath, caption, summary, report_name in files_to_send:
+        if filepath and os.path.exists(filepath) and summary:
+            log_report(FTD_DATE, report_name, summary, whapi_results.get(report_name, False))
 
     # ── STEP 4: Write delivery manifest (for cron agent) ───────────────────
     manifest = {
@@ -1083,12 +1018,13 @@ async def main():
         "generated_at": datetime.now(UTC).isoformat() + "Z",
         "files": []
     }
-    for png_path in all_pngs:
-        if os.path.exists(png_path):
+    for filepath, caption, _summary, _name in files_to_send:
+        if filepath and os.path.exists(filepath):
             manifest["files"].append({
-                "path": os.path.abspath(png_path),
-                "filename": os.path.basename(png_path),
-                "size_bytes": os.path.getsize(png_path)
+                "path": os.path.abspath(filepath),
+                "filename": os.path.basename(filepath),
+                "caption": caption,
+                "size_bytes": os.path.getsize(filepath)
             })
 
     manifest_path = os.path.join(OUTPUT_DIR, f"delivery_manifest_{RUN_STAMP}.json")
@@ -1097,6 +1033,7 @@ async def main():
     print(f"\n📋 Delivery manifest: {manifest_path}")
 
     # ── STEP 5: Cleanup output folder ─────────────────────────────────────
+    import shutil
     print("\n─── Cleaning up output folder ───────────────────────────────────")
     removed = 0
     for item in os.listdir(OUTPUT_DIR):
@@ -1117,8 +1054,8 @@ async def main():
     print("📊 ALL REPORTS GENERATED SUCCESSFULLY")
     print("=" * 60)
     print(f"   FTD: {FTD_DATE}")
-    print(f"   Online screenshots:  {'✅' if online_pngs else '❌'} ({len(online_pngs)}/2)")
-    print(f"   Regular screenshots: {'✅' if regular_pngs else '❌'} ({len(regular_pngs)}/2)")
+    print(f"   Online HTML:  {'✅' if online_html else '❌'}")
+    print(f"   Regular HTML: {'✅' if regular_html else '❌'}")
     print(f"   WHAPI sends: {'attempted' if WHAPI_TOKEN else 'skipped (no token)'}")
     print("=" * 60)
 
