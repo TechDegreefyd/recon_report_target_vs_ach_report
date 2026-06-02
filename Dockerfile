@@ -41,23 +41,19 @@ COPY requirements.txt .
 RUN pip install --upgrade pip && \
     pip install --no-cache-dir -r requirements.txt
 
-# Install Playwright browser binaries and dependencies
+# Install Playwright browser binaries and required dependencies
 RUN python -m playwright install --with-deps chromium
 
+# Copy application source files
 COPY generate_all_lms_reports.py .
 COPY generate_all_recon_reports.py .
 COPY sheets_config.py .
 COPY server.py .
+
+# Create required directories
 RUN mkdir -p \
     "Automation Cron Job/Target Report/local_fallback" \
     "Automation Cron Job/Recon Data"
-
-RUN python -c "\
-from playwright.sync_api import sync_playwright; \
-with sync_playwright() as p: \
-    browser = p.chromium.launch(headless=True); \
-    print('Chromium:', browser.version); \
-    browser.close()"
 
 EXPOSE 8000
 
