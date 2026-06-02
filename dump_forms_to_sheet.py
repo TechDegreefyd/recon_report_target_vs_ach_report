@@ -217,6 +217,36 @@ _REGULAR_EXCLUDE = """
   AND uc.university_name NOT ILIKE '%Landran%'"""
 
 
+# ─── COLLEGE NAME NORMALIZATION ───────────────────────────────────────────────
+
+def normalize_institute(name: str) -> str:
+    """Map raw DB university names to standardized display names."""
+    n = (name or '').lower()
+    if 'lovely' in n:
+        return 'Lovely Professional University , Phagwara'
+    if 'chandigarh university' in n and 'lucknow' in n:
+        return 'Chandigarh University, Lucknow'
+    if 'chandigarh university' in n:
+        return 'Chandigarh University, Mohali'
+    if 'cgc' in n or 'chandigarh group' in n or 'landran' in n:
+        return 'Chandigarh Group Of Colleges - CGC Landran'
+    if 'amity' in n and 'lucknow' in n:
+        return 'Amity University , Lucknow'
+    if 'amity' in n and 'jaipur' in n:
+        return 'Amity University , Jaipur'
+    if 'amity' in n and 'mumbai' in n:
+        return 'Amity University , Mumbai'
+    if 'amity' in n and 'raipur' in n:
+        return 'Amity University , Raipur'
+    if 'amity' in n and 'gwalior' in n:
+        return 'Amity University , Gwalior'
+    if 'amity' in n and 'bangalore' in n:
+        return 'Amity University , Bangalore'
+    if 'amity' in n and 'gurugram' in n:
+        return 'Amity University , gurugram'
+    return name  # fallback: keep original
+
+
 # ─── FETCH FROM ALL DBS ────────────────────────────────────────────────────────
 
 async def fetch_all():
@@ -243,7 +273,7 @@ async def fetch_all():
                     str(d['lead_id']),
                     d['student_name'],
                     d['admission_type'] or '',
-                    d['institute'],
+                    normalize_institute(d['institute']),
                     d['course'],
                     str(d['course_fee_submitted']) if d['course_fee_submitted'] else '0',
                     d['team_owner'] or '',
