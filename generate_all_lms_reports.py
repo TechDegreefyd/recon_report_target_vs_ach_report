@@ -692,7 +692,7 @@ YTD_START = f'{report_date.year}-01-01'  # Jan 1 of report year
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# PART 2b — AMITY YEAR-OVER-YEAR PAID FORMS
+# PART 2b — AMITY YEAR-OVER-YEAR TOTAL FORMS
 # ═══════════════════════════════════════════════════════════════════════════════
 
 AMITY_FORMS_SPREADSHEET_ID = '1pFq4-ElGJ81y7SiaHGA6HspEpDicf93NPsPZ2k32hYU'
@@ -727,16 +727,14 @@ def _norm_amity_campus_sheet(name):
     return None
 
 
-def _parse_amity_sheet(rows, date_col, campus_col, payment_col, date_fmt='%d/%m/%Y'):
-    """Parse a last-year Amity sheet into records [{campus, date}], filtering paid only."""
+def _parse_amity_sheet(rows, date_col, campus_col, payment_col=None, date_fmt='%d/%m/%Y'):
+    """Parse a last-year Amity sheet into records [{campus, date}], counting all total forms."""
     if not rows:
         return []
     records = []
     for row in rows[1:]:
-        max_col = max(date_col, campus_col, payment_col)
+        max_col = max(date_col, campus_col)
         if len(row) <= max_col:
-            continue
-        if row[payment_col].strip().lower() != 'paid':
             continue
         campus = _norm_amity_campus_sheet(row[campus_col])
         if not campus:
@@ -749,8 +747,8 @@ def _parse_amity_sheet(rows, date_col, campus_col, payment_col, date_fmt='%d/%m/
     return records
 
 
-def amity_get_paid_forms_last_year():
-    """Read last year's paid Amity forms from both Google Sheet tabs and combine."""
+def amity_get_total_forms_last_year():
+    """Read last year's total Amity forms from both Google Sheet tabs and combine."""
     service = get_service()
     all_records = []
 
@@ -768,7 +766,7 @@ def amity_get_paid_forms_last_year():
         col_payment = next((i for i, v in enumerate(h) if 'payment type'  in v.lower()), 6)
         recs = _parse_amity_sheet(rows1, col_date, col_campus, col_payment)
         all_records.extend(recs)
-        print(f"  [Last Year Amity ] {len(recs)} paid forms")
+        print(f"  [Last Year Amity ] {len(recs)} total forms")
 
     # ── Tab 2: "Last Year Amity Legacy" (Mar 2025 – May 2025) ─────────────────
     # Columns: ft (col 0), Campus (col 5), Payment (col 13)
@@ -784,33 +782,28 @@ def amity_get_paid_forms_last_year():
         col_payment = next((i for i, v in enumerate(h) if v.strip().lower() == 'payment'), 13)
         recs = _parse_amity_sheet(rows2, col_date, col_campus, col_payment)
         all_records.extend(recs)
-        print(f"  [Last Year Amity Legacy] {len(recs)} paid forms")
+        print(f"  [Last Year Amity Legacy] {len(recs)} total forms")
 
-    print(f"  [Last Year Total] {len(all_records)} paid Amity forms loaded")
+    print(f"  [Last Year Total] {len(all_records)} total Amity forms loaded")
     return pd.DataFrame(all_records) if all_records else pd.DataFrame(columns=['campus', 'date'])
 
 
-_AMITY_PAID_FORMS_SQL = """
-WITH paid_forms AS (
-    SELECT DISTINCT
-        campus_location AS campus_name,
-        (created_at AT TIME ZONE 'Asia/Kolkata')::date AS form_date
-    FROM registrations
-    WHERE payment_status = 'COMPLETED'
-    AND college_for_applied ILIKE '%Amity%'
-    AND created_at >= '{ytd_start}'::date
-)
-SELECT campus_name, form_date
-FROM paid_forms
+_AMITY_TOTAL_FORMS_SQL = """
+SELECT
+    campus_location AS campus_name,
+    (created_at AT TIME ZONE 'Asia/Kolkata')::date AS form_date
+FROM registrations
+WHERE college_for_applied ILIKE '%Amity%'
+AND created_at >= '{ytd_start}'::date
 ORDER BY form_date
 """
 
 
-async def amity_get_paid_forms_this_year():
-    """Query REGULAR DB for this year's Amity paid forms via registrations table."""
+async def amity_get_total_forms_this_year():
+    """Query REGULAR DB for this year's Amity total forms via registrations table."""
     db = next(d for d in REGULAR_DB_CONFIGS if d['name'] == 'REGULAR')
     ytd_start = f'{report_date.year}-01-01'
-    sql = _AMITY_PAID_FORMS_SQL.format(ytd_start=ytd_start)
+    sql = _AMITY_TOTAL_FORMS_SQL.format(ytd_start=ytd_start)
     conn = await asyncpg.connect(host=db['host'], port=db['port'],
                                   database=db['database'], user=db['user'], password=db['password'])
     rows = await conn.fetch(sql)
@@ -820,12 +813,12 @@ async def amity_get_paid_forms_this_year():
         campus = _norm_amity_campus_db(r['campus_name'])
         if campus:
             records.append({'campus': campus, 'date': str(r['form_date'])})
-    print(f"  [AMITY DB] {len(records)} paid Amity forms loaded")
+    print(f"  [AMITY DB] {len(records)} total Amity forms loaded")
     return pd.DataFrame(records) if records else pd.DataFrame(columns=['campus', 'date'])
 
 
 def amity_build_yoy_table(df_ly, df_ty):
-    """Build MTD/YTD YoY paid-forms table: rows = metrics, columns = campuses."""
+    """Build MTD/YTD YoY total-forms table: rows = metrics, columns = campuses."""
     ly_year = report_date.year - 1
     ly_mtd_start = f'{ly_year}-{report_date.month:02d}-01'
     ly_mtd_end   = f'{ly_year}-{report_date.month:02d}-{report_date.day:02d}'
@@ -839,9 +832,9 @@ def amity_build_yoy_table(df_ly, df_ty):
 
     campuses = AMITY_CAMPUSES
     windows = [
-        # ('MTD Last Year', df_ly, ly_mtd_start, ly_mtd_end),
+        ('MTD Last Year', df_ly, ly_mtd_start, ly_mtd_end),
         ('MTD This Year', df_ty, MTD_START,     MTD_END),
-        # ('YTD Last Year', df_ly, ly_ytd_start,  ly_ytd_end),
+        ('YTD Last Year', df_ly, ly_ytd_start,  ly_ytd_end),
         ('YTD This Year', df_ty, YTD_START,      FTD_DATE),
     ]
     data = {}
@@ -849,7 +842,7 @@ def amity_build_yoy_table(df_ly, df_ty):
         data[label] = {c: cnt(df, c, start, end) for c in campuses}
         data[label]['Grand Total'] = sum(data[label].values())
 
-    metrics = ['MTD This Year', 'YTD This Year']  # Last Year columns commented out until data is updated
+    metrics = ['MTD Last Year', 'MTD This Year', 'YTD Last Year', 'YTD This Year']
     rows = campuses + ['Grand Total']
     # campuses as rows, metrics as columns
     df_out = pd.DataFrame(
@@ -861,12 +854,12 @@ def amity_build_yoy_table(df_ly, df_ty):
 
 
 def _amity_yoy_html_section(df):
-    """Render the Amity YoY paid-forms table as an HTML panel.
+    """Render the Amity YoY total-forms table as an HTML panel.
     Rows = campuses, columns = metrics."""
     if df is None or df.empty:
         return '<p style="color:#888">No Amity YoY data available.</p>'
 
-    metrics = ['MTD This Year', 'YTD This Year']  # Last Year columns commented out until data is updated
+    metrics = ['MTD Last Year', 'MTD This Year', 'YTD Last Year', 'YTD This Year']
 
     header = ''.join(f'<th>{m}</th>' for m in metrics)
     tbody = ''
@@ -883,7 +876,7 @@ def _amity_yoy_html_section(df):
     ly_year = report_date.year - 1
     ty_year = report_date.year
     return f'''
-<div class="section-label"><span>Amity Paid Forms — Campus YoY &middot; {ly_year} vs {ty_year} &middot; MTD &amp; YTD</span></div>
+<div class="section-label"><span>Amity Total Forms — Campus YoY &middot; {ly_year} vs {ty_year} &middot; MTD &amp; YTD</span></div>
 <div class="table-wrap">
 <table>
 <thead>
@@ -982,9 +975,9 @@ def amity_build_admission_yoy_table(df_ly, df_ty):
 
     campuses = AMITY_CAMPUSES
     windows = [
-        # ('MTD Last Year', df_ly, ly_mtd_start, ly_mtd_end),
+        ('MTD Last Year', df_ly, ly_mtd_start, ly_mtd_end),
         ('MTD This Year', df_ty, MTD_START,     MTD_END),
-        # ('YTD Last Year', df_ly, ly_ytd_start,  ly_ytd_end),
+        ('YTD Last Year', df_ly, ly_ytd_start,  ly_ytd_end),
         ('YTD This Year', df_ty, YTD_START,      FTD_DATE),
     ]
     data = {}
@@ -992,7 +985,7 @@ def amity_build_admission_yoy_table(df_ly, df_ty):
         data[label] = {c: cnt(df, c, start, end) for c in campuses}
         data[label]['Grand Total'] = sum(data[label].values())
 
-    metrics = ['MTD This Year', 'YTD This Year']  # Last Year columns commented out until data is updated
+    metrics = ['MTD Last Year', 'MTD This Year', 'YTD Last Year', 'YTD This Year']
     rows    = campuses + ['Grand Total']
     df_out  = pd.DataFrame(
         [{m: data[m][c] for m in metrics} for c in rows],
@@ -1007,7 +1000,7 @@ def _amity_adm_yoy_html_section(df):
     if df is None or df.empty:
         return '<p style="color:#888">No Amity admissions data available.</p>'
 
-    metrics = ['MTD This Year', 'YTD This Year']  # Last Year columns commented out until data is updated
+    metrics = ['MTD Last Year', 'MTD This Year', 'YTD Last Year', 'YTD This Year']
     header  = ''.join(f'<th>{m}</th>' for m in metrics)
     tbody   = ''
     for _, row in df.iterrows():
@@ -1151,9 +1144,9 @@ body{background:var(--white);font-family:-apple-system,BlinkMacSystemFont,'Segoe
 .tabs{display:flex;gap:0;margin-bottom:24px;border:1.5px solid var(--border-dark);border-radius:var(--radius);overflow:hidden;position:sticky;top:0;z-index:100;background:var(--white)}
 .tab-label{flex:1;display:flex;align-items:center;justify-content:center;gap:8px;padding:12px 16px;cursor:pointer;font-size:13px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-mid);background:var(--off);user-select:none}
 .tab-label:first-of-type{border-right:1.5px solid var(--border-dark)}
-#tab-admissions:checked~.shell .tab-label[for=tab-admissions],#tab-forms:checked~.shell .tab-label[for=tab-forms],#tab-amity-yoy:checked~.shell .tab-label[for=tab-amity-yoy]{background:var(--ink);color:var(--white)}
+#tab-admissions:checked~.shell .tab-label[for=tab-admissions],#tab-forms:checked~.shell .tab-label[for=tab-forms],#tab-amity-forms:checked~.shell .tab-label[for=tab-amity-forms],#tab-amity-adm:checked~.shell .tab-label[for=tab-amity-adm]{background:var(--ink);color:var(--white)}
 .panel{display:none}
-#tab-admissions:checked~.shell #panel-admissions,#tab-forms:checked~.shell #panel-forms,#tab-amity-yoy:checked~.shell #panel-amity-yoy{display:block}
+#tab-admissions:checked~.shell #panel-admissions,#tab-forms:checked~.shell #panel-forms,#tab-amity-forms:checked~.shell #panel-amity-forms,#tab-amity-adm:checked~.shell #panel-amity-adm{display:block}
 .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:14px;margin-bottom:28px}
 .kpi{background:var(--white);border:1px solid var(--border);border-radius:var(--radius);padding:12px 14px}
 .kpi-label{font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--ink-light);margin-bottom:3px}
@@ -1187,10 +1180,11 @@ tr:hover{background:var(--off)}
     html_doc = f'''<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Regular Admissions Dashboard</title><style>{CSS}</style></head><body>
 <input type="radio" name="view" id="tab-admissions" checked>
 <input type="radio" name="view" id="tab-forms">
-<input type="radio" name="view" id="tab-amity-yoy">
+<input type="radio" name="view" id="tab-amity-forms">
+<input type="radio" name="view" id="tab-amity-adm">
 <div class="shell">
 <header class="header"><div class="header-top"><div><div class="brand">Performance Intelligence &middot; Regular</div><h1 class="title">Regular Admissions &amp; Forms Tracker</h1></div><div class="header-meta"><div class="badge">Live Report</div><div class="date">{MONTH_LABEL} &middot; FTD {report_date.strftime('%d %b')}</div></div></div></header>
-<div class="tabs"><label class="tab-label" for="tab-admissions">&#x1f393; Admissions</label><label class="tab-label" for="tab-forms">&#x1f4cb; Forms</label><label class="tab-label" for="tab-amity-yoy">&#x1f4ca; Amity YoY</label></div>
+<div class="tabs"><label class="tab-label" for="tab-admissions">&#x1f393; Admissions</label><label class="tab-label" for="tab-forms">&#x1f4cb; Forms</label><label class="tab-label" for="tab-amity-forms">&#x1f4ca; Amity Forms YoY</label><label class="tab-label" for="tab-amity-adm">&#x1f4ca; Amity Adm YoY</label></div>
 
 <section class="panel" id="panel-admissions">
 <div class="kpis">
@@ -1214,8 +1208,11 @@ tr:hover{background:var(--off)}
 <div class="legend"><div class="legend-item"><span class="dot green"></span> &ge; 100% &mdash; Exceeding</div><div class="legend-item"><span class="dot amber"></span> 70&ndash;99% &mdash; On Track</div><div class="legend-item"><span class="dot red"></span> &lt; 70% &mdash; Needs Attention</div></div>
 </section>
 
-<section class="panel" id="panel-amity-yoy">
+<section class="panel" id="panel-amity-forms">
 {_amity_yoy_html_section(amity_yoy_df)}
+</section>
+
+<section class="panel" id="panel-amity-adm">
 {_amity_adm_yoy_html_section(amity_adm_df)}
 </section>
 
@@ -1388,26 +1385,23 @@ async def main():
         reg_adm, reg_forms = await regular_get_data()
         print("  [2b] Preparing regular LMS data...")
         regular_sheets = regular_prepare_data(reg_adm, reg_forms)
-        # Amity YoY reports disabled until data is updated
-        # print("  [2b2] Building Amity YoY paid-forms table...")
-        # try:
-        #     amity_ly = amity_get_paid_forms_last_year()
-        #     amity_ty = await amity_get_paid_forms_this_year()
-        #     amity_yoy_df = amity_build_yoy_table(amity_ly, amity_ty)
-        #     print("  ✅ Amity Paid Forms YoY table built")
-        # except Exception as e_yoy:
-        #     print(f"  ⚠️  Amity Paid Forms YoY failed (non-fatal): {e_yoy}")
-        #     amity_yoy_df = None
-        # try:
-        #     amity_adm_ly = amity_get_admissions_last_year()
-        #     amity_adm_ty = await amity_get_admissions_this_year()
-        #     amity_adm_df = amity_build_admission_yoy_table(amity_adm_ly, amity_adm_ty)
-        #     print("  ✅ Amity Admissions YoY table built")
-        # except Exception as e_adm:
-        #     print(f"  ⚠️  Amity Admissions YoY failed (non-fatal): {e_adm}")
-        #     amity_adm_df = None
-        amity_yoy_df = None
-        amity_adm_df = None
+        print("  [2b2] Building Amity YoY total-forms table...")
+        try:
+            amity_ly = amity_get_total_forms_last_year()
+            amity_ty = await amity_get_total_forms_this_year()
+            amity_yoy_df = amity_build_yoy_table(amity_ly, amity_ty)
+            print("  ✅ Amity Total Forms YoY table built")
+        except Exception as e_yoy:
+            print(f"  ⚠️  Amity Total Forms YoY failed (non-fatal): {e_yoy}")
+            amity_yoy_df = None
+        try:
+            amity_adm_ly = amity_get_admissions_last_year()
+            amity_adm_ty = await amity_get_admissions_this_year()
+            amity_adm_df = amity_build_admission_yoy_table(amity_adm_ly, amity_adm_ty)
+            print("  ✅ Amity Admissions YoY table built")
+        except Exception as e_adm:
+            print(f"  ⚠️  Amity Admissions YoY failed (non-fatal): {e_adm}")
+            amity_adm_df = None
         print("  [2c] Generating regular LMS HTML report...")
         regular_html, regular_summary = regular_generate_html(regular_sheets, amity_yoy_df=amity_yoy_df, amity_adm_df=amity_adm_df)
         print("  ✅ STEP 2 complete — Regular LMS report generated")
@@ -1422,8 +1416,8 @@ async def main():
     regular_pngs = []
     if regular_html:
         print("  [2d] Taking screenshots of Regular LMS tabs...")
-        _reg_tab_ids   = ['tab-admissions', 'tab-forms']
-        _reg_tab_names = ['Admissions',     'Forms']
+        _reg_tab_ids   = ['tab-admissions', 'tab-forms', 'tab-amity-forms', 'tab-amity-adm']
+        _reg_tab_names = ['Admissions',     'Forms',     'Amity_Forms',      'Amity_Adm']
         regular_pngs = [
             os.path.join(OUTPUT_DIR, f'Regular_LMS_{name}_{RUN_STAMP}.png')
             for name in _reg_tab_names
@@ -1436,9 +1430,10 @@ async def main():
     _tab_labels = {
         'Online_LMS_Overview':    'Owner wise Achievement Report - Online Business',
         'Online_LMS_Colleges':    'Online LOB - University wise Forms & Adm',
-        'Regular_LMS_Admissions': 'Admission Target vs Achieved',
-        'Regular_LMS_Forms':      'Form Target vs Achieved',
-        'Regular_LMS_Amity':      'Amity Paid Forms - Campus YoY',
+        'Regular_LMS_Admissions':  'Admission Target vs Achieved',
+        'Regular_LMS_Forms':       'Form Target vs Achieved',
+        'Regular_LMS_Amity_Forms': 'Amity Total Forms - Campus YoY',
+        'Regular_LMS_Amity_Adm':   'Amity Admissions - Campus YoY',
     }
     all_pngs = online_pngs + regular_pngs
     whapi_results = {}
@@ -1450,7 +1445,7 @@ async def main():
         print(f"  [3a] Sending {len(all_pngs)} tab screenshots via WHAPI...")
         for png_path in all_pngs:
             base = os.path.basename(png_path)
-            key = '_'.join(base.split('_')[:3])
+            key = '_'.join(base.replace('.png', '').split('_')[:-2])
             cap = _tab_labels.get(key, base)
             sent = send_via_whapi(png_path, f"{cap} — {FTD_DATE}")
             whapi_results[key] = sent
@@ -1504,7 +1499,7 @@ async def main():
     print("=" * 60)
     print(f"   FTD: {FTD_DATE}")
     print(f"   Online screenshots:  {'✅' if online_pngs else '❌'} ({len(online_pngs)}/2)")
-    print(f"   Regular screenshots: {'✅' if regular_pngs else '❌'} ({len(regular_pngs)}/2)")
+    print(f"   Regular screenshots: {'✅' if regular_pngs else '❌'} ({len(regular_pngs)}/4)")
     print(f"   WHAPI sends: {'skipped (--local mode)' if LOCAL_MODE else ('attempted' if WHAPI_TOKEN else 'skipped (no token)')}")
     print("=" * 60)
 
