@@ -29,9 +29,11 @@ if sys.stdout.encoding != 'utf-8':
     sys.stdout.reconfigure(encoding='utf-8')
 
 # ─── ARGS ───────────────────────────────────────────────────────────────────────
-# --local  →  skip WhatsApp, keep files in OUTPUT_DIR instead of sending
+# --local   →  skip WhatsApp, keep files in OUTPUT_DIR instead of sending
+# --plain   →  revert to plain (non-colourful) theme
 LOCAL_MODE    = '--local'     in sys.argv
 NO_CLEANUP    = '--nocleanup' in sys.argv
+COLORFUL_MODE = '--plain' not in sys.argv   # colourful is default
 
 import pandas as pd
 import asyncpg
@@ -53,7 +55,13 @@ os.makedirs(LOCAL_FALLBACK_DIR, exist_ok=True)
 
 # ─── WHAPI ──────────────────────────────────────────────────────────────────────
 WHAPI_TOKEN = os.getenv('WHAPI_TOKEN')
-WHATSAPP_GROUP = os.getenv('WHATSAPP_GROUP', '120363426619711887@g.us')
+# Group mapping:
+#   WHATSAPP_GROUP_ONLINE   → Online LMS reports (Overview + Colleges)
+#   WHATSAPP_GROUP_REGULAR  → Regular LMS reports (Admissions + Forms)
+#   WHATSAPP_GROUP_DAILY    → Amity YoY reports (Forms YoY + Adm YoY)
+WHATSAPP_GROUP_ONLINE  = os.getenv('WHATSAPP_GROUP_ONLINE',  os.getenv('WHATSAPP_GROUP', '120363426619711887@g.us'))
+WHATSAPP_GROUP_REGULAR = os.getenv('WHATSAPP_GROUP_REGULAR', os.getenv('WHATSAPP_GROUP', '120363426619711887@g.us'))
+WHATSAPP_GROUP_DAILY   = os.getenv('WHATSAPP_GROUP_DAILY',   os.getenv('WHATSAPP_GROUP', '120363426619711887@g.us'))
 
 # ─── DATE LOGIC (IST, before 6AM = previous day) ────────────────────────────────
 # Override with REPORT_DATE=YYYY-MM-DD env var to run for a specific date
@@ -454,13 +462,12 @@ def online_generate_html(sheets):
 <div class="sup-name"><small>Team Owner</small>{disp_name}</div>
 <div class="sup-row"><span class="sup-metric">Fee Collected</span><span class="sup-val">{money(fee_ach)} / {money(fee_tgt)}</span></div>
 <div class="sup-row"><span class="sup-metric">Fee Ach %</span><span class="sup-val {bar_color}">{fee_pct_str}</span><div class="sup-ratio">{money(fee_ach).replace('\u20b9','')}/{money(fee_tgt).replace('\u20b9','')}</div></div>
-<div class="sup-row"><span class="sup-metric">Admissions</span><span class="sup-val">{adm_ach_val}/{adm_tgt}</span></div>
+<div class="sup-row"><span class="sup-metric">Admissions</span><span class="sup-val">{adm_ach_val}</span></div>
 <div class="sup-row"><span class="sup-metric">FTD</span><span class="sup-val">{num(ftd_adm) if ftd_adm else 0} adm &middot; {money(ftd_fee)}</span></div>
 <div class="sup-bar-bg"><div class="sup-bar" style="width:{bar_width}%"></div></div></div>\n'''
 
         # Summary table row
-        adm_pct_str = online_pct(adm_ach_val, adm_tgt)
-        sup_summary_rows += f'''<tr><td class="left bold">{disp_name}</td><td>{adm_tgt}</td><td>{adm_ach_val}</td><td>{pill(adm_pct_str)}</td><td class="rev">{money_full(fee_tgt)}</td><td class="rev">{money_full(fee_ach)}</td><td>{pill(fee_pct_str)}</td><td class="ftd">{money_full(ftd_fee)}</td><td>{num(ftd_adm) if ftd_adm else 0}</td></tr>\n'''
+        sup_summary_rows += f'''<tr><td class="left bold">{disp_name}</td><td>{adm_ach_val}</td><td class="rev">{money_full(fee_tgt)}</td><td class="rev">{money_full(fee_ach)}</td><td>{pill(fee_pct_str)}</td><td class="ftd">{money_full(ftd_fee)}</td><td>{num(ftd_adm) if ftd_adm else 0}</td></tr>\n'''
 
     # Grand totals
     gt_fee_ach = float(gt['Fee Collected'])
@@ -471,7 +478,7 @@ def online_generate_html(sheets):
     gt_fee_pct_str = online_pct(gt_fee_ach, gt_fee_tgt)
 
     sup_summary_rows += f'''
-<tr class="grand-total"><td class="left bold">&#9679; Grand Total</td><td>{total_adm_target}</td><td>{gt_adm_ach}</td><td>{pill(online_pct(gt_adm_ach, total_adm_target))}</td><td class="rev">{money_full(gt_fee_tgt)}</td><td class="rev">{money_full(gt_fee_ach)}</td><td>{pill(gt_fee_pct_str)}</td><td class="ftd">{money_full(gt_fee_ftd)}</td><td>{num(gt_adm_ftd)}</td></tr>'''
+<tr class="grand-total"><td class="left bold">&#9679; Grand Total</td><td>{gt_adm_ach}</td><td class="rev">{money_full(gt_fee_tgt)}</td><td class="rev">{money_full(gt_fee_ach)}</td><td>{pill(gt_fee_pct_str)}</td><td class="ftd">{money_full(gt_fee_ftd)}</td><td>{num(gt_adm_ftd)}</td></tr>'''
 
     # ── Pre-build counsellor fee rows ──
     c_rev_rows = ''
@@ -541,20 +548,94 @@ def online_generate_html(sheets):
     ytd_f2a_class = pct_class((ytd_a / ytd_f * 100) if ytd_f else 0)
 
     # ── Assemble final HTML (concatenation of small f-strings avoids the {{}} f-string nesting bug) ──
-    CSS = r'''
+    _CSS_BASE_ONLINE = r'''
 .sup-ratio, .kpi-ratio { font-size: 11px; opacity: 0.8; margin-top: 2px; font-weight: 400; }
 .sup-val-ratio { font-size: 10px; display: block; opacity: 0.7; }
-*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}:root{--white:#fff;--off:#f8f8f6;--border:#e8e4dc;--border-dark:#c8c0b4;--ink:#1a1a18;--ink-mid:#555550;--ink-light:#9a9590;--gold:#c8a84b;--gold-light:#f5ecd4;--green:#2d7a4f;--green-bg:#e8f5ee;--amber:#b86e1c;--amber-bg:#fdf3e4;--orange:#c05e0a;--orange-bg:#fde8d4;--red:#c0392b;--red-bg:#fdecea;--gray:#888880;--gray-bg:#f0efec;--blue:#1a4a8a;--blue-bg:#e8eef7;--radius:3px}body{background:var(--white);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;color:var(--ink);min-height:100vh;overflow-x:hidden}#t1,#t2,#t3,#t4{display:none}.shell{max-width:960px;margin:0 auto;padding:0 14px 48px}.header{padding:26px 0 18px;border-bottom:2px solid var(--ink);margin-bottom:22px}.header-top{display:flex;align-items:flex-end;justify-content:space-between;flex-wrap:wrap;gap:8px}.brand{font-size:10px;letter-spacing:.18em;text-transform:uppercase;color:var(--ink-light);margin-bottom:5px}.title{font-size:clamp(20px,4.5vw,30px);font-weight:400;letter-spacing:-.01em;line-height:1.15}.header-meta{text-align:right}.badge{display:inline-block;background:var(--ink);color:var(--white);font-size:9px;letter-spacing:.14em;text-transform:uppercase;padding:3px 8px;border-radius:var(--radius);margin-bottom:4px}.date{font-size:11px;color:var(--ink-light);letter-spacing:.04em}.tabs{display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:6px;margin-bottom:22px;position:sticky;top:0;z-index:100;background:var(--white);padding:8px 0}.tab-label{display:flex;align-items:center;justify-content:center;gap:4px;padding:9px 6px;cursor:pointer;font-size:11px;letter-spacing:.05em;text-transform:uppercase;color:var(--ink-mid);background:var(--off);border:1.5px solid var(--border-dark);border-radius:var(--radius);user-select:none;-webkit-tap-highlight-color:transparent;white-space:nowrap}#t1:checked~.shell label[for=t1],#t2:checked~.shell label[for=t2],#t3:checked~.shell label[for=t3],#t4:checked~.shell label[for=t4]{background:var(--ink);color:var(--white);border-color:var(--ink)}.panel{display:none}#t1:checked~.shell #p1,#t2:checked~.shell #p2,#t3:checked~.shell #p3,#t4:checked~.shell #p4{display:block}.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:14px;margin-bottom:24px}.kpi{background:var(--off);border:1px solid var(--border);border-radius:var(--radius);padding:16px 18px}.kpi-label{font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--ink-light);margin-bottom:3px}.kpi-value{font-size:26px;font-weight:700;line-height:1.1;letter-spacing:-.02em}.kpi-value.orange{color:var(--orange)}.kpi-value.green{color:var(--green)}.kpi-value.amber{color:var(--amber)}.kpi-value.red{color:var(--red)}.kpi-sub{font-size:11px;color:var(--ink-mid);margin-top:2px}.slabel{font-size:12px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-light);margin-bottom:12px;padding-bottom:6px;border-bottom:1px solid var(--border)}.sup-cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px;margin-bottom:24px}.sup-card{background:var(--white);border:1px solid var(--border);border-radius:5px;padding:11px 12px 10px}.sup-name{font-size:14px;font-weight:600;margin-bottom:6px;letter-spacing:-.01em}.sup-name small{display:block;font-size:9px;font-weight:500;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-light);margin-bottom:1px}.sup-row{display:flex;justify-content:space-between;align-items:baseline;padding:2px 0;font-size:12px}.sup-metric{color:var(--ink-mid);font-size:10px}.sup-val{font-weight:600;white-space:nowrap;font-size:12px}.sup-val.orange{color:var(--orange)}.sup-val.red{color:var(--red)}.sup-val.green{color:var(--green)}.sup-val.amber{color:var(--amber)}.sup-bar-bg{background:var(--border);height:4px;border-radius:2px;margin-top:8px;overflow:hidden}.sup-bar{height:100%;border-radius:2px;background:var(--green);transition:width .4s}.table-wrap{overflow-x:auto;border-radius:4px;border:1px solid var(--border);background:var(--white)}table{width:100%;border-collapse:collapse;font-size:13px}th{background:var(--ink);color:var(--white);padding:9px 8px;text-align:center;font-weight:600;font-size:10.5px;letter-spacing:.04em;border-right:1px solid rgba(255,255,255,.1)}th:last-child{border-right:none}th.left,td.left{text-align:left;padding-left:12px}td{text-align:center;padding:7px 8px;border-bottom:1px solid var(--border);white-space:nowrap;font-variant-numeric:tabular-nums}tr:last-child td{border-bottom:none}.bold{font-weight:600}.rev{font-variant-numeric:tabular-nums;font-weight:500}.ftd{color:var(--ink-mid)}.ytd{font-weight:500}.pct{font-weight:600;font-size:11px;padding:2px 7px;border-radius:2px;display:inline-block}.pct.green{background:var(--green-bg);color:var(--green)}.pct.amber{background:var(--amber-bg);color:var(--amber)}.pct.orange{background:var(--orange-bg);color:var(--orange)}.pct.red{background:var(--red-bg);color:var(--red)}.pct.zero{color:var(--gray);background:var(--gray-bg)}.sup-header td{background:var(--gold-light)!important;font-weight:700;border-top:2px solid var(--gold)!important;padding:5px 12px!important;font-size:11px;letter-spacing:.06em;text-transform:uppercase}.sub-total td{background:var(--off)!important;border-top:1px solid var(--border-dark)!important;font-weight:600!important}.grand-total td{font-weight:700!important;border-top:2px solid var(--ink)!important;background:var(--off)!important}.varun .sup-bar{background:var(--blue)}.sunil .sup-bar{background:var(--green)}.vishal .sup-bar{background:var(--orange)}.siddhartha .sup-bar{background:var(--amber)}.legend{display:flex;gap:16px;margin-top:14px;font-size:11px;color:var(--ink-mid)}.dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:4px}.dot.green{background:var(--green)}.dot.amber{background:var(--amber)}.dot.orange{background:var(--orange)}.dot.red{background:var(--red)}.footer{margin-top:28px;padding:16px 0 8px;border-top:1px solid var(--border);font-size:11px;color:var(--ink-light);text-align:center}.footer-brand{font-weight:600;color:var(--ink-mid);margin-top:4px}@media(max-width:600px){.kpis{grid-template-columns:1fr 1fr}.kpi-value{font-size:22px}table{font-size:12px}.sup-cards{grid-template-columns:1fr}.header-top{flex-wrap:nowrap;align-items:flex-start}.header-meta{flex-shrink:0;min-width:fit-content}}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}:root{--white:#fff;--off:#f0ede8;--border:#d8d2c8;--border-dark:#b0a898;--ink:#111110;--ink-mid:#444440;--ink-light:#7a7570;--gold:#c8a84b;--gold-light:#f0e4c0;--green:#1e6b3c;--green-bg:#d4eddf;--amber:#a05e10;--amber-bg:#faecd4;--orange:#b04800;--orange-bg:#faddcc;--red:#b02020;--red-bg:#fad4d4;--gray:#777770;--gray-bg:#e8e6e2;--blue:#1a4a8a;--blue-bg:#e8eef7;--radius:3px}body{background:#f4f2ee;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;color:var(--ink);min-height:100vh;overflow-x:hidden}#t1,#t2,#t3,#t4{display:none}.shell{max-width:960px;margin:0 auto;padding:0 14px 48px}.header{padding:26px 0 18px;border-bottom:3px solid var(--ink);margin-bottom:22px}.header-top{display:flex;align-items:flex-end;justify-content:space-between;flex-wrap:wrap;gap:8px}.brand{font-size:10px;letter-spacing:.18em;text-transform:uppercase;color:var(--ink-light);margin-bottom:5px}.title{font-size:clamp(20px,4.5vw,30px);font-weight:700;letter-spacing:-.01em;line-height:1.15}.header-meta{text-align:right}.badge{display:inline-block;background:var(--ink);color:var(--white);font-size:9px;letter-spacing:.14em;text-transform:uppercase;padding:3px 8px;border-radius:var(--radius);margin-bottom:4px}.date{font-size:11px;color:var(--ink-light);letter-spacing:.04em}.tabs{display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:6px;margin-bottom:22px;position:sticky;top:0;z-index:100;background:#f4f2ee;padding:8px 0}.tab-label{display:flex;align-items:center;justify-content:center;gap:4px;padding:9px 6px;cursor:pointer;font-size:11px;letter-spacing:.05em;text-transform:uppercase;color:var(--ink-mid);background:var(--off);border:1.5px solid var(--border-dark);border-radius:var(--radius);user-select:none;-webkit-tap-highlight-color:transparent;white-space:nowrap}#t1:checked~.shell label[for=t1],#t2:checked~.shell label[for=t2],#t3:checked~.shell label[for=t3],#t4:checked~.shell label[for=t4]{background:var(--ink);color:var(--white);border-color:var(--ink)}.panel{display:none}#t1:checked~.shell #p1,#t2:checked~.shell #p2,#t3:checked~.shell #p3,#t4:checked~.shell #p4{display:block}.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:14px;margin-bottom:24px}.kpi{background:var(--white);border:1px solid var(--border);border-radius:var(--radius);padding:16px 18px;border-left:4px solid var(--ink)}.kpi-label{font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--ink-light);margin-bottom:3px}.kpi-value{font-size:26px;font-weight:700;line-height:1.1;letter-spacing:-.02em}.kpi-value.orange{color:var(--orange)}.kpi-value.green{color:var(--green)}.kpi-value.amber{color:var(--amber)}.kpi-value.red{color:var(--red)}.kpi-sub{font-size:11px;color:var(--ink-mid);margin-top:2px}.slabel{font-size:12px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--ink);margin-bottom:12px;padding-bottom:6px;border-bottom:2px solid var(--ink)}.sup-cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px;margin-bottom:24px}.sup-card{background:var(--white);border:1px solid var(--border);border-radius:5px;padding:11px 12px 10px;border-top:3px solid var(--ink)}.sup-name{font-size:14px;font-weight:700;margin-bottom:6px;letter-spacing:-.01em}.sup-name small{display:block;font-size:9px;font-weight:500;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-light);margin-bottom:1px}.sup-row{display:flex;justify-content:space-between;align-items:baseline;padding:2px 0;font-size:12px}.sup-metric{color:var(--ink-mid);font-size:10px}.sup-val{font-weight:700;white-space:nowrap;font-size:12px}.sup-val.orange{color:var(--orange)}.sup-val.red{color:var(--red)}.sup-val.green{color:var(--green)}.sup-val.amber{color:var(--amber)}.sup-bar-bg{background:var(--border);height:5px;border-radius:2px;margin-top:8px;overflow:hidden}.sup-bar{height:100%;border-radius:2px;background:var(--green);transition:width .4s}.table-wrap{overflow-x:auto;border-radius:4px;border:2px solid var(--border-dark);background:var(--white)}table{width:100%;border-collapse:collapse;font-size:13px}th{background:#1a1a18;color:#ffffff;padding:10px 8px;text-align:center;font-weight:700;font-size:11px;letter-spacing:.05em;border-right:1px solid rgba(255,255,255,.15)}th:last-child{border-right:none}th.left,td.left{text-align:left;padding-left:12px}td{text-align:center;padding:8px 8px;border-bottom:1px solid var(--border);white-space:nowrap;font-variant-numeric:tabular-nums;font-size:13px}tbody tr:nth-child(even) td{background:#f7f5f1}tbody tr:nth-child(odd) td{background:#ffffff}tr:last-child td{border-bottom:none}tbody tr:hover td{background:#eef0f8}.bold{font-weight:700}.rev{font-variant-numeric:tabular-nums;font-weight:600}.ftd{color:var(--ink-mid)}.ytd{font-weight:600}.pct{font-weight:700;font-size:11px;padding:3px 8px;border-radius:3px;display:inline-block}.pct.green{background:var(--green-bg);color:var(--green)}.pct.amber{background:var(--amber-bg);color:var(--amber)}.pct.orange{background:var(--orange-bg);color:var(--orange)}.pct.red{background:var(--red-bg);color:var(--red)}.pct.zero{color:var(--gray);background:var(--gray-bg)}.sup-header td{background:#f0e4c0!important;color:#5a3e00;font-weight:700;border-top:2px solid var(--gold)!important;padding:6px 12px!important;font-size:11px;letter-spacing:.06em;text-transform:uppercase}.sub-total td{background:#e8e4de!important;border-top:2px solid var(--border-dark)!important;font-weight:700!important}.grand-total td{font-weight:700!important;border-top:3px solid var(--ink)!important;background:#e0ddd8!important;font-size:13.5px!important}.varun .sup-bar{background:var(--blue)}.sunil .sup-bar{background:var(--green)}.vishal .sup-bar{background:var(--orange)}.siddhartha .sup-bar{background:var(--amber)}.legend{display:flex;gap:16px;margin-top:14px;font-size:11px;color:var(--ink-mid)}.dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:4px}.dot.green{background:var(--green)}.dot.amber{background:var(--amber)}.dot.orange{background:var(--orange)}.dot.red{background:var(--red)}.footer{margin-top:28px;padding:16px 0 8px;border-top:1px solid var(--border);font-size:11px;color:var(--ink-light);text-align:center}.footer-brand{font-weight:600;color:var(--ink-mid);margin-top:4px}@media(max-width:600px){.kpis{grid-template-columns:1fr 1fr}.kpi-value{font-size:22px}table{font-size:12px}.sup-cards{grid-template-columns:1fr}.header-top{flex-wrap:nowrap;align-items:flex-start}.header-meta{flex-shrink:0;min-width:fit-content}}
 '''
+
+    _CSS_COLORFUL_ONLINE = r'''
+.sup-ratio,.kpi-ratio{font-size:11px;opacity:.8;margin-top:2px;font-weight:400}
+.sup-val-ratio{font-size:10px;display:block;opacity:.65}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --navy:#0d1b2a;--navy-mid:#1b2e45;--navy-light:#243b55;
+  --teal:#0097a7;--teal-light:#e0f7fa;
+  --white:#ffffff;--surface:#f7f9fc;--surface2:#eef2f7;
+  --border:#dce3ed;--border-strong:#b8c4d4;
+  --ink:#0d1b2a;--ink-mid:#4a5568;--ink-light:#8896a8;
+  --green:#1a7f4b;--green-bg:#e3f5ec;
+  --amber:#b45309;--amber-bg:#fef3c7;
+  --orange:#c2410c;--orange-bg:#ffedd5;
+  --red:#b91c1c;--red-bg:#fee2e2;
+  --gray:#6b7280;--gray-bg:#f3f4f6;
+  --radius:5px}
+body{background:var(--surface);font-family:'Segoe UI',-apple-system,BlinkMacSystemFont,Helvetica,Arial,sans-serif;color:var(--ink);min-height:100vh;overflow-x:hidden}
+#t1,#t2,#t3,#t4{display:none}
+.shell{max-width:980px;margin:0 auto;padding:0 20px 52px}
+.header{background:var(--navy);padding:28px 28px 24px;border-radius:8px;margin-bottom:20px;border-left:5px solid var(--teal)}
+.header-top{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px}
+.brand{font-size:9px;letter-spacing:.22em;text-transform:uppercase;color:var(--teal);margin-bottom:6px;font-weight:600}
+.title{font-size:clamp(18px,3.5vw,26px);font-weight:700;line-height:1.2;color:#fff;letter-spacing:-.01em}
+.header-meta{text-align:right}
+.badge{display:inline-block;background:var(--teal);color:#fff;font-size:9px;letter-spacing:.12em;text-transform:uppercase;padding:4px 12px;border-radius:20px;margin-bottom:5px;font-weight:600}
+.date{font-size:11px;color:rgba(255,255,255,.55);letter-spacing:.04em}
+.tabs{display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:8px;margin-bottom:20px;position:sticky;top:0;z-index:100;background:var(--surface);padding:10px 0}
+.tab-label{display:flex;align-items:center;justify-content:center;gap:5px;padding:10px 6px;cursor:pointer;font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-mid);background:var(--white);border:1.5px solid var(--border-strong);border-radius:var(--radius);user-select:none;white-space:nowrap;font-weight:600;transition:all .15s}
+#t1:checked~.shell label[for=t1],#t2:checked~.shell label[for=t2],#t3:checked~.shell label[for=t3],#t4:checked~.shell label[for=t4]{background:var(--navy);color:#fff;border-color:var(--navy)}
+.panel{display:none}
+#t1:checked~.shell #p1,#t2:checked~.shell #p2,#t3:checked~.shell #p3,#t4:checked~.shell #p4{display:block}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:14px;margin-bottom:24px}
+.kpi{background:var(--white);border:1px solid var(--border);border-radius:var(--radius);padding:18px 20px;border-top:3px solid var(--teal)}
+.kpi:nth-child(2){border-top-color:#1a7f4b}.kpi:nth-child(3){border-top-color:#b45309}
+.kpi-label{font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--ink-light);margin-bottom:4px;font-weight:600}
+.kpi-value{font-size:26px;font-weight:700;line-height:1.1;letter-spacing:-.02em;color:var(--ink)}
+.kpi-value.orange{color:var(--orange)}.kpi-value.green{color:var(--green)}.kpi-value.amber{color:var(--amber)}.kpi-value.red{color:var(--red)}
+.kpi-sub{font-size:11px;color:var(--ink-light);margin-top:3px}
+.slabel{font-size:11px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--navy-light);margin:20px 0 12px;padding:0 0 8px;border-bottom:2px solid var(--teal);display:flex;align-items:center;gap:8px}
+.slabel::before{content:'';display:inline-block;width:4px;height:14px;background:var(--teal);border-radius:2px}
+.sup-cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(155px,1fr));gap:12px;margin-bottom:22px}
+.sup-card{background:var(--white);border:1px solid var(--border);border-radius:var(--radius);padding:14px 15px 12px;border-left:4px solid var(--teal)}
+.sup-name{font-size:13px;font-weight:700;margin-bottom:8px;color:var(--navy)}.sup-name small{display:block;font-size:9px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-light);margin-bottom:2px}
+.sup-row{display:flex;justify-content:space-between;align-items:baseline;padding:3px 0;font-size:12px;border-bottom:1px solid var(--border)}
+.sup-row:last-of-type{border-bottom:none}
+.sup-metric{color:var(--ink-light);font-size:10px;font-weight:500}
+.sup-val{font-weight:700;white-space:nowrap;font-size:12px;color:var(--ink)}
+.sup-val.orange{color:var(--orange)}.sup-val.red{color:var(--red)}.sup-val.green{color:var(--green)}.sup-val.amber{color:var(--amber)}
+.sup-bar-bg{background:var(--surface2);height:5px;border-radius:3px;margin-top:10px;overflow:hidden}
+.sup-bar{height:100%;border-radius:3px;background:var(--teal)}
+.table-wrap{overflow-x:auto;border-radius:6px;border:1px solid var(--border-strong);background:var(--white)}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{background:var(--navy);color:#fff;padding:11px 10px;text-align:center;font-weight:600;font-size:11px;letter-spacing:.05em;border-right:1px solid rgba(255,255,255,.1)}
+th:last-child{border-right:none}th.left,td.left{text-align:left;padding-left:14px}
+td{text-align:center;padding:9px 10px;border-bottom:1px solid var(--border);white-space:nowrap;font-variant-numeric:tabular-nums;font-size:13px;color:var(--ink)}
+tbody tr:nth-child(even) td{background:#f9fbff}
+tbody tr:nth-child(odd) td{background:var(--white)}
+tr:last-child td{border-bottom:none}
+tbody tr:hover td{background:#eef4ff}
+.bold{font-weight:700}.rev{font-variant-numeric:tabular-nums;font-weight:600}.ftd{color:var(--ink-light)}.ytd{font-weight:600}
+.pct{font-weight:700;font-size:11px;padding:3px 9px;border-radius:4px;display:inline-block;letter-spacing:.02em}
+.pct.green{background:var(--green-bg);color:var(--green)}.pct.amber{background:var(--amber-bg);color:var(--amber)}.pct.orange{background:var(--orange-bg);color:var(--orange)}.pct.red{background:var(--red-bg);color:var(--red)}.pct.zero{color:var(--gray);background:var(--gray-bg)}
+.sup-header td{background:#e8f4f8!important;color:#0d5c6e;font-weight:700;border-top:2px solid var(--teal)!important;padding:7px 14px!important;font-size:10.5px;letter-spacing:.08em;text-transform:uppercase}
+.sub-total td{background:var(--surface2)!important;border-top:1px solid var(--border-strong)!important;font-weight:700!important}
+.grand-total td{font-weight:700!important;border-top:2px solid var(--navy)!important;background:var(--navy-light)!important;color:#fff!important;font-size:13px!important}
+.varun .sup-card{border-left-color:#0d6efd}.sunil .sup-card{border-left-color:#1a7f4b}.vishal .sup-card{border-left-color:#c2410c}.siddhartha .sup-card{border-left-color:#b45309}.vartika .sup-card{border-left-color:#7c3aed}
+.varun .sup-bar{background:#0d6efd}.sunil .sup-bar{background:#1a7f4b}.vishal .sup-bar{background:#c2410c}.siddhartha .sup-bar{background:#b45309}.vartika .sup-bar{background:#7c3aed}
+.legend{display:flex;gap:18px;margin-top:14px;font-size:11px;color:var(--ink-light);flex-wrap:wrap}.dot{display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:5px}.dot.green{background:var(--green)}.dot.amber{background:var(--amber)}.dot.orange{background:var(--orange)}.dot.red{background:var(--red)}
+.footer{margin-top:32px;padding:16px 0 8px;border-top:1px solid var(--border);font-size:11px;color:var(--ink-light);text-align:center}.footer-brand{font-weight:600;color:var(--ink-mid);margin-top:4px}
+@media(max-width:600px){.kpis{grid-template-columns:1fr 1fr}.kpi-value{font-size:22px}table{font-size:12px}.sup-cards{grid-template-columns:1fr 1fr}}
+'''
+
+    CSS = _CSS_COLORFUL_ONLINE if COLORFUL_MODE else _CSS_BASE_ONLINE
 
     p1 = '<input type="radio" name="dash" id="t1" checked><input type="radio" name="dash" id="t2"><input type="radio" name="dash" id="t3"><input type="radio" name="dash" id="t4">'
     p2 = f'<div class="shell"><header class="header"><div class="header-top"><div><div class="brand">Performance Intelligence &middot; Online</div><h1 class="title">Online Admissions &amp; Fee Collected Tracker</h1></div><div class="header-meta"><div class="badge">Live Report</div><div class="date">{MONTH_LABEL} &middot; FTD {report_date.strftime("%d %b")}</div></div></div></header>'
     p3 = '<div class="tabs"><label class="tab-label" for="t1">&#x1f4ca; Overview</label><label class="tab-label" for="t2">&#x1f4b0; Fee Collected</label><label class="tab-label" for="t3">&#x1f393; Admissions</label><label class="tab-label" for="t4">&#x1f3eb; Colleges</label></div>'
-    p4_overview_kpis = f'<div class="kpis"><div class="kpi"><div class="kpi-label">Total Fee Collected</div><div class="kpi-value {pct_class((gt_fee_ach / gt_fee_tgt * 100) if gt_fee_tgt else 0)}">{money(gt_fee_ach)}</div><div class="kpi-sub">of {money(gt_fee_tgt)} target</div></div><div class="kpi"><div class="kpi-label">Fee Ach %</div><div class="kpi-value {pct_class((gt_fee_ach / gt_fee_tgt * 100) if gt_fee_tgt else 0)}">{gt_fee_pct_str}</div><div class="kpi-ratio">{money(gt_fee_ach).replace(chr(0x20b9), "")}/{money(gt_fee_tgt).replace(chr(0x20b9), "")}</div><div class="kpi-sub">Grand Total</div></div><div class="kpi"><div class="kpi-label">Admissions</div><div class="kpi-value {pct_class(adm_ach_pct)}">{adm_ach_pct:.1f}%</div><div class="kpi-ratio">{gt_adm_ach}/{total_adm_target}</div><div class="kpi-sub">Grand Total</div></div></div>'
-    p4 = f'<section class="panel" id="p1">{p4_overview_kpis}<div class="slabel"><span>Team Owner Snapshot</span></div><div class="sup-cards">{sup_card_html}</div><div class="slabel"><span>Team Owner Summary Table</span></div><div class="table-wrap"><table><thead><tr><th class="left">Team Owner</th><th>Adm TG</th><th>Adm Ach</th><th>Adm %</th><th>Fee TG</th><th>Fee Ach</th><th>Fee Ach %</th><th>FTD Fee</th><th>FTD Adm</th></tr></thead><tbody>{sup_summary_rows}</tbody></table></div></section>'
+    p4_overview_kpis = f'<div class="kpis"><div class="kpi"><div class="kpi-label">Total Fee Collected</div><div class="kpi-value {pct_class((gt_fee_ach / gt_fee_tgt * 100) if gt_fee_tgt else 0)}">{money(gt_fee_ach)}</div><div class="kpi-sub">of {money(gt_fee_tgt)} target</div></div><div class="kpi"><div class="kpi-label">Fee Ach %</div><div class="kpi-value {pct_class((gt_fee_ach / gt_fee_tgt * 100) if gt_fee_tgt else 0)}">{gt_fee_pct_str}</div><div class="kpi-ratio">{money(gt_fee_ach).replace(chr(0x20b9), "")}/{money(gt_fee_tgt).replace(chr(0x20b9), "")}</div><div class="kpi-sub">Grand Total</div></div><div class="kpi"><div class="kpi-label">Admissions</div><div class="kpi-value">{gt_adm_ach}</div><div class="kpi-sub">Grand Total</div></div></div>'
+    p4 = f'<section class="panel" id="p1">{p4_overview_kpis}<div class="slabel"><span>Team Owner Snapshot</span></div><div class="sup-cards">{sup_card_html}</div><div class="slabel"><span>Team Owner Summary Table</span></div><div class="table-wrap"><table><thead><tr><th class="left">Team Owner</th><th>Adm Ach</th><th>Fee TG</th><th>Fee Ach</th><th>Fee Ach %</th><th>FTD Fee</th><th>FTD Adm</th></tr></thead><tbody>{sup_summary_rows}</tbody></table></div></section>'
     p5_fee_kpis = f'<div class="kpis"><div class="kpi"><div class="kpi-label">Fee Target</div><div class="kpi-value">{money(gt_fee_tgt)}</div><div class="kpi-sub">{MONTH_LABEL}</div></div><div class="kpi"><div class="kpi-label">Achieved</div><div class="kpi-value {pct_class((gt_fee_ach / gt_fee_tgt * 100) if gt_fee_tgt else 0)}">{money(gt_fee_ach)}</div><div class="kpi-sub">{gt_fee_pct_str} overall</div></div><div class="kpi"><div class="kpi-label">FTD</div><div class="kpi-value green">{money(gt_fee_ftd)}</div><div class="kpi-sub">Today\'s fee collected</div></div></div>'
     p5 = f'<section class="panel" id="p2">{p5_fee_kpis}<div class="slabel"><span>Counsellor-wise Fee Collected Breakdown &middot; Counsellor targets are intentionally zero</span></div><div class="table-wrap"><table><thead><tr><th class="left">Counsellor</th><th>Target</th><th>MTD Achieved</th><th>Ach %</th><th>FTD</th></tr></thead><tbody>{c_rev_rows}</tbody></table></div></section>'
-    p6_adm_kpis = f'<div class="kpis"><div class="kpi"><div class="kpi-label">Adm Target</div><div class="kpi-value">{total_adm_target}</div><div class="kpi-sub">{MONTH_LABEL}</div></div><div class="kpi"><div class="kpi-label">Achieved</div><div class="kpi-value">{gt_adm_ach}</div><div class="kpi-sub">{adm_ach_pct:.1f}%</div></div><div class="kpi"><div class="kpi-label">FTD</div><div class="kpi-value green">{gt_adm_ftd}</div><div class="kpi-sub">Today\'s closes</div></div></div>'
+    p6_adm_kpis = f'<div class="kpis"><div class="kpi"><div class="kpi-label">Total Admissions</div><div class="kpi-value">{gt_adm_ach}</div><div class="kpi-sub">{MONTH_LABEL}</div></div><div class="kpi"><div class="kpi-label">FTD</div><div class="kpi-value green">{gt_adm_ftd}</div><div class="kpi-sub">Today\'s closes</div></div></div>'
     p6 = f'<section class="panel" id="p3">{p6_adm_kpis}<div class="slabel"><span>Counsellor-wise Admissions</span></div><div class="table-wrap"><table><thead><tr><th class="left">Counsellor</th><th>Achieved</th><th>FTD</th></tr></thead><tbody>{c_adm_rows}</tbody></table></div></section>'
     ytd_from_label = report_date.strftime('1 Jan %Y')
     p7 = f'<section class="panel" id="p4"><div class="slabel"><span>College-wise Performance &middot; Forms to Admissions &middot; YTD from {ytd_from_label}</span></div><div class="table-wrap"><table><thead><tr><th class="left" rowspan="2">College</th><th colspan="3">Year to Date</th><th colspan="3">Month to Date</th><th colspan="3">FTD</th></tr><tr><th>Forms</th><th>Adm</th><th>F2A %</th><th>Forms</th><th>Adm</th><th>F2A %</th><th>Forms</th><th>Adm</th><th>F2A %</th></tr></thead><tbody>{college_rows}</tbody></table></div><div class="legend"><div class="legend-item"><span class="dot green"></span> &ge; 100% &mdash; Exceeding</div><div class="legend-item"><span class="dot amber"></span> 70&ndash;99% &mdash; On Track</div><div class="legend-item"><span class="dot orange"></span> 40&ndash;69% &mdash; Needs Work</div><div class="legend-item"><span class="dot red"></span> &lt; 40% &mdash; Critical</div></div></section>'
@@ -576,8 +657,10 @@ def online_generate_html(sheets):
 
 regular_config = load_regular_config()
 
-REG_WEEK_START = regular_config.get("target_period", {}).get("start_date")
-REG_WEEK_END   = regular_config.get("target_period", {}).get("end_date")
+# Week = Monday of report_date's week → report_date (dynamic, no sheet dependency)
+_week_monday   = report_date - timedelta(days=report_date.weekday())
+REG_WEEK_START = _week_monday.strftime('%Y-%m-%d')
+REG_WEEK_END   = FTD_DATE
 COLLEGE_TARGETS = regular_config.get("college_targets", {})
 
 # Days and weeks in the report month — used to auto-compute weekly/daily targets
@@ -789,19 +872,28 @@ def amity_get_total_forms_last_year():
 
 
 _AMITY_TOTAL_FORMS_SQL = """
-SELECT
-    campus_location AS campus_name,
-    (created_at AT TIME ZONE 'Asia/Kolkata')::date AS form_date
-FROM registrations
-WHERE college_for_applied ILIKE '%Amity%'
-AND created_at >= '{ytd_start}'::date
-ORDER BY form_date
+SELECT DISTINCT ON (s.student_id, csj.course_id)
+    s.student_id, uc.university_name AS college_name,
+    csj.created_at AT TIME ZONE 'Asia/Kolkata' AS created_at
+FROM students s
+JOIN course_status_journeys csj ON s.student_id = csj.student_id
+JOIN university_courses uc ON csj.course_id = uc.course_id
+WHERE LOWER(csj.course_status) IN (
+    'form submitted – portal pending', 'form submitted – completed',
+    'walkin completed', 'walkin marked',
+    'exam/interview scheduled',
+    'offer letter/results pending', 'offer letter/results released',
+    'ready for admission'
+)
+  AND COALESCE(csj.fee_type, '') NOT ILIKE '%partial%'
+  AND csj.created_at >= '{ytd_start}'::date
+ORDER BY s.student_id, csj.course_id, csj.created_at ASC
 """
 
 
 async def amity_get_total_forms_this_year():
-    """Query REGULAR DB for this year's Amity total forms via registrations table."""
-    db = next(d for d in REGULAR_DB_CONFIGS if d['name'] == 'REGULAR')
+    """Query AMITY DB for this year's Amity total forms via course_status_journeys."""
+    db = next(d for d in REGULAR_DB_CONFIGS if d['name'] == 'AMITY')
     ytd_start = f'{report_date.year}-01-01'
     sql = _AMITY_TOTAL_FORMS_SQL.format(ytd_start=ytd_start)
     conn = await asyncpg.connect(host=db['host'], port=db['port'],
@@ -810,9 +902,9 @@ async def amity_get_total_forms_this_year():
     await conn.close()
     records = []
     for r in rows:
-        campus = _norm_amity_campus_db(r['campus_name'])
+        campus = _norm_amity_campus_db(r['college_name'])
         if campus:
-            records.append({'campus': campus, 'date': str(r['form_date'])})
+            records.append({'campus': campus, 'date': r['created_at'].date().isoformat()})
     print(f"  [AMITY DB] {len(records)} total Amity forms loaded")
     return pd.DataFrame(records) if records else pd.DataFrame(columns=['campus', 'date'])
 
@@ -902,9 +994,8 @@ FROM students s
 JOIN course_status_journeys csj ON s.student_id = csj.student_id
 JOIN university_courses uc ON csj.course_id = uc.course_id
 WHERE csj.course_status = 'Admission'
-AND COALESCE(csj.fee_type, '') NOT ILIKE '%partial%'
-AND uc.university_name ILIKE '%Amity%'
-AND csj.created_at >= '{ytd_start}'::date
+  AND csj.created_at >= '{ytd_start}'::date
+  AND csj.created_at < '{ytd_end}'::date
 ORDER BY s.student_id, uc.course_id, csj.created_at ASC
 """
 
@@ -920,22 +1011,24 @@ def amity_get_admissions_last_year():
     if not rows:
         return pd.DataFrame(columns=['campus', 'date'])
     h = rows[0]
-    col_date    = next((i for i, v in enumerate(h) if v.strip().lower() == 'date'),   3)
-    col_campus  = next((i for i, v in enumerate(h) if v.strip().lower() == 'campus'), 6)
-    col_refund  = next((i for i, v in enumerate(h) if 'refund' in v.lower()),         1)
+    col_date   = next((i for i, v in enumerate(h) if v.strip().lower() == 'date'),   2)
+    col_campus = next((i for i, v in enumerate(h) if v.strip().lower() == 'campus'), 5)
     records = []
     for row in rows[1:]:
         if len(row) <= max(col_date, col_campus):
             continue
-        refund = row[col_refund].strip() if len(row) > col_refund else ''
-        if refund in ('Drop', 'Lost'):
-            continue
         campus = _norm_amity_campus_sheet(row[col_campus])
         if not campus:
             continue
-        try:
-            dt = datetime.strptime(row[col_date].strip(), '%d-%m-%Y').strftime('%Y-%m-%d')
-        except ValueError:
+        raw_date = row[col_date].strip()
+        dt = None
+        for fmt in ('%d-%m-%Y', '%d/%m/%Y'):
+            try:
+                dt = datetime.strptime(raw_date, fmt).strftime('%Y-%m-%d')
+                break
+            except ValueError:
+                continue
+        if dt is None:
             continue
         records.append({'campus': campus, 'date': dt})
     print(f"  [Last Year Admission] {len(records)} admissions loaded")
@@ -946,17 +1039,25 @@ async def amity_get_admissions_this_year():
     """Query AMITY DB for this year's admissions."""
     db = next(d for d in REGULAR_DB_CONFIGS if d['name'] == 'AMITY')
     ytd_start = f'{report_date.year}-01-01'
-    sql = _AMITY_ADM_SQL.format(ytd_start=ytd_start)
+    ytd_end   = (report_date + timedelta(days=1)).strftime('%Y-%m-%d')
+    sql = _AMITY_ADM_SQL.format(ytd_start=ytd_start, ytd_end=ytd_end)
     conn = await asyncpg.connect(host=db['host'], port=db['port'],
                                   database=db['database'], user=db['user'], password=db['password'])
     rows = await conn.fetch(sql)
     await conn.close()
+    print(f"  [AMITY DB RAW] {len(rows)} rows fetched from DB")
+    if rows:
+        print(f"  [AMITY DB SAMPLE] campus={rows[0]['campus_name']!r}  adm_date={rows[0]['adm_date']!r}  type={type(rows[0]['adm_date']).__name__}")
     records = []
+    skipped = 0
     for r in rows:
         campus = _norm_amity_campus_db(r['campus_name'])
         if campus:
             records.append({'campus': campus, 'date': str(r['adm_date'])})
-    print(f"  [AMITY DB] {len(records)} admissions loaded")
+        else:
+            skipped += 1
+            print(f"  [AMITY DB SKIP] unrecognised campus: {r['campus_name']!r}")
+    print(f"  [AMITY DB] {len(records)} admissions loaded  ({skipped} skipped)")
     return pd.DataFrame(records) if records else pd.DataFrame(columns=['campus', 'date'])
 
 
@@ -1128,47 +1229,50 @@ def regular_generate_html(sheets, amity_yoy_df=None, amity_adm_df=None):
     admt = adm.iloc[-1]
     formt = forms.iloc[-1]
 
-    CSS = r'''
+    _CSS_BASE_REGULAR = r'''
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
-:root{--white:#fff;--off:#f8f8f6;--border:#e8e4dc;--border-dark:#c8c0b4;--ink:#1a1a18;--ink-mid:#555550;--ink-light:#9a9590;--gold:#c8a84b;--gold-light:#f5ecd4;--green:#2d7a4f;--green-bg:#e8f5ee;--amber:#b86e1c;--amber-bg:#fdf3e4;--red:#c0392b;--red-bg:#fdecea;--blue:#1a4a8a;--blue-bg:#e8eef7;--radius:3px}
-body{background:var(--white);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;color:var(--ink);min-height:100vh}
+:root{--white:#fff;--off:#f0ede8;--border:#d8d2c8;--border-dark:#b0a898;--ink:#111110;--ink-mid:#444440;--ink-light:#7a7570;--gold:#c8a84b;--gold-light:#f0e4c0;--green:#1e6b3c;--green-bg:#d4eddf;--amber:#a05e10;--amber-bg:#faecd4;--red:#b02020;--red-bg:#fad4d4;--blue:#1a4a8a;--blue-bg:#e8eef7;--radius:3px}
+body{background:#f4f2ee;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;color:var(--ink);min-height:100vh}
 #tab-admissions,#tab-forms,#tab-amity-yoy{display:none}
 .shell{max-width:900px;margin:0 auto;padding:0 16px 40px}
-.header{padding:28px 0 20px;border-bottom:2px solid var(--ink);margin-bottom:24px}
+.header{padding:28px 0 20px;border-bottom:3px solid var(--ink);margin-bottom:24px}
 .header-top{display:flex;align-items:flex-end;justify-content:space-between;flex-wrap:wrap;gap:8px}
 .brand{font-size:11px;letter-spacing:.18em;text-transform:uppercase;color:var(--ink-light);margin-bottom:6px}
-.title{font-size:clamp(22px,5vw,32px);font-weight:400;letter-spacing:-.01em;line-height:1.1;color:var(--ink)}
+.title{font-size:clamp(22px,5vw,32px);font-weight:700;letter-spacing:-.01em;line-height:1.1;color:var(--ink)}
 .header-meta{text-align:right}
-.badge{display:inline-block;background:var(--gold);color:var(--white);font-size:9px;letter-spacing:.14em;text-transform:uppercase;padding:3px 8px;border-radius:var(--radius);margin-bottom:4px}
+.badge{display:inline-block;background:var(--gold);color:#fff;font-size:9px;letter-spacing:.14em;text-transform:uppercase;padding:3px 8px;border-radius:var(--radius);margin-bottom:4px}
 .date{font-size:12px;color:var(--ink-light);letter-spacing:.04em}
-.tabs{display:flex;gap:0;margin-bottom:24px;border:1.5px solid var(--border-dark);border-radius:var(--radius);overflow:hidden;position:sticky;top:0;z-index:100;background:var(--white)}
-.tab-label{flex:1;display:flex;align-items:center;justify-content:center;gap:8px;padding:12px 16px;cursor:pointer;font-size:13px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-mid);background:var(--off);user-select:none}
-.tab-label:first-of-type{border-right:1.5px solid var(--border-dark)}
+.tabs{display:flex;gap:0;margin-bottom:24px;border:2px solid var(--border-dark);border-radius:var(--radius);overflow:hidden;position:sticky;top:0;z-index:100;background:#f4f2ee}
+.tab-label{flex:1;display:flex;align-items:center;justify-content:center;gap:8px;padding:12px 16px;cursor:pointer;font-size:13px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-mid);background:var(--off);user-select:none;font-weight:600}
+.tab-label:not(:last-child){border-right:1.5px solid var(--border-dark)}
 #tab-admissions:checked~.shell .tab-label[for=tab-admissions],#tab-forms:checked~.shell .tab-label[for=tab-forms],#tab-amity-forms:checked~.shell .tab-label[for=tab-amity-forms],#tab-amity-adm:checked~.shell .tab-label[for=tab-amity-adm]{background:var(--ink);color:var(--white)}
 .panel{display:none}
 #tab-admissions:checked~.shell #panel-admissions,#tab-forms:checked~.shell #panel-forms,#tab-amity-forms:checked~.shell #panel-amity-forms,#tab-amity-adm:checked~.shell #panel-amity-adm{display:block}
 .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:14px;margin-bottom:28px}
-.kpi{background:var(--white);border:1px solid var(--border);border-radius:var(--radius);padding:12px 14px}
+.kpi{background:var(--white);border:1px solid var(--border);border-left:4px solid var(--ink);border-radius:var(--radius);padding:12px 14px}
 .kpi-label{font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--ink-light);margin-bottom:3px}
-.kpi-value{font-size:20px;font-weight:700;line-height:1.1}
+.kpi-value{font-size:22px;font-weight:700;line-height:1.1}
 .kpi-value.green{color:var(--green)}.kpi-value.amber{color:var(--amber)}.kpi-value.red{color:var(--red)}
 .kpi-sub{font-size:11px;color:var(--ink-mid);margin-top:2px}
-.section-label{font-size:12px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-light);margin-bottom:12px;padding-bottom:6px;border-bottom:1px solid var(--border)}
-.table-wrap{overflow-x:auto;border-radius:6px;border:1px solid var(--border)}
-table{width:100%;border-collapse:collapse;font-size:12.5px}
-th{background:var(--ink);color:var(--white);padding:8px 8px;text-align:center;font-weight:600;font-size:10.5px;letter-spacing:.04em;border-right:1px solid rgba(255,255,255,.1)}
-th.th-group{background:#2a2a28;color:rgba(255,255,255,.85);font-size:10px}
-td{padding:7px 8px;text-align:center;border-bottom:1px solid var(--border)}
+.section-label{font-size:12px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--ink);margin-bottom:12px;padding-bottom:6px;border-bottom:2px solid var(--ink)}
+.table-wrap{overflow-x:auto;border-radius:4px;border:2px solid var(--border-dark)}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{background:#1a1a18;color:#ffffff;padding:10px 8px;text-align:center;font-weight:700;font-size:11px;letter-spacing:.05em;border-right:1px solid rgba(255,255,255,.15)}
+th.th-group{background:#2e2e2c;color:rgba(255,255,255,.9);font-size:10.5px}
+th:last-child{border-right:none}
+td{padding:8px 8px;text-align:center;border-bottom:1px solid var(--border);font-variant-numeric:tabular-nums;font-size:13px}
+tbody tr:nth-child(even) td{background:#f7f5f1}
+tbody tr:nth-child(odd) td{background:#ffffff}
 tr:last-child td{border-bottom:none}
-tr:hover{background:var(--off)}
-.college-name{text-align:left;font-weight:500}
+tbody tr:hover td{background:#eef0f8}
+.college-name{text-align:left;font-weight:600;padding-left:12px}
 .bold{font-weight:700}
-.num{font-variant-numeric:tabular-nums}
-.pct{font-weight:600;font-size:11px;padding:2px 7px;border-radius:2px;display:inline-block}
+.num{font-variant-numeric:tabular-nums;font-weight:500}
+.pct{font-weight:700;font-size:11px;padding:3px 8px;border-radius:3px;display:inline-block}
 .pct.green{background:var(--green-bg);color:var(--green)}
 .pct.amber{background:var(--amber-bg);color:var(--amber)}
 .pct.red{background:var(--red-bg);color:var(--red)}
-.total-row td{background:var(--off);font-weight:600;border-top:2px solid var(--border-dark)}
+.total-row td{background:#e0ddd8!important;font-weight:700;border-top:3px solid var(--ink)}
 .legend{display:flex;gap:16px;margin-top:14px;font-size:11px;color:var(--ink-mid)}
 .dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:4px}
 .dot.green{background:var(--green)}.dot.amber{background:var(--amber)}.dot.red{background:var(--red)}
@@ -1176,6 +1280,71 @@ tr:hover{background:var(--off)}
 .footer-brand{font-weight:600;color:var(--ink-mid);margin-top:4px}
 @media(max-width:600px){.kpis{grid-template-columns:1fr 1fr}.kpi-value{font-size:22px}table{font-size:11.5px}.header-top{flex-wrap:nowrap;align-items:flex-start}.header-meta{flex-shrink:0;min-width:fit-content}}
 '''
+
+    _CSS_COLORFUL_REGULAR = r'''
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --navy:#0d1b2a;--navy-mid:#1b2e45;
+  --teal:#0097a7;--teal-light:#e0f7fa;
+  --white:#fff;--surface:#f7f9fc;--surface2:#eef2f7;
+  --border:#dce3ed;--border-strong:#b8c4d4;
+  --ink:#0d1b2a;--ink-mid:#4a5568;--ink-light:#8896a8;
+  --green:#1a7f4b;--green-bg:#e3f5ec;
+  --amber:#b45309;--amber-bg:#fef3c7;
+  --red:#b91c1c;--red-bg:#fee2e2;
+  --blue:#1d4ed8;--blue-bg:#eff6ff;
+  --radius:5px}
+body{background:var(--surface);font-family:'Segoe UI',-apple-system,BlinkMacSystemFont,Helvetica,Arial,sans-serif;color:var(--ink);min-height:100vh}
+#tab-admissions,#tab-forms,#tab-amity-yoy{display:none}
+.shell{max-width:920px;margin:0 auto;padding:0 20px 44px}
+.header{background:var(--navy);padding:26px 28px 22px;border-radius:8px;margin-bottom:20px;border-left:5px solid var(--teal)}
+.header-top{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px}
+.brand{font-size:9px;letter-spacing:.22em;text-transform:uppercase;color:var(--teal);margin-bottom:5px;font-weight:600}
+.title{font-size:clamp(19px,3.5vw,26px);font-weight:700;line-height:1.2;color:#fff;letter-spacing:-.01em}
+.header-meta{text-align:right}
+.badge{display:inline-block;background:var(--teal);color:#fff;font-size:9px;letter-spacing:.12em;text-transform:uppercase;padding:4px 12px;border-radius:20px;margin-bottom:5px;font-weight:600}
+.date{font-size:11px;color:rgba(255,255,255,.55);letter-spacing:.04em}
+.tabs{display:flex;gap:8px;margin-bottom:20px;position:sticky;top:0;z-index:100;background:var(--surface);padding:10px 0}
+.tab-label{flex:1;display:flex;align-items:center;justify-content:center;gap:6px;padding:10px 12px;cursor:pointer;font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-mid);background:var(--white);user-select:none;font-weight:600;border-radius:var(--radius);border:1.5px solid var(--border-strong)}
+#tab-admissions:checked~.shell .tab-label[for=tab-admissions]{background:var(--navy);color:#fff;border-color:var(--navy)}
+#tab-forms:checked~.shell .tab-label[for=tab-forms]{background:var(--teal);color:#fff;border-color:var(--teal)}
+#tab-amity-forms:checked~.shell .tab-label[for=tab-amity-forms]{background:var(--green);color:#fff;border-color:var(--green)}
+#tab-amity-adm:checked~.shell .tab-label[for=tab-amity-adm]{background:var(--amber);color:#fff;border-color:var(--amber)}
+.panel{display:none}
+#tab-admissions:checked~.shell #panel-admissions,#tab-forms:checked~.shell #panel-forms,#tab-amity-forms:checked~.shell #panel-amity-forms,#tab-amity-adm:checked~.shell #panel-amity-adm{display:block}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:14px;margin-bottom:26px}
+.kpi{background:var(--white);border:1px solid var(--border);border-radius:var(--radius);padding:16px 18px;border-top:3px solid var(--teal)}
+.kpi:nth-child(2){border-top-color:var(--green)}.kpi:nth-child(3){border-top-color:var(--amber)}
+.kpi-label{font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--ink-light);margin-bottom:4px;font-weight:600}
+.kpi-value{font-size:22px;font-weight:700;line-height:1.1;color:var(--ink)}
+.kpi-value.green{color:var(--green)}.kpi-value.amber{color:var(--amber)}.kpi-value.red{color:var(--red)}
+.kpi-sub{font-size:11px;color:var(--ink-light);margin-top:3px}
+.section-label{font-size:11px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--navy-mid);margin:20px 0 12px;padding:0 0 8px;border-bottom:2px solid var(--teal);display:flex;align-items:center;gap:8px}
+.section-label::before{content:'';display:inline-block;width:4px;height:14px;background:var(--teal);border-radius:2px}
+.table-wrap{overflow-x:auto;border-radius:6px;border:1px solid var(--border-strong);background:var(--white)}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{background:var(--navy);color:#fff;padding:11px 10px;text-align:center;font-weight:600;font-size:11px;letter-spacing:.05em;border-right:1px solid rgba(255,255,255,.1)}
+th.th-group{background:var(--teal);color:#fff;font-size:10.5px;font-weight:700;letter-spacing:.06em}
+th:last-child{border-right:none}
+td{padding:9px 10px;text-align:center;border-bottom:1px solid var(--border);font-variant-numeric:tabular-nums;font-size:13px;color:var(--ink)}
+tbody tr:nth-child(even) td{background:#f9fbff}
+tbody tr:nth-child(odd) td{background:var(--white)}
+tr:last-child td{border-bottom:none}
+tbody tr:hover td{background:#eef4ff}
+.college-name{text-align:left;font-weight:600;padding-left:14px}
+.bold{font-weight:700}.num{font-variant-numeric:tabular-nums;font-weight:500}
+.pct{font-weight:700;font-size:11px;padding:3px 9px;border-radius:4px;display:inline-block;letter-spacing:.02em}
+.pct.green{background:var(--green-bg);color:var(--green)}.pct.amber{background:var(--amber-bg);color:var(--amber)}.pct.red{background:var(--red-bg);color:var(--red)}
+.total-row td{background:var(--navy-mid)!important;color:#fff!important;font-weight:700;border-top:2px solid var(--navy)}
+.legend{display:flex;gap:18px;margin-top:14px;font-size:11px;color:var(--ink-light);flex-wrap:wrap}
+.dot{display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:5px}
+.dot.green{background:var(--green)}.dot.amber{background:var(--amber)}.dot.red{background:var(--red)}
+.footer{margin-top:28px;padding:16px 0 8px;border-top:1px solid var(--border);font-size:11px;color:var(--ink-light);text-align:center}
+.footer-brand{font-weight:600;color:var(--ink-mid);margin-top:4px}
+@media(max-width:600px){.kpis{grid-template-columns:1fr 1fr}.kpi-value{font-size:22px}table{font-size:11.5px}}
+'''
+
+    CSS = _CSS_COLORFUL_REGULAR if COLORFUL_MODE else _CSS_BASE_REGULAR
 
     html_doc = f'''<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Regular Admissions Dashboard</title><style>{CSS}</style></head><body>
 <input type="radio" name="view" id="tab-admissions" checked>
@@ -1242,13 +1411,17 @@ def _save_fallback(file_path):
         print(f"  ⚠️  Could not copy to fallback dir: {copy_err}")
 
 
-def send_via_whapi(file_path, caption):
-    """Send a file to the WhatsApp Admin group via WHAPI (best-effort).
+def send_via_whapi(file_path, caption, group_id=None):
+    """Send a file to a WhatsApp group via WHAPI (best-effort).
+    group_id defaults to WHATSAPP_GROUP_ONLINE when not provided.
     On any failure the file is copied to LOCAL_FALLBACK_DIR."""
     if not WHAPI_TOKEN:
         print(f"  ⚠️  WHAPI_TOKEN not set — file already at: {file_path}")
         _save_fallback(file_path)
         return False
+
+    if group_id is None:
+        group_id = WHATSAPP_GROUP_ONLINE
 
     filename = os.path.basename(file_path)
     ext = os.path.splitext(filename)[1].lower()
@@ -1272,7 +1445,7 @@ def send_via_whapi(file_path, caption):
     is_image = ext in ('.png', '.jpg', '.jpeg')
     endpoint = 'messages/image' if is_image else 'messages/document'
 
-    payload = {'to': WHATSAPP_GROUP, 'media': media_data, 'caption': caption}
+    payload = {'to': group_id, 'media': media_data, 'caption': caption}
     headers = {'accept': 'application/json', 'authorization': f'Bearer {WHAPI_TOKEN}',
                'content-type': 'application/json'}
 
@@ -1321,7 +1494,7 @@ async def screenshot_html_tabs(html_path, tab_ids, png_paths, viewport_width=102
                 await page.goto(f'file:///{os.path.abspath(html_path)}', wait_until='networkidle', timeout=30000)
                 await page.click(f'label[for="{tab_id}"]')
                 await page.wait_for_timeout(400)
-                await page.locator('.table-wrap:visible').first.screenshot(path=png_path)
+                await page.locator('.shell').screenshot(path=png_path)
                 await page.close()
                 print(f"  ✅ Screenshot saved: {os.path.basename(png_path)}")
                 results.append(True)
@@ -1435,6 +1608,15 @@ async def main():
         'Regular_LMS_Amity_Forms': 'Amity Total Forms - Campus YoY',
         'Regular_LMS_Amity_Adm':   'Amity Admissions - Campus YoY',
     }
+    # Route each report key to its target WhatsApp group
+    _group_map = {
+        'Online_LMS_Overview':    WHATSAPP_GROUP_ONLINE,
+        'Online_LMS_Colleges':    WHATSAPP_GROUP_ONLINE,
+        'Regular_LMS_Admissions':  WHATSAPP_GROUP_REGULAR,
+        'Regular_LMS_Forms':       WHATSAPP_GROUP_REGULAR,
+        'Regular_LMS_Amity_Forms': WHATSAPP_GROUP_DAILY,
+        'Regular_LMS_Amity_Adm':   WHATSAPP_GROUP_DAILY,
+    }
     all_pngs = online_pngs + regular_pngs
     whapi_results = {}
     if LOCAL_MODE:
@@ -1447,7 +1629,8 @@ async def main():
             base = os.path.basename(png_path)
             key = '_'.join(base.replace('.png', '').split('_')[:-2])
             cap = _tab_labels.get(key, base)
-            sent = send_via_whapi(png_path, f"{cap} — {FTD_DATE}")
+            group_id = _group_map.get(key, WHATSAPP_GROUP_ONLINE)
+            sent = send_via_whapi(png_path, f"{cap} — {FTD_DATE}", group_id=group_id)
             whapi_results[key] = sent
 
     # ── STEP 3b: Log to Google Sheets Report_Logs ─────────────────────────

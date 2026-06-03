@@ -43,7 +43,7 @@ os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 # ─── WHAPI ──────────────────────────────────────────────────────────────────────
 WHAPI_TOKEN = os.getenv('WHAPI_TOKEN')
-WHATSAPP_GROUP = os.getenv('WHATSAPP_GROUP', '120363426619711887@g.us')
+WHATSAPP_GROUP = os.getenv('WHATSAPP_GROUP_DAILY', os.getenv('WHATSAPP_GROUP', '120363426619711887@g.us'))
 
 # ─── DB ─────────────────────────────────────────────────────────────────────────
 DB_CONFIG = {
@@ -59,14 +59,21 @@ DB_CONFIG = {
 #   10 AM  → yesterday full day      → date=yesterday, no cutoff
 #   12 PM  → today midnight→12 PM    → date=today,     cutoff=12
 #   4 PM   → today 12 PM→4 PM        → date=today,     cutoff=16, start=12
+# ─── ARGS ───────────────────────────────────────────────────────────────────────
+# --local      →  skip WhatsApp, keep files in OUTPUT_DIR instead of sending
+# --nocleanup  →  skip cleanup of output folder after run
+LOCAL_MODE = '--local'     in sys.argv
+NO_CLEANUP = '--nocleanup' in sys.argv
+
 CUTOFF_HOUR = None
 START_HOUR = None
-if len(sys.argv) > 1:
-    REPORT_DATE_STR = sys.argv[1]
-    if len(sys.argv) > 2:
-        CUTOFF_HOUR = int(sys.argv[2])
-    if len(sys.argv) > 3:
-        START_HOUR = int(sys.argv[3])
+positional = [a for a in sys.argv[1:] if not a.startswith('--')]
+if positional:
+    REPORT_DATE_STR = positional[0]
+    if len(positional) > 1:
+        CUTOFF_HOUR = int(positional[1])
+    if len(positional) > 2:
+        START_HOUR = int(positional[2])
 else:
     now_utc = datetime.now(UTC)
     now_ist = now_utc + timedelta(hours=5, minutes=30)
@@ -119,8 +126,9 @@ async def fetch_all_sources(date_str, cutoff_hour=None, start_hour=None):
             rows = await conn.fetch(f"""
                 SELECT
                     college_name,
-                    COUNT(DISTINCT CASE WHEN sent_type='bot' AND api_sent_status='Submitted via Bot (Direct Portal)' THEN student_id END) AS bot_submitted,
-                    COUNT(DISTINCT CASE WHEN sent_type='bot' AND api_sent_status='Failed due to Technical Issues'    THEN student_id END) AS bot_fail,
+                    COUNT(DISTINCT CASE WHEN sent_type='bot' AND api_sent_status='Submitted via Bot (Direct Portal)'                THEN student_id END) AS bot_submitted,
+                    COUNT(DISTINCT CASE WHEN sent_type='bot' AND api_sent_status='Failed due to Technical Issues'                    THEN student_id END) AS bot_fail,
+                    COUNT(DISTINCT CASE WHEN sent_type='bot' AND api_sent_status IN ('Do not Proceed','Do not Proceed (Still) ')      THEN student_id END) AS bot_dnp,
                     COUNT(DISTINCT CASE WHEN sent_type='auto' AND api_sent_status='Proceed'                                              THEN student_id END) AS auto_proceed,
                     COUNT(DISTINCT CASE WHEN sent_type='auto' AND api_sent_status='Failed due to Technical Issues'                       THEN student_id END) AS auto_fail,
                     COUNT(DISTINCT CASE WHEN sent_type='auto' AND api_sent_status IN ('Do not Proceed','Do not Proceed (Still) ')         THEN student_id END) AS auto_dnp,
@@ -140,8 +148,9 @@ async def fetch_all_sources(date_str, cutoff_hour=None, start_hour=None):
             rows = await conn.fetch(f"""
                 SELECT
                     college_name,
-                    COUNT(DISTINCT CASE WHEN sent_type='bot' AND api_sent_status='Submitted via Bot (Direct Portal)' THEN student_id END) AS bot_submitted,
-                    COUNT(DISTINCT CASE WHEN sent_type='bot' AND api_sent_status='Failed due to Technical Issues'    THEN student_id END) AS bot_fail,
+                    COUNT(DISTINCT CASE WHEN sent_type='bot' AND api_sent_status='Submitted via Bot (Direct Portal)'                THEN student_id END) AS bot_submitted,
+                    COUNT(DISTINCT CASE WHEN sent_type='bot' AND api_sent_status='Failed due to Technical Issues'                    THEN student_id END) AS bot_fail,
+                    COUNT(DISTINCT CASE WHEN sent_type='bot' AND api_sent_status IN ('Do not Proceed','Do not Proceed (Still) ')      THEN student_id END) AS bot_dnp,
                     COUNT(DISTINCT CASE WHEN sent_type='auto' AND api_sent_status='Proceed'                                              THEN student_id END) AS auto_proceed,
                     COUNT(DISTINCT CASE WHEN sent_type='auto' AND api_sent_status='Failed due to Technical Issues'                       THEN student_id END) AS auto_fail,
                     COUNT(DISTINCT CASE WHEN sent_type='auto' AND api_sent_status IN ('Do not Proceed','Do not Proceed (Still) ')         THEN student_id END) AS auto_dnp,
@@ -200,13 +209,13 @@ def generate_html(matrix, report_date, title, filename):
 
     badge = 'All Sources'
     rows_html = ''
-    gt = {k: 0 for k in ('bot_s','bot_f','ap','af','ad','mp','mf','md','tp','tf','td')}
+    gt = {k: 0 for k in ('bot_s','bot_f','bot_d','ap','af','ad','mp','mf','md','tp','tf','td')}
 
     for college in colleges:
         d = matrix[college]
         g = lambda k: d.get(k, 0) or 0
 
-        bot_s = g('bot_submitted');  bot_f = g('bot_fail')
+        bot_s = g('bot_submitted');  bot_f = g('bot_fail');  bot_d = g('bot_dnp')
         ap = g('auto_proceed');      af = g('auto_fail');   ad = g('auto_dnp')
         mp = g('manual_proceed');    mf = g('manual_fail'); md = g('manual_dnp')
         # Total = auto+manual (deduped)
@@ -214,24 +223,24 @@ def generate_html(matrix, report_date, title, filename):
         tf = g('total_fail')
         td = g('total_dnp')
 
-        for k, v in zip(('bot_s','bot_f','ap','af','ad','mp','mf','md','tp','tf','td'),
-                        ( bot_s,  bot_f,  ap,  af,  ad,  mp,  mf,  md,  tp,  tf,  td)):
+        for k, v in zip(('bot_s','bot_f','bot_d','ap','af','ad','mp','mf','md','tp','tf','td'),
+                        ( bot_s,  bot_f,  bot_d,  ap,  af,  ad,  mp,  mf,  md,  tp,  tf,  td)):
             gt[k] += v
 
-        final_tot = bot_s + bot_f + tp + tf + td
+        final_tot = bot_s + bot_f + bot_d + tp + tf + td
         rows_html += f"""<tr>
 <td class=td-college>{college}</td>
-<td class=bot-sub>{_v(bot_s)}</td><td class="fail bl-bot">{_v(bot_f)}</td>
+<td class=bot-sub>{_v(bot_s)}</td><td class="fail bl-bot">{_v(bot_f)}</td><td class="dnp">{_v(bot_d)}</td>
 <td class="t-proc bl-auto">{_v(ap)}</td><td class=fail>{_v(af)}</td><td class=dnp>{_v(ad)}</td>
 <td class="t-proc bl-man">{_v(mp)}</td><td class=fail>{_v(mf)}</td><td class=dnp>{_v(md)}</td>
 <td class="t-proc bl-tot">{_v(tp)}</td><td class=fail>{_v(tf)}</td><td class=dnp>{_v(td)}</td>
 <td class="bl-final final-tot">{_v(final_tot)}</td>
 </tr>\n"""
 
-    gt_final = gt['bot_s'] + gt['bot_f'] + gt['tp'] + gt['tf'] + gt['td']
+    gt_final = gt['bot_s'] + gt['bot_f'] + gt['bot_d'] + gt['tp'] + gt['tf'] + gt['td']
     grand_row = f"""<tr class=grand>
 <td class=td-college>Grand Total</td>
-<td class=bot-sub>{_v(gt['bot_s'])}</td><td class="fail bl-bot">{_v(gt['bot_f'])}</td>
+<td class=bot-sub>{_v(gt['bot_s'])}</td><td class="fail bl-bot">{_v(gt['bot_f'])}</td><td class="dnp">{_v(gt['bot_d'])}</td>
 <td class="t-proc bl-auto">{_v(gt['ap'])}</td><td class=fail>{_v(gt['af'])}</td><td class=dnp>{_v(gt['ad'])}</td>
 <td class="t-proc bl-man">{_v(gt['mp'])}</td><td class=fail>{_v(gt['mf'])}</td><td class=dnp>{_v(gt['md'])}</td>
 <td class="t-proc bl-tot">{_v(gt['tp'])}</td><td class=fail>{_v(gt['tf'])}</td><td class=dnp>{_v(gt['td'])}</td>
@@ -242,7 +251,7 @@ def generate_html(matrix, report_date, title, filename):
 
     summary_row = f"""<tr class=summary>
 <td class=sum-label>Summary Total</td>
-<td colspan=2 class=s-bot>{gt['bot_s'] + gt['bot_f']}</td>
+<td colspan=3 class=s-bot>{gt['bot_s'] + gt['bot_f'] + gt['bot_d']}</td>
 <td colspan=3 class=s-auto>{gt['ap'] + gt['af'] + gt['ad']}</td>
 <td colspan=3 class=s-man>{gt['mp'] + gt['mf'] + gt['md']}</td>
 <td colspan=3 class=s-tot>{gt['tp'] + gt['tf'] + gt['td']}</td>
@@ -317,14 +326,14 @@ td.s-final{background:#150a15;color:#e879f9;border-left:3px solid #6a2080;font-s
 <thead>
 <tr>
   <th class=th-college rowspan=2>College Name</th>
-  <th class=th-bot  colspan=2>Bot</th>
+  <th class=th-bot  colspan=3>Bot</th>
   <th class=th-auto colspan=3>Auto Recon</th>
   <th class=th-man  colspan=3>Manual Recon</th>
   <th class=th-tot  colspan=3>Total</th>
   <th class=th-final rowspan=2>Final<br>Total</th>
 </tr>
 <tr>
-  <th class="th-sub s-bot">Submitted</th><th class="th-sub fail">Fail</th>
+  <th class="th-sub s-bot">Submitted</th><th class="th-sub fail">Fail</th><th class="th-sub dnp">DNP</th>
   <th class="th-sub s-auto">Proceed</th><th class="th-sub fail">Fail</th><th class="th-sub dnp">DNP</th>
   <th class="th-sub s-man">Proceed</th><th class="th-sub fail">Fail</th><th class="th-sub dnp">DNP</th>
   <th class="th-sub s-tot">Proceed</th><th class="th-sub fail">Fail</th><th class="th-sub dnp">DNP</th>
@@ -457,7 +466,7 @@ async def main():
 
     print(f"  Rows: {len(all_rows)}")
     for r in all_rows:
-        print(f"    {r['college_name']} | bot={r['bot_submitted']}/{r['bot_fail']} auto={r['auto_proceed']}/{r['auto_fail']}/{r['auto_dnp']} manual={r['manual_proceed']}/{r['manual_fail']}/{r['manual_dnp']} total={r['total_proceed']}/{r['total_fail']}/{r['total_dnp']}")
+        print(f"    {r['college_name']} | bot={r['bot_submitted']}/{r['bot_fail']}/{r['bot_dnp']} auto={r['auto_proceed']}/{r['auto_fail']}/{r['auto_dnp']} manual={r['manual_proceed']}/{r['manual_fail']}/{r['manual_dnp']} total={r['total_proceed']}/{r['total_fail']}/{r['total_dnp']}")
 
     all_matrix = transform_to_matrix(all_rows)
     print(f"  Colleges: {len(all_matrix)}")
@@ -494,7 +503,9 @@ async def main():
 
     # ── STEP 3b: Send via WHAPI (screenshot only) ────────────────────────
     print("\n─── Sending via WHAPI ───────────────────────────────────────────")
-    if screenshot_ok:
+    if LOCAL_MODE:
+        print("  ⏭️  LOCAL_MODE — skipping WhatsApp send")
+    elif screenshot_ok:
         caption = f"API Recon — All Sources — {DISPLAY_LABEL}"
         send_via_whapi(png_path, caption)
     else:
@@ -520,6 +531,9 @@ async def main():
 
     # ── STEP 5: Cleanup output folder ────────────────────────────────────
     print("\n─── Cleaning up output folder ───────────────────────────────────")
+    if NO_CLEANUP or LOCAL_MODE:
+        print(f"  ⏭️  Skipping cleanup ({'--nocleanup' if NO_CLEANUP else '--local'})")
+        return
     removed = 0
     for item in os.listdir(OUTPUT_DIR):
         item_path = os.path.join(OUTPUT_DIR, item)

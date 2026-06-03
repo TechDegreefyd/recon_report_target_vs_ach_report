@@ -61,11 +61,17 @@ def _today_12pm_to_4pm():
     now_ist = datetime.now(IST)
     return [now_ist.strftime('%Y-%m-%d'), '16', '12']
 
+def _today_12pm_to_7pm():
+    """7 PM IST (13:30 UTC): today's recon data from 12 PM to 7 PM IST."""
+    now_ist = datetime.now(IST)
+    return [now_ist.strftime('%Y-%m-%d'), '19', '12']
+
 
 SCHEDULE = [
     (4, 30,  "generate_all_recon_reports.py",      "Recon — Yesterday (full day)",     _yesterday_full),
     (6, 30,  "generate_all_recon_reports.py",      "Recon — Today (until 12 PM)",      _today_cutoff_12pm),
     (10, 30, "generate_all_recon_reports.py",      "Recon — Today (12 PM → 4 PM)",     _today_12pm_to_4pm),
+    (13, 30, "generate_all_recon_reports.py",      "Recon — Today (12 PM → 7 PM)",     _today_12pm_to_7pm),
     (15, 0,  "generate_all_lms_reports.py",        "LMS Reports (Online + Regular)",   None),
 ]
 
@@ -156,14 +162,17 @@ def main():
     print("  Scheduler started. Waiting for jobs...\n", flush=True)
 
     # ── DEPLOYMENT SMOKE TEST ───────────────────────────────────────────
-    # Runs immediately on startup to verify scheduler + report scripts work.
-    # Generates a real report with current server time, sent to WhatsApp.
+    # Runs immediately on startup — sends live reports to all 3 WhatsApp
+    # groups so the team knows the server is up and running.
+    #   Group 1 (ONLINE)   → Online LMS overview + colleges screenshots
+    #   Group 2 (REGULAR)  → Regular admissions + forms screenshots
+    #   Group 3 (DAILY)    → Amity Forms YoY + Admissions YoY screenshots
     print("=" * 70, flush=True)
-    print("  🔍 DEPLOY SMOKE TEST — Running recon report now...", flush=True)
+    print("  🔍 DEPLOY SMOKE TEST — Sending reports to all 3 WhatsApp groups...", flush=True)
     print("=" * 70, flush=True)
-    run_script("generate_all_recon_reports.py", "SMOKE TEST — Recon (deploy verify)", _yesterday_full)
+    run_script("generate_all_lms_reports.py", "SMOKE TEST — LMS Reports (all 3 groups)", None)
     print("=" * 70, flush=True)
-    print("  ✅ SMOKE TEST COMPLETE — Scheduler is live.\n", flush=True)
+    print("  ✅ SMOKE TEST COMPLETE — All 3 groups notified. Scheduler is live.\n", flush=True)
 
     try:
         scheduler.start()
