@@ -721,9 +721,22 @@ _REGULAR_EXCLUDE = """AND uc.university_name NOT ILIKE '%Amity%'
 # CGC and AMITY DBs are the sole sources for their colleges — no exclusion needed
 _NO_EXCLUDE = ""
 
+# Amity admissions include partial payments (no fee_type filter)
+_AMITY_REG_ADM_SQL = """SELECT DISTINCT ON (s.student_id, uc.course_id)
+    s.student_id, uc.university_name AS college_name,
+    csj.created_at AT TIME ZONE 'Asia/Kolkata' AS created_at
+FROM students s
+JOIN course_status_journeys csj ON s.student_id = csj.student_id
+JOIN university_courses uc ON csj.course_id = uc.course_id
+WHERE csj.course_status = 'Admission'
+  AND csj.created_at >= '{ytd_start}'::date
+  AND csj.created_at < '{ytd_end}'::date
+ORDER BY s.student_id, uc.course_id, csj.created_at ASC;"""
+
 
 async def regular_get_data():
     ytd_start = f'{report_date.year}-01-01'
+    ytd_end   = (report_date + timedelta(days=1)).strftime('%Y-%m-%d')
     all_adm, all_form = [], []
     db_excludes = {
         "REGULAR": _REGULAR_EXCLUDE,
@@ -732,7 +745,11 @@ async def regular_get_data():
     }
     for db in REGULAR_DB_CONFIGS:
         excl = db_excludes.get(db['name'], _NO_EXCLUDE)
-        adm_sql  = _REG_ADM_SQL.format(exclude_clause=excl, ytd_start=ytd_start)
+        # Amity includes partial payments; other DBs exclude them
+        if db['name'] == 'AMITY':
+            adm_sql = _AMITY_REG_ADM_SQL.format(ytd_start=ytd_start, ytd_end=ytd_end)
+        else:
+            adm_sql = _REG_ADM_SQL.format(exclude_clause=excl, ytd_start=ytd_start)
         form_sql = _REG_FORM_SQL.format(exclude_clause=excl, ytd_start=ytd_start)
         conn = await asyncpg.connect(host=db['host'], port=db['port'], database=db['database'],
                                      user=db['user'], password=db['password'])
