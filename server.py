@@ -171,8 +171,9 @@ def main():
     print("  🔍 DEPLOY SMOKE TEST — Sending reports to all 3 WhatsApp groups...", flush=True)
     print("=" * 70, flush=True)
     run_script("generate_all_lms_reports.py", "SMOKE TEST — LMS Reports (all 3 groups)", None)
+    run_script("generate_all_recon_reports.py", "SMOKE TEST — Recon Report (yesterday full day)", _yesterday_full)
     print("=" * 70, flush=True)
-    print("  ✅ SMOKE TEST COMPLETE — All 3 groups notified. Scheduler is live.\n", flush=True)
+    print("  SMOKE TEST COMPLETE — All groups notified. Scheduler is live.\n", flush=True)
 
     try:
         scheduler.start()

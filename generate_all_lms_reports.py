@@ -33,7 +33,8 @@ if sys.stdout.encoding != 'utf-8':
 # --plain   →  revert to plain (non-colourful) theme
 LOCAL_MODE    = '--local'     in sys.argv
 NO_CLEANUP    = '--nocleanup' in sys.argv
-COLORFUL_MODE = '--plain' not in sys.argv   # colourful is default
+COLORFUL_MODE = '--plain'       not in sys.argv   # colourful is default
+SIDEBAR_NAV   = '--no-sidebar' not in sys.argv      # sidebar is default; pass --no-sidebar to revert
 
 import pandas as pd
 import asyncpg
@@ -41,7 +42,7 @@ import requests
 from datetime import datetime, timedelta, UTC
 from dotenv import load_dotenv
 
-from sheets_config import load_online_config, load_regular_config, log_report, get_service
+from sheets_config import load_online_config, load_regular_config, log_report, get_service, sync_online_counsellors, sync_regular_dates, _norm
 
 # ─── PATHS ──────────────────────────────────────────────────────────────────────
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -124,72 +125,147 @@ async def online_get_data():
             effective_sup = _SUPERVISOR_OVERRIDES.get(couns_name, sup)
             couns_data.append({'supervisor_name': effective_sup, 'counsellor_name': couns_name})
     df_couns = pd.DataFrame(couns_data)
-
-    YTD_START = f'{report_date.year}-01-01'
-
-    adm_query = f"""
-    SELECT DISTINCT ON (s.student_id, uc.course_id)
-        s.student_id,
-        s.student_name,
-        s.student_email,
-        csj.created_at AT TIME ZONE 'Asia/Kolkata' AS created_at,
-        uc.course_id,
-        uc.university_name AS college_name,
-        uc.course_name,
-        INITCAP(TRIM(csj.fee_type)) AS fee_type,
-        uc.total_fees AS total_fee,
-        uc.semester_fees AS sem_fee,
-        uc.annual_fees AS annual_fee,
-        csj.deposit_amount AS fee_deposit,
-        uc.duration || ' ' || uc.duration_type AS course_duration,
-        c.counsellor_name,
-        c.counsellor_id
-    FROM students s
-    JOIN course_status_journeys csj ON s.student_id = csj.student_id
-    JOIN university_courses uc ON csj.course_id = uc.course_id
-    LEFT JOIN counsellors c ON s.assigned_counsellor_id = c.counsellor_id
-    WHERE csj.course_status = 'Admission'
-      AND COALESCE(csj.fee_type, '') NOT ILIKE '%partial%'
-      AND csj.created_at >= '{YTD_START}'::date
-    ORDER BY s.student_id, uc.course_id, csj.created_at ASC;
-    """
-
-    form_query = f"""
-    SELECT DISTINCT ON (s.student_id, uc.course_id)
-        s.student_id,
-        uc.university_name AS college_name,
-        csj.created_at AT TIME ZONE 'Asia/Kolkata' AS created_at
-    FROM students s
-    JOIN course_status_journeys csj ON s.student_id = csj.student_id
-    JOIN university_courses uc ON csj.course_id = uc.course_id
-    WHERE csj.course_status = 'Application'
-      AND csj.created_at >= '{YTD_START}'::date
-    ORDER BY s.student_id, uc.course_id, csj.created_at ASC;
-    """
-
-    adm_rows = await conn.fetch(adm_query)
-    form_rows = await conn.fetch(form_query)
-    await conn.close()
-
-    df_adm = pd.DataFrame([dict(r) for r in adm_rows])
-    df_form = pd.DataFrame([dict(r) for r in form_rows])
-
-    for df in (df_couns, df_adm):
-        if not df.empty:
-            for col in ('supervisor_name', 'counsellor_name'):
-                if col in df.columns:
-                    # Normalize whitespace AND case so sheet names match DB names exactly
-                    df[col] = df[col].astype(str).str.replace(r'\s+', ' ', regex=True).str.strip().str.title()
-
-    # After title-casing, deduplicate the roster — the sheet may have the same counsellor
-    # listed twice with different capitalisation (e.g. 'Virat Kumar Singh' / 'Virat kumar singh').
     if not df_couns.empty:
+        for col in ('supervisor_name', 'counsellor_name'):
+            df_couns[col] = df_couns[col].apply(_norm)
         df_couns = df_couns.drop_duplicates(subset=['supervisor_name', 'counsellor_name'])
 
-    # SQL DISTINCT ON (student_id, course_id) guarantees one row per student+course.
-    # No further Python dedup needed for either admissions or forms.
+    YTD_START  = '2025-01-01'
+    MTD_START_ = MTD_START
+    MTD_END_   = MTD_END
+    FTD_DATE_  = FTD_DATE
 
-    return df_couns, df_adm, df_form
+    # ── Counsellor MTD fee: dedup per student (keep highest deposit), sum per counsellor ──
+    couns_mtd_fee_query = f"""
+    WITH deduped AS (
+        SELECT DISTINCT ON (csj.student_id)
+            s.assigned_counsellor_id,
+            csj.deposit_amount
+        FROM course_status_journeys csj
+        JOIN students s ON s.student_id = csj.student_id
+        WHERE csj.course_status = 'Admission'
+          AND INITCAP(TRIM(csj.fee_type)) NOT IN ('Partial Paid', 'Partially Paid', 'Partial Done')
+          AND (csj.created_at AT TIME ZONE 'Asia/Kolkata')::date >= '{MTD_START_}'::date
+          AND (csj.created_at AT TIME ZONE 'Asia/Kolkata')::date <= '{MTD_END_}'::date
+        ORDER BY csj.student_id, csj.deposit_amount DESC
+    )
+    SELECT c.counsellor_name, COALESCE(SUM(d.deposit_amount), 0) AS mtd_fee
+    FROM deduped d
+    LEFT JOIN counsellors c ON c.counsellor_id = d.assigned_counsellor_id
+    GROUP BY c.counsellor_name;
+    """
+
+    # ── Counsellor FTD fee: same logic, single day ──
+    couns_ftd_fee_query = f"""
+    WITH deduped AS (
+        SELECT DISTINCT ON (csj.student_id)
+            s.assigned_counsellor_id,
+            csj.deposit_amount
+        FROM course_status_journeys csj
+        JOIN students s ON s.student_id = csj.student_id
+        WHERE csj.course_status = 'Admission'
+          AND INITCAP(TRIM(csj.fee_type)) NOT IN ('Partial Paid', 'Partially Paid', 'Partial Done')
+          AND (csj.created_at AT TIME ZONE 'Asia/Kolkata')::date = '{FTD_DATE_}'::date
+        ORDER BY csj.student_id, csj.deposit_amount DESC
+    )
+    SELECT c.counsellor_name, COALESCE(SUM(d.deposit_amount), 0) AS ftd_fee
+    FROM deduped d
+    LEFT JOIN counsellors c ON c.counsellor_id = d.assigned_counsellor_id
+    GROUP BY c.counsellor_name;
+    """
+
+    # ── Counsellor MTD admissions: distinct students per counsellor ──
+    couns_mtd_adm_query = f"""
+    SELECT c.counsellor_name, COUNT(DISTINCT csj.student_id) AS mtd_adm
+    FROM course_status_journeys csj
+    JOIN students s ON s.student_id = csj.student_id
+    LEFT JOIN counsellors c ON c.counsellor_id = s.assigned_counsellor_id
+    WHERE csj.course_status = 'Admission'
+      AND INITCAP(TRIM(csj.fee_type)) NOT IN ('Partial Paid', 'Partially Paid', 'Partial Done')
+      AND (csj.created_at AT TIME ZONE 'Asia/Kolkata')::date >= '{MTD_START_}'::date
+      AND (csj.created_at AT TIME ZONE 'Asia/Kolkata')::date <= '{MTD_END_}'::date
+    GROUP BY c.counsellor_name;
+    """
+
+    # ── Counsellor FTD admissions ──
+    couns_ftd_adm_query = f"""
+    SELECT c.counsellor_name, COUNT(DISTINCT csj.student_id) AS ftd_adm
+    FROM course_status_journeys csj
+    JOIN students s ON s.student_id = csj.student_id
+    LEFT JOIN counsellors c ON c.counsellor_id = s.assigned_counsellor_id
+    WHERE csj.course_status = 'Admission'
+      AND INITCAP(TRIM(csj.fee_type)) NOT IN ('Partial Paid', 'Partially Paid', 'Partial Done')
+      AND (csj.created_at AT TIME ZONE 'Asia/Kolkata')::date = '{FTD_DATE_}'::date
+    GROUP BY c.counsellor_name;
+    """
+
+    # ── College performance: YTD + MTD + FTD forms and admissions, all from DB ──
+    college_query = f"""
+    SELECT
+        uc.university_name AS college_name,
+        COUNT(DISTINCT CASE
+            WHEN csj.course_status = 'Application'
+             AND csj.created_at >= '{YTD_START}'::timestamptz
+             AND csj.created_at < CURRENT_DATE + INTERVAL '1 day' - INTERVAL '5 hours 30 minutes'
+            THEN csj.student_id || '_' || csj.course_id END) AS ytd_forms,
+        COUNT(DISTINCT CASE
+            WHEN csj.course_status IN ('Admission', 'Enrolled')
+             AND INITCAP(TRIM(csj.fee_type)) NOT IN ('Partial Paid', 'Partially Paid', 'Partial Done')
+             AND csj.created_at >= '{YTD_START}'::timestamptz
+             AND csj.created_at < CURRENT_DATE + INTERVAL '1 day' - INTERVAL '5 hours 30 minutes'
+            THEN csj.student_id END) AS ytd_adm,
+        COUNT(DISTINCT CASE
+            WHEN csj.course_status = 'Application'
+             AND (csj.created_at AT TIME ZONE 'Asia/Kolkata')::date >= '{MTD_START_}'::date
+             AND (csj.created_at AT TIME ZONE 'Asia/Kolkata')::date <= '{MTD_END_}'::date
+            THEN csj.student_id || '_' || csj.course_id END) AS mtd_forms,
+        COUNT(DISTINCT CASE
+            WHEN csj.course_status IN ('Admission', 'Enrolled')
+             AND INITCAP(TRIM(csj.fee_type)) NOT IN ('Partial Paid', 'Partially Paid', 'Partial Done')
+             AND (csj.created_at AT TIME ZONE 'Asia/Kolkata')::date >= '{MTD_START_}'::date
+             AND (csj.created_at AT TIME ZONE 'Asia/Kolkata')::date <= '{MTD_END_}'::date
+            THEN csj.student_id END) AS mtd_adm,
+        COUNT(DISTINCT CASE
+            WHEN csj.course_status = 'Application'
+             AND (csj.created_at AT TIME ZONE 'Asia/Kolkata')::date = '{FTD_DATE_}'::date
+            THEN csj.student_id || '_' || csj.course_id END) AS ftd_forms,
+        COUNT(DISTINCT CASE
+            WHEN csj.course_status IN ('Admission', 'Enrolled')
+             AND INITCAP(TRIM(csj.fee_type)) NOT IN ('Partial Paid', 'Partially Paid', 'Partial Done')
+             AND (csj.created_at AT TIME ZONE 'Asia/Kolkata')::date = '{FTD_DATE_}'::date
+            THEN csj.student_id END) AS ftd_adm
+    FROM course_status_journeys csj
+    JOIN university_courses uc ON uc.course_id = csj.course_id
+    WHERE csj.created_at >= '{YTD_START}'::timestamptz
+      AND csj.created_at < CURRENT_DATE + INTERVAL '1 day' - INTERVAL '5 hours 30 minutes'
+    GROUP BY uc.university_name
+    HAVING COUNT(DISTINCT CASE
+        WHEN csj.course_status IN ('Application', 'Admission', 'Enrolled')
+        THEN csj.student_id END) > 0;
+    """
+
+    rows_mtd_fee  = await conn.fetch(couns_mtd_fee_query)
+    rows_ftd_fee  = await conn.fetch(couns_ftd_fee_query)
+    rows_mtd_adm  = await conn.fetch(couns_mtd_adm_query)
+    rows_ftd_adm  = await conn.fetch(couns_ftd_adm_query)
+    rows_college  = await conn.fetch(college_query)
+    await conn.close()
+
+    def _norm_name(df, col):
+        df[col] = df[col].apply(_norm)
+        return df
+
+    df_couns_fee = _norm_name(pd.DataFrame([dict(r) for r in rows_mtd_fee]), 'counsellor_name') \
+        .merge(_norm_name(pd.DataFrame([dict(r) for r in rows_ftd_fee]), 'counsellor_name'),
+               on='counsellor_name', how='outer').fillna(0)
+
+    df_couns_adm = _norm_name(pd.DataFrame([dict(r) for r in rows_mtd_adm]), 'counsellor_name') \
+        .merge(_norm_name(pd.DataFrame([dict(r) for r in rows_ftd_adm]), 'counsellor_name'),
+               on='counsellor_name', how='outer').fillna(0)
+
+    df_college = pd.DataFrame([dict(r) for r in rows_college])
+
+    return df_couns, df_couns_fee, df_couns_adm, df_college
 
 
 def online_pct(achieved, target):
@@ -204,64 +280,23 @@ def online_pct(achieved, target):
     return f"{(achieved / target * 100):.1f}%"
 
 
-def online_prepare_data(df_couns, df_adm, df_form):
-    """Build all Online report DataFrames in memory — no Excel involved."""
-    # Force IST date strings regardless of whether asyncpg returns tz-naive or tz-aware timestamps
-    def _to_ist_date(series):
-        if series.empty:
-            return pd.Series(dtype='object')
-        ts = pd.to_datetime(series)
-        if ts.dt.tz is None:
-            ts = ts.dt.tz_localize('Asia/Kolkata', ambiguous='infer')
-        else:
-            ts = ts.dt.tz_convert('Asia/Kolkata')
-        return ts.dt.strftime('%Y-%m-%d')
+def online_prepare_data(df_couns, df_couns_fee, df_couns_adm, df_college):
+    """Build all Online report DataFrames from pre-aggregated SQL results."""
 
-    df_adm['date_str']  = _to_ist_date(df_adm['created_at'])  if not df_adm.empty  else pd.Series(dtype='object')
-    df_form['date_str'] = _to_ist_date(df_form['created_at']) if not df_form.empty else pd.Series(dtype='object')
-
-    adm_ftd  = df_adm[df_adm['date_str'] == FTD_DATE]
-    form_ftd = df_form[df_form['date_str'] == FTD_DATE]
-    adm_mtd  = df_adm[df_adm['date_str'].between(MTD_START, MTD_END)]
-    form_mtd = df_form[df_form['date_str'].between(MTD_START, MTD_END)]
-
-    # Online targets are monthly — all achievement uses MTD data, not a week window
-    known_counsellors = set(df_couns['counsellor_name'].tolist()) if not df_couns.empty else set()
-    if not adm_mtd.empty:
-        unmatched = adm_mtd[~adm_mtd['counsellor_name'].isin(known_counsellors)]
-        if not unmatched.empty:
-            print("WARNING: Admissions found for counsellors missing from sheet")
-            print(unmatched[['student_id', 'college_name', 'counsellor_name', 'fee_deposit', 'created_at']].to_string(index=False))
-
-    # Dynamic — order driven by Google Sheets Online_Targets row order
     sup_order     = list(ONLINE_SUPERVISOR_TARGETS.keys())
-    display_names = {s: s for s in sup_order}   # use exact sheet name as display name
+    display_names = {s: s for s in sup_order}
 
-    # ── Counsellor fee data (MTD) ────────────────────────────────────────────
-    # D1 rule: deduplicate by student before summing fees — a student with multiple
-    # college rows would otherwise have their total fee counted once per college.
-    # Keep the row with the highest deposit_amount for each student (or earliest if tied).
-    def _dedup_fees(df):
-        if df.empty:
-            return df
-        return (df.sort_values('fee_deposit', ascending=False)
-                  .drop_duplicates(subset=['student_id'], keep='first'))
+    # Merge SQL aggregates onto counsellor roster
+    df_c_rev = df_couns \
+        .merge(df_couns_fee.rename(columns={'mtd_fee': 'Achieved', 'ftd_fee': 'FTD'}),
+               on='counsellor_name', how='left').fillna(0)
+    df_c_rev['Target'] = df_c_rev.apply(
+        lambda r: ONLINE_REVENUE_TARGETS.get(r['supervisor_name'], {}).get(r['counsellor_name'], 0), axis=1)
+    df_c_rev['Ach %'] = df_c_rev.apply(lambda r: online_pct(r['Achieved'], r['Target']), axis=1)
 
-    adm_mtd_fees = _dedup_fees(adm_mtd)
-    adm_ftd_fees = _dedup_fees(adm_ftd)
-
-    couns_rev_week = adm_mtd_fees.groupby('counsellor_name')['fee_deposit'].sum().reset_index(name='Achieved')
-    couns_rev_ftd  = adm_ftd_fees.groupby('counsellor_name')['fee_deposit'].sum().reset_index(name='FTD')
-    df_c_rev = df_couns.merge(couns_rev_week, on='counsellor_name', how='left') \
-                       .merge(couns_rev_ftd,  on='counsellor_name', how='left').fillna(0)
-    df_c_rev['Target'] = df_c_rev.apply(lambda r: ONLINE_REVENUE_TARGETS.get(r['supervisor_name'], {}).get(r['counsellor_name'], 0), axis=1)
-    df_c_rev['Ach %']  = df_c_rev.apply(lambda r: online_pct(r['Achieved'], r['Target']), axis=1)
-
-    # ── Counsellor admission data (MTD) — count distinct students, not rows ──
-    couns_adm_week = adm_mtd.groupby('counsellor_name')['student_id'].nunique().reset_index(name='Achieve')
-    couns_adm_ftd  = adm_ftd.groupby('counsellor_name')['student_id'].nunique().reset_index(name='FTD')
-    df_c_adm = df_couns.merge(couns_adm_week, on='counsellor_name', how='left') \
-                       .merge(couns_adm_ftd,  on='counsellor_name', how='left').fillna(0)
+    df_c_adm = df_couns \
+        .merge(df_couns_adm.rename(columns={'mtd_adm': 'Achieve', 'ftd_adm': 'FTD'}),
+               on='counsellor_name', how='left').fillna(0)
 
     # ── Counsellor_Fee_Collected ─────────────────────────────────────────────
     rows = []
@@ -310,32 +345,23 @@ def online_prepare_data(df_couns, df_adm, df_form):
     df_sup_adm_sheet = pd.DataFrame(rows, columns=['Supervisor', 'Achieve', 'FTD'])
 
     # ── College_Performance ──────────────────────────────────────────────────
-    uni_ytd_f = df_form.groupby('college_name').size().reset_index(name='YTD Forms')
-    uni_ytd_a = df_adm.groupby('college_name')['student_id'].nunique().reset_index(name='YTD Admissions')
-    uni_mtd_f = form_mtd.groupby('college_name').size().reset_index(name='MTD Forms')
-    uni_mtd_a = adm_mtd.groupby('college_name')['student_id'].nunique().reset_index(name='MTD Admissions')
-    uni_ftd_f = form_ftd.groupby('college_name').size().reset_index(name='FTD Forms')
-    uni_ftd_a = adm_ftd.groupby('college_name')['student_id'].nunique().reset_index(name='FTD Admissions')
-    df_uni = uni_ytd_f.merge(uni_ytd_a, on='college_name', how='outer') \
-                      .merge(uni_mtd_f,  on='college_name', how='outer') \
-                      .merge(uni_mtd_a,  on='college_name', how='outer') \
-                      .merge(uni_ftd_f,  on='college_name', how='outer') \
-                      .merge(uni_ftd_a,  on='college_name', how='outer').fillna(0)
-    df_uni = df_uni.sort_values('YTD Forms', ascending=False)
+    df_col = df_college.fillna(0).sort_values('ytd_forms', ascending=False)
     rows = []
-    for _, r in df_uni.iterrows():
-        c_name = r['college_name'].title()
+    for _, r in df_col.iterrows():
+        c_name = str(r['college_name']).title()
         for wrong, right in [('Gla', 'GLA'), ('Lpu', 'LPU'), ('Iit', 'IIT'), ('Nit', 'NIT'), ('Smu', 'SMU'), ('Nmims', 'NMIMS')]:
             c_name = c_name.replace(wrong, right)
-        rows.append([c_name, int(r['YTD Forms']), int(r['YTD Admissions']), online_pct(r['YTD Admissions'], r['YTD Forms']),
-                     int(r['MTD Forms']), int(r['MTD Admissions']), online_pct(r['MTD Admissions'], r['MTD Forms']),
-                     int(r['FTD Forms']), int(r['FTD Admissions']), online_pct(r['FTD Admissions'], r['FTD Forms'])])
-    rows.append(['Total', int(df_uni['YTD Forms'].sum()), int(df_uni['YTD Admissions'].sum()),
-                 online_pct(df_uni['YTD Admissions'].sum(), df_uni['YTD Forms'].sum()),
-                 int(df_uni['MTD Forms'].sum()), int(df_uni['MTD Admissions'].sum()),
-                 online_pct(df_uni['MTD Admissions'].sum(), df_uni['MTD Forms'].sum()),
-                 int(df_uni['FTD Forms'].sum()), int(df_uni['FTD Admissions'].sum()),
-                 online_pct(df_uni['FTD Admissions'].sum(), df_uni['FTD Forms'].sum())])
+        rows.append([c_name,
+                     int(r['ytd_forms']), int(r['ytd_adm']), online_pct(r['ytd_adm'], r['ytd_forms']),
+                     int(r['mtd_forms']), int(r['mtd_adm']), online_pct(r['mtd_adm'], r['mtd_forms']),
+                     int(r['ftd_forms']), int(r['ftd_adm']), online_pct(r['ftd_adm'], r['ftd_forms'])])
+    rows.append(['Total',
+                 int(df_col['ytd_forms'].sum()), int(df_col['ytd_adm'].sum()),
+                 online_pct(df_col['ytd_adm'].sum(), df_col['ytd_forms'].sum()),
+                 int(df_col['mtd_forms'].sum()), int(df_col['mtd_adm'].sum()),
+                 online_pct(df_col['mtd_adm'].sum(), df_col['mtd_forms'].sum()),
+                 int(df_col['ftd_forms'].sum()), int(df_col['ftd_adm'].sum()),
+                 online_pct(df_col['ftd_adm'].sum(), df_col['ftd_forms'].sum())])
     df_college_sheet = pd.DataFrame(rows, columns=['Colleges', 'YTD Forms', 'YTD Admissions', 'YTD F2A %',
                                                     'MTD Forms', 'MTD Admissions', 'MTD F2A %',
                                                     'FTD Forms', 'FTD Admissions', 'FTD F2A %'])
@@ -373,14 +399,23 @@ def online_generate_html(sheets):
         if v == 0:
             return '\u20b90'
         if abs(v) >= 100000:
-            return f'\u20b9{v / 100000:.1f}L'.replace('.0L', 'L')
+            lakh_val = round(v / 100000, 1)
+            formatted = f'{lakh_val:.1f}'.rstrip('0').rstrip('.')
+            return f'\u20b9{formatted}L'
         return f'\u20b9{v:,.0f}'
 
     def money_full(v):
         try:
-            return f'\u20b9{float(v):,.0f}' if float(v) else '\u20b90'
+            v = float(v)
         except:
             return '\u2014'
+        if not v:
+            return '\u20b90'
+        if abs(v) >= 100000:
+            lakh_val = round(v / 100000, 1)
+            formatted = f'{lakh_val:.1f}'.rstrip('0').rstrip('.')
+            return f'\u20b9{formatted}L'
+        return f'\u20b9{v:,.0f}'
 
     def num(v):
         try:
@@ -461,7 +496,7 @@ def online_generate_html(sheets):
         sup_card_html += f'''<div class="sup-card {disp_name.lower()}">
 <div class="sup-name"><small>Team Owner</small>{disp_name}</div>
 <div class="sup-row"><span class="sup-metric">Fee Collected</span><span class="sup-val">{money(fee_ach)} / {money(fee_tgt)}</span></div>
-<div class="sup-row"><span class="sup-metric">Fee Ach %</span><span class="sup-val {bar_color}">{fee_pct_str}</span><div class="sup-ratio">{money(fee_ach).replace('\u20b9','')}/{money(fee_tgt).replace('\u20b9','')}</div></div>
+<div class="sup-row"><span class="sup-metric">Fee Ach %</span><span class="sup-val {bar_color}">{fee_pct_str}</span></div>
 <div class="sup-row"><span class="sup-metric">Admissions</span><span class="sup-val">{adm_ach_val}</span></div>
 <div class="sup-row"><span class="sup-metric">FTD</span><span class="sup-val">{num(ftd_adm) if ftd_adm else 0} adm &middot; {money(ftd_fee)}</span></div>
 <div class="sup-bar-bg"><div class="sup-bar" style="width:{bar_width}%"></div></div></div>\n'''
@@ -551,7 +586,7 @@ def online_generate_html(sheets):
     _CSS_BASE_ONLINE = r'''
 .sup-ratio, .kpi-ratio { font-size: 11px; opacity: 0.8; margin-top: 2px; font-weight: 400; }
 .sup-val-ratio { font-size: 10px; display: block; opacity: 0.7; }
-*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}:root{--white:#fff;--off:#f0ede8;--border:#d8d2c8;--border-dark:#b0a898;--ink:#111110;--ink-mid:#444440;--ink-light:#7a7570;--gold:#c8a84b;--gold-light:#f0e4c0;--green:#1e6b3c;--green-bg:#d4eddf;--amber:#a05e10;--amber-bg:#faecd4;--orange:#b04800;--orange-bg:#faddcc;--red:#b02020;--red-bg:#fad4d4;--gray:#777770;--gray-bg:#e8e6e2;--blue:#1a4a8a;--blue-bg:#e8eef7;--radius:3px}body{background:#f4f2ee;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;color:var(--ink);min-height:100vh;overflow-x:hidden}#t1,#t2,#t3,#t4{display:none}.shell{max-width:960px;margin:0 auto;padding:0 14px 48px}.header{padding:26px 0 18px;border-bottom:3px solid var(--ink);margin-bottom:22px}.header-top{display:flex;align-items:flex-end;justify-content:space-between;flex-wrap:wrap;gap:8px}.brand{font-size:10px;letter-spacing:.18em;text-transform:uppercase;color:var(--ink-light);margin-bottom:5px}.title{font-size:clamp(20px,4.5vw,30px);font-weight:700;letter-spacing:-.01em;line-height:1.15}.header-meta{text-align:right}.badge{display:inline-block;background:var(--ink);color:var(--white);font-size:9px;letter-spacing:.14em;text-transform:uppercase;padding:3px 8px;border-radius:var(--radius);margin-bottom:4px}.date{font-size:11px;color:var(--ink-light);letter-spacing:.04em}.tabs{display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:6px;margin-bottom:22px;position:sticky;top:0;z-index:100;background:#f4f2ee;padding:8px 0}.tab-label{display:flex;align-items:center;justify-content:center;gap:4px;padding:9px 6px;cursor:pointer;font-size:11px;letter-spacing:.05em;text-transform:uppercase;color:var(--ink-mid);background:var(--off);border:1.5px solid var(--border-dark);border-radius:var(--radius);user-select:none;-webkit-tap-highlight-color:transparent;white-space:nowrap}#t1:checked~.shell label[for=t1],#t2:checked~.shell label[for=t2],#t3:checked~.shell label[for=t3],#t4:checked~.shell label[for=t4]{background:var(--ink);color:var(--white);border-color:var(--ink)}.panel{display:none}#t1:checked~.shell #p1,#t2:checked~.shell #p2,#t3:checked~.shell #p3,#t4:checked~.shell #p4{display:block}.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:14px;margin-bottom:24px}.kpi{background:var(--white);border:1px solid var(--border);border-radius:var(--radius);padding:16px 18px;border-left:4px solid var(--ink)}.kpi-label{font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--ink-light);margin-bottom:3px}.kpi-value{font-size:26px;font-weight:700;line-height:1.1;letter-spacing:-.02em}.kpi-value.orange{color:var(--orange)}.kpi-value.green{color:var(--green)}.kpi-value.amber{color:var(--amber)}.kpi-value.red{color:var(--red)}.kpi-sub{font-size:11px;color:var(--ink-mid);margin-top:2px}.slabel{font-size:12px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--ink);margin-bottom:12px;padding-bottom:6px;border-bottom:2px solid var(--ink)}.sup-cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px;margin-bottom:24px}.sup-card{background:var(--white);border:1px solid var(--border);border-radius:5px;padding:11px 12px 10px;border-top:3px solid var(--ink)}.sup-name{font-size:14px;font-weight:700;margin-bottom:6px;letter-spacing:-.01em}.sup-name small{display:block;font-size:9px;font-weight:500;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-light);margin-bottom:1px}.sup-row{display:flex;justify-content:space-between;align-items:baseline;padding:2px 0;font-size:12px}.sup-metric{color:var(--ink-mid);font-size:10px}.sup-val{font-weight:700;white-space:nowrap;font-size:12px}.sup-val.orange{color:var(--orange)}.sup-val.red{color:var(--red)}.sup-val.green{color:var(--green)}.sup-val.amber{color:var(--amber)}.sup-bar-bg{background:var(--border);height:5px;border-radius:2px;margin-top:8px;overflow:hidden}.sup-bar{height:100%;border-radius:2px;background:var(--green);transition:width .4s}.table-wrap{overflow-x:auto;border-radius:4px;border:2px solid var(--border-dark);background:var(--white)}table{width:100%;border-collapse:collapse;font-size:13px}th{background:#1a1a18;color:#ffffff;padding:10px 8px;text-align:center;font-weight:700;font-size:11px;letter-spacing:.05em;border-right:1px solid rgba(255,255,255,.15)}th:last-child{border-right:none}th.left,td.left{text-align:left;padding-left:12px}td{text-align:center;padding:8px 8px;border-bottom:1px solid var(--border);white-space:nowrap;font-variant-numeric:tabular-nums;font-size:13px}tbody tr:nth-child(even) td{background:#f7f5f1}tbody tr:nth-child(odd) td{background:#ffffff}tr:last-child td{border-bottom:none}tbody tr:hover td{background:#eef0f8}.bold{font-weight:700}.rev{font-variant-numeric:tabular-nums;font-weight:600}.ftd{color:var(--ink-mid)}.ytd{font-weight:600}.pct{font-weight:700;font-size:11px;padding:3px 8px;border-radius:3px;display:inline-block}.pct.green{background:var(--green-bg);color:var(--green)}.pct.amber{background:var(--amber-bg);color:var(--amber)}.pct.orange{background:var(--orange-bg);color:var(--orange)}.pct.red{background:var(--red-bg);color:var(--red)}.pct.zero{color:var(--gray);background:var(--gray-bg)}.sup-header td{background:#f0e4c0!important;color:#5a3e00;font-weight:700;border-top:2px solid var(--gold)!important;padding:6px 12px!important;font-size:11px;letter-spacing:.06em;text-transform:uppercase}.sub-total td{background:#e8e4de!important;border-top:2px solid var(--border-dark)!important;font-weight:700!important}.grand-total td{font-weight:700!important;border-top:3px solid var(--ink)!important;background:#e0ddd8!important;font-size:13.5px!important}.varun .sup-bar{background:var(--blue)}.sunil .sup-bar{background:var(--green)}.vishal .sup-bar{background:var(--orange)}.siddhartha .sup-bar{background:var(--amber)}.legend{display:flex;gap:16px;margin-top:14px;font-size:11px;color:var(--ink-mid)}.dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:4px}.dot.green{background:var(--green)}.dot.amber{background:var(--amber)}.dot.orange{background:var(--orange)}.dot.red{background:var(--red)}.footer{margin-top:28px;padding:16px 0 8px;border-top:1px solid var(--border);font-size:11px;color:var(--ink-light);text-align:center}.footer-brand{font-weight:600;color:var(--ink-mid);margin-top:4px}@media(max-width:600px){.kpis{grid-template-columns:1fr 1fr}.kpi-value{font-size:22px}table{font-size:12px}.sup-cards{grid-template-columns:1fr}.header-top{flex-wrap:nowrap;align-items:flex-start}.header-meta{flex-shrink:0;min-width:fit-content}}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}:root{--white:#fff;--off:#f0ede8;--border:#d8d2c8;--border-dark:#b0a898;--ink:#111110;--ink-mid:#444440;--ink-light:#7a7570;--gold:#c8a84b;--gold-light:#f0e4c0;--green:#1e6b3c;--green-bg:#d4eddf;--amber:#a05e10;--amber-bg:#faecd4;--orange:#b04800;--orange-bg:#faddcc;--red:#b02020;--red-bg:#fad4d4;--gray:#777770;--gray-bg:#e8e6e2;--blue:#1a4a8a;--blue-bg:#e8eef7;--radius:3px}body{background:#f4f2ee;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;color:var(--ink);min-height:100vh;overflow-x:hidden}#t1,#t2,#t3,#t4{display:none}.shell{max-width:1400px;margin:0 auto;padding:0 28px 48px}.header{padding:26px 0 18px;border-bottom:3px solid var(--ink);margin-bottom:22px}.header-top{display:flex;align-items:flex-end;justify-content:space-between;flex-wrap:wrap;gap:8px}.brand{font-size:10px;letter-spacing:.18em;text-transform:uppercase;color:var(--ink-light);margin-bottom:5px}.title{font-size:clamp(20px,4.5vw,30px);font-weight:700;letter-spacing:-.01em;line-height:1.15}.header-meta{text-align:right}.badge{display:inline-block;background:var(--ink);color:var(--white);font-size:9px;letter-spacing:.14em;text-transform:uppercase;padding:3px 8px;border-radius:var(--radius);margin-bottom:4px}.date{font-size:11px;color:var(--ink-light);letter-spacing:.04em}.tabs{display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:6px;margin-bottom:22px;position:sticky;top:0;z-index:100;background:#f4f2ee;padding:8px 0}.tab-label{display:flex;align-items:center;justify-content:center;gap:4px;padding:9px 6px;cursor:pointer;font-size:11px;letter-spacing:.05em;text-transform:uppercase;color:var(--ink-mid);background:var(--off);border:1.5px solid var(--border-dark);border-radius:var(--radius);user-select:none;-webkit-tap-highlight-color:transparent;white-space:nowrap}#t1:checked~.shell label[for=t1],#t2:checked~.shell label[for=t2],#t3:checked~.shell label[for=t3],#t4:checked~.shell label[for=t4]{background:var(--ink);color:var(--white);border-color:var(--ink)}.panel{display:none}#t1:checked~.shell #p1,#t2:checked~.shell #p2,#t3:checked~.shell #p3,#t4:checked~.shell #p4{display:block}.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:14px;margin-bottom:24px}.kpi{background:var(--white);border:1px solid var(--border);border-radius:var(--radius);padding:16px 18px;border-left:4px solid var(--ink)}.kpi-label{font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--ink-light);margin-bottom:3px}.kpi-value{font-size:26px;font-weight:700;line-height:1.1;letter-spacing:-.02em}.kpi-value.orange{color:var(--orange)}.kpi-value.green{color:var(--green)}.kpi-value.amber{color:var(--amber)}.kpi-value.red{color:var(--red)}.kpi-sub{font-size:11px;color:var(--ink-mid);margin-top:2px}.slabel{font-size:12px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--ink);margin-bottom:12px;padding-bottom:6px;border-bottom:2px solid var(--ink)}.sup-cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:14px;margin-bottom:24px}.sup-card{background:var(--white);border:1px solid var(--border);border-radius:5px;padding:11px 12px 10px;border-top:3px solid var(--ink)}.sup-name{font-size:14px;font-weight:700;margin-bottom:6px;letter-spacing:-.01em}.sup-name small{display:block;font-size:9px;font-weight:500;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-light);margin-bottom:1px}.sup-row{display:flex;justify-content:space-between;align-items:baseline;padding:2px 0;font-size:12px}.sup-metric{color:var(--ink-mid);font-size:10px}.sup-val{font-weight:700;white-space:nowrap;font-size:12px}.sup-val.orange{color:var(--orange)}.sup-val.red{color:var(--red)}.sup-val.green{color:var(--green)}.sup-val.amber{color:var(--amber)}.sup-bar-bg{background:var(--border);height:5px;border-radius:2px;margin-top:8px;overflow:hidden}.sup-bar{height:100%;border-radius:2px;background:var(--green);transition:width .4s}.table-wrap{overflow-x:auto;border-radius:4px;border:2px solid var(--border-dark);background:var(--white)}table{width:100%;border-collapse:collapse;font-size:13px}th{background:#1a1a18;color:#ffffff;padding:10px 8px;text-align:center;font-weight:700;font-size:11px;letter-spacing:.05em;border-right:1px solid rgba(255,255,255,.15)}th:last-child{border-right:none}th.left,td.left{text-align:left;padding-left:12px}td{text-align:center;padding:8px 8px;border-bottom:1px solid var(--border);white-space:nowrap;font-variant-numeric:tabular-nums;font-size:13px}tbody tr:nth-child(even) td{background:#f7f5f1}tbody tr:nth-child(odd) td{background:#ffffff}tr:last-child td{border-bottom:none}tbody tr:hover td{background:#eef0f8}.bold{font-weight:700}.rev{font-variant-numeric:tabular-nums;font-weight:600}.ftd{color:var(--ink-mid)}.ytd{font-weight:600}.pct{font-weight:700;font-size:11px;padding:3px 8px;border-radius:3px;display:inline-block}.pct.green{background:var(--green-bg);color:var(--green)}.pct.amber{background:var(--amber-bg);color:var(--amber)}.pct.orange{background:var(--orange-bg);color:var(--orange)}.pct.red{background:var(--red-bg);color:var(--red)}.pct.zero{color:var(--gray);background:var(--gray-bg)}.sup-header td{background:#f0e4c0!important;color:#5a3e00;font-weight:700;border-top:2px solid var(--gold)!important;padding:6px 12px!important;font-size:11px;letter-spacing:.06em;text-transform:uppercase}.sub-total td{background:#e8e4de!important;border-top:2px solid var(--border-dark)!important;font-weight:700!important}.grand-total td{font-weight:700!important;border-top:3px solid var(--ink)!important;background:#e0ddd8!important;font-size:13.5px!important}.varun .sup-bar{background:var(--blue)}.sunil .sup-bar{background:var(--green)}.vishal .sup-bar{background:var(--orange)}.siddhartha .sup-bar{background:var(--amber)}.legend{display:flex;gap:16px;margin-top:14px;font-size:11px;color:var(--ink-mid)}.dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:4px}.dot.green{background:var(--green)}.dot.amber{background:var(--amber)}.dot.orange{background:var(--orange)}.dot.red{background:var(--red)}.footer{margin-top:28px;padding:16px 0 8px;border-top:1px solid var(--border);font-size:11px;color:var(--ink-light);text-align:center}.footer-brand{font-weight:600;color:var(--ink-mid);margin-top:4px}@media(max-width:600px){.kpis{grid-template-columns:1fr 1fr}.kpi-value{font-size:22px}table{font-size:12px}.sup-cards{grid-template-columns:1fr}.header-top{flex-wrap:nowrap;align-items:flex-start}.header-meta{flex-shrink:0;min-width:fit-content}}
 '''
 
     _CSS_COLORFUL_ONLINE = r'''
@@ -572,7 +607,7 @@ def online_generate_html(sheets):
   --radius:5px}
 body{background:var(--surface);font-family:'Segoe UI',-apple-system,BlinkMacSystemFont,Helvetica,Arial,sans-serif;color:var(--ink);min-height:100vh;overflow-x:hidden}
 #t1,#t2,#t3,#t4{display:none}
-.shell{max-width:980px;margin:0 auto;padding:0 20px 52px}
+.shell{max-width:1400px;margin:0 auto;padding:0 28px 52px}
 .header{background:var(--navy);padding:28px 28px 24px;border-radius:8px;margin-bottom:20px;border-left:5px solid var(--teal)}
 .header-top{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px}
 .brand{font-size:9px;letter-spacing:.22em;text-transform:uppercase;color:var(--teal);margin-bottom:6px;font-weight:600}
@@ -594,7 +629,7 @@ body{background:var(--surface);font-family:'Segoe UI',-apple-system,BlinkMacSyst
 .kpi-sub{font-size:11px;color:var(--ink-light);margin-top:3px}
 .slabel{font-size:11px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--navy-light);margin:20px 0 12px;padding:0 0 8px;border-bottom:2px solid var(--teal);display:flex;align-items:center;gap:8px}
 .slabel::before{content:'';display:inline-block;width:4px;height:14px;background:var(--teal);border-radius:2px}
-.sup-cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(155px,1fr));gap:12px;margin-bottom:22px}
+.sup-cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:14px;margin-bottom:22px}
 .sup-card{background:var(--white);border:1px solid var(--border);border-radius:var(--radius);padding:14px 15px 12px;border-left:4px solid var(--teal)}
 .sup-name{font-size:13px;font-weight:700;margin-bottom:8px;color:var(--navy)}.sup-name small{display:block;font-size:9px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-light);margin-bottom:2px}
 .sup-row{display:flex;justify-content:space-between;align-items:baseline;padding:3px 0;font-size:12px;border-bottom:1px solid var(--border)}
@@ -626,20 +661,26 @@ tbody tr:hover td{background:#eef4ff}
 @media(max-width:600px){.kpis{grid-template-columns:1fr 1fr}.kpi-value{font-size:22px}table{font-size:12px}.sup-cards{grid-template-columns:1fr 1fr}}
 '''
 
-    CSS = _CSS_COLORFUL_ONLINE if COLORFUL_MODE else _CSS_BASE_ONLINE
+    _CSS_SIDEBAR_ONLINE = '.layout{display:flex;gap:16px;align-items:flex-start}.sidebar{width:155px;flex-shrink:0;position:sticky;top:10px;display:flex;flex-direction:column;gap:6px}.sidebar .tab-label{justify-content:flex-start;padding:10px 12px;white-space:normal;text-align:left}.content{flex:1;min-width:0}'
+    CSS = (_CSS_COLORFUL_ONLINE if COLORFUL_MODE else _CSS_BASE_ONLINE) + ((_CSS_SIDEBAR_ONLINE) if SIDEBAR_NAV else '')
 
     p1 = '<input type="radio" name="dash" id="t1" checked><input type="radio" name="dash" id="t2"><input type="radio" name="dash" id="t3"><input type="radio" name="dash" id="t4">'
     p2 = f'<div class="shell"><header class="header"><div class="header-top"><div><div class="brand">Performance Intelligence &middot; Online</div><h1 class="title">Online Admissions &amp; Fee Collected Tracker</h1></div><div class="header-meta"><div class="badge">Live Report</div><div class="date">{MONTH_LABEL} &middot; FTD {report_date.strftime("%d %b")}</div></div></div></header>'
-    p3 = '<div class="tabs"><label class="tab-label" for="t1">&#x1f4ca; Overview</label><label class="tab-label" for="t2">&#x1f4b0; Fee Collected</label><label class="tab-label" for="t3">&#x1f393; Admissions</label><label class="tab-label" for="t4">&#x1f3eb; Colleges</label></div>'
+    if SIDEBAR_NAV:
+        p3 = '<div class="layout"><nav class="sidebar"><label class="tab-label" for="t1">&#x1f4ca; Overview</label><label class="tab-label" for="t2">&#x1f4b0; Fee Collected</label><label class="tab-label" for="t3">&#x1f393; Admissions</label><label class="tab-label" for="t4">&#x1f3eb; Colleges</label></nav><div class="content">'
+    else:
+        p3 = '<div class="tabs"><label class="tab-label" for="t1">&#x1f4ca; Overview</label><label class="tab-label" for="t2">&#x1f4b0; Fee Collected</label><label class="tab-label" for="t3">&#x1f393; Admissions</label><label class="tab-label" for="t4">&#x1f3eb; Colleges</label></div>'
     p4_overview_kpis = f'<div class="kpis"><div class="kpi"><div class="kpi-label">Total Fee Collected</div><div class="kpi-value {pct_class((gt_fee_ach / gt_fee_tgt * 100) if gt_fee_tgt else 0)}">{money(gt_fee_ach)}</div><div class="kpi-sub">of {money(gt_fee_tgt)} target</div></div><div class="kpi"><div class="kpi-label">Fee Ach %</div><div class="kpi-value {pct_class((gt_fee_ach / gt_fee_tgt * 100) if gt_fee_tgt else 0)}">{gt_fee_pct_str}</div><div class="kpi-ratio">{money(gt_fee_ach).replace(chr(0x20b9), "")}/{money(gt_fee_tgt).replace(chr(0x20b9), "")}</div><div class="kpi-sub">Grand Total</div></div><div class="kpi"><div class="kpi-label">Admissions</div><div class="kpi-value">{gt_adm_ach}</div><div class="kpi-sub">Grand Total</div></div></div>'
     p4 = f'<section class="panel" id="p1">{p4_overview_kpis}<div class="slabel"><span>Team Owner Snapshot</span></div><div class="sup-cards">{sup_card_html}</div><div class="slabel"><span>Team Owner Summary Table</span></div><div class="table-wrap"><table><thead><tr><th class="left">Team Owner</th><th>Adm Ach</th><th>Fee TG</th><th>Fee Ach</th><th>Fee Ach %</th><th>FTD Fee</th><th>FTD Adm</th></tr></thead><tbody>{sup_summary_rows}</tbody></table></div></section>'
     p5_fee_kpis = f'<div class="kpis"><div class="kpi"><div class="kpi-label">Fee Target</div><div class="kpi-value">{money(gt_fee_tgt)}</div><div class="kpi-sub">{MONTH_LABEL}</div></div><div class="kpi"><div class="kpi-label">Achieved</div><div class="kpi-value {pct_class((gt_fee_ach / gt_fee_tgt * 100) if gt_fee_tgt else 0)}">{money(gt_fee_ach)}</div><div class="kpi-sub">{gt_fee_pct_str} overall</div></div><div class="kpi"><div class="kpi-label">FTD</div><div class="kpi-value green">{money(gt_fee_ftd)}</div><div class="kpi-sub">Today\'s fee collected</div></div></div>'
     p5 = f'<section class="panel" id="p2">{p5_fee_kpis}<div class="slabel"><span>Counsellor-wise Fee Collected Breakdown &middot; Counsellor targets are intentionally zero</span></div><div class="table-wrap"><table><thead><tr><th class="left">Counsellor</th><th>Target</th><th>MTD Achieved</th><th>Ach %</th><th>FTD</th></tr></thead><tbody>{c_rev_rows}</tbody></table></div></section>'
     p6_adm_kpis = f'<div class="kpis"><div class="kpi"><div class="kpi-label">Total Admissions</div><div class="kpi-value">{gt_adm_ach}</div><div class="kpi-sub">{MONTH_LABEL}</div></div><div class="kpi"><div class="kpi-label">FTD</div><div class="kpi-value green">{gt_adm_ftd}</div><div class="kpi-sub">Today\'s closes</div></div></div>'
     p6 = f'<section class="panel" id="p3">{p6_adm_kpis}<div class="slabel"><span>Counsellor-wise Admissions</span></div><div class="table-wrap"><table><thead><tr><th class="left">Counsellor</th><th>Achieved</th><th>FTD</th></tr></thead><tbody>{c_adm_rows}</tbody></table></div></section>'
-    ytd_from_label = report_date.strftime('1 Jan %Y')
-    p7 = f'<section class="panel" id="p4"><div class="slabel"><span>College-wise Performance &middot; Forms to Admissions &middot; YTD from {ytd_from_label}</span></div><div class="table-wrap"><table><thead><tr><th class="left" rowspan="2">College</th><th colspan="3">Year to Date</th><th colspan="3">Month to Date</th><th colspan="3">FTD</th></tr><tr><th>Forms</th><th>Adm</th><th>F2A %</th><th>Forms</th><th>Adm</th><th>F2A %</th><th>Forms</th><th>Adm</th><th>F2A %</th></tr></thead><tbody>{college_rows}</tbody></table></div><div class="legend"><div class="legend-item"><span class="dot green"></span> &ge; 100% &mdash; Exceeding</div><div class="legend-item"><span class="dot amber"></span> 70&ndash;99% &mdash; On Track</div><div class="legend-item"><span class="dot orange"></span> 40&ndash;69% &mdash; Needs Work</div><div class="legend-item"><span class="dot red"></span> &lt; 40% &mdash; Critical</div></div></section>'
-    p8 = f'<footer class="footer"><div class="footer-note">F2A = Forms to Admissions conversion. FTD = For The Day. Fee Collected in Indian &#x20b9;.</div><div class="footer-brand">Online &middot; Performance &middot; {MONTH_LABEL}</div></footer></div></body></html>'
+    p7 = f'<section class="panel" id="p4"><div class="slabel"><span>College-wise Performance &middot; Forms to Admissions</span></div><div class="table-wrap"><table><thead><tr><th class="left" rowspan="2">College</th><th colspan="3">Year to Date</th><th colspan="3">Month to Date</th><th colspan="3">FTD</th></tr><tr><th>Forms</th><th>Adm</th><th>F2A %</th><th>Forms</th><th>Adm</th><th>F2A %</th><th>Forms</th><th>Adm</th><th>F2A %</th></tr></thead><tbody>{college_rows}</tbody></table></div></section>'
+    if SIDEBAR_NAV:
+        p8 = '</div></div></div></body></html>'   # close .content, .layout, .shell
+    else:
+        p8 = '</div></body></html>'               # close .shell
 
     html_doc = f'''<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Online Admissions Dashboard</title><style>{CSS}</style></head><body>
 {p1}{p2}{p3}{p4}{p5}{p6}{p7}{p8}'''
@@ -735,7 +776,7 @@ ORDER BY s.student_id, uc.course_id, csj.created_at ASC;"""
 
 
 async def regular_get_data():
-    ytd_start = f'{report_date.year}-01-01'
+    ytd_start = '2025-01-01'
     ytd_end   = (report_date + timedelta(days=1)).strftime('%Y-%m-%d')
     all_adm, all_form = [], []
     db_excludes = {
@@ -788,7 +829,7 @@ def _count(df, college, start=None, end=None, exact=None):
     return int(mask.sum())
 
 
-YTD_START = f'{report_date.year}-01-01'  # Jan 1 of report year
+YTD_START = '2025-01-01'  # fixed: track from Jan 1 2025 across both reports
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -911,7 +952,7 @@ ORDER BY s.student_id, csj.course_id, csj.created_at ASC
 async def amity_get_total_forms_this_year():
     """Query AMITY DB for this year's Amity total forms via course_status_journeys."""
     db = next(d for d in REGULAR_DB_CONFIGS if d['name'] == 'AMITY')
-    ytd_start = f'{report_date.year}-01-01'
+    ytd_start = '2025-01-01'
     sql = _AMITY_TOTAL_FORMS_SQL.format(ytd_start=ytd_start)
     conn = await asyncpg.connect(host=db['host'], port=db['port'],
                                   database=db['database'], user=db['user'], password=db['password'])
@@ -1251,7 +1292,7 @@ def regular_generate_html(sheets, amity_yoy_df=None, amity_adm_df=None):
 :root{--white:#fff;--off:#f0ede8;--border:#d8d2c8;--border-dark:#b0a898;--ink:#111110;--ink-mid:#444440;--ink-light:#7a7570;--gold:#c8a84b;--gold-light:#f0e4c0;--green:#1e6b3c;--green-bg:#d4eddf;--amber:#a05e10;--amber-bg:#faecd4;--red:#b02020;--red-bg:#fad4d4;--blue:#1a4a8a;--blue-bg:#e8eef7;--radius:3px}
 body{background:#f4f2ee;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;color:var(--ink);min-height:100vh}
 #tab-admissions,#tab-forms,#tab-amity-yoy{display:none}
-.shell{max-width:900px;margin:0 auto;padding:0 16px 40px}
+.shell{max-width:1400px;margin:0 auto;padding:0 28px 40px}
 .header{padding:28px 0 20px;border-bottom:3px solid var(--ink);margin-bottom:24px}
 .header-top{display:flex;align-items:flex-end;justify-content:space-between;flex-wrap:wrap;gap:8px}
 .brand{font-size:11px;letter-spacing:.18em;text-transform:uppercase;color:var(--ink-light);margin-bottom:6px}
@@ -1313,7 +1354,7 @@ tbody tr:hover td{background:#eef0f8}
   --radius:5px}
 body{background:var(--surface);font-family:'Segoe UI',-apple-system,BlinkMacSystemFont,Helvetica,Arial,sans-serif;color:var(--ink);min-height:100vh}
 #tab-admissions,#tab-forms,#tab-amity-yoy{display:none}
-.shell{max-width:920px;margin:0 auto;padding:0 20px 44px}
+.shell{max-width:1400px;margin:0 auto;padding:0 28px 44px}
 .header{background:var(--navy);padding:26px 28px 22px;border-radius:8px;margin-bottom:20px;border-left:5px solid var(--teal)}
 .header-top{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px}
 .brand{font-size:9px;letter-spacing:.22em;text-transform:uppercase;color:var(--teal);margin-bottom:5px;font-weight:600}
@@ -1361,7 +1402,13 @@ tbody tr:hover td{background:#eef4ff}
 @media(max-width:600px){.kpis{grid-template-columns:1fr 1fr}.kpi-value{font-size:22px}table{font-size:11.5px}}
 '''
 
-    CSS = _CSS_COLORFUL_REGULAR if COLORFUL_MODE else _CSS_BASE_REGULAR
+    _CSS_SIDEBAR_REGULAR = '.layout{display:flex;gap:16px;align-items:flex-start}.sidebar{width:155px;flex-shrink:0;position:sticky;top:10px;display:flex;flex-direction:column;gap:6px}.sidebar .tab-label{justify-content:flex-start;padding:10px 12px;white-space:normal;text-align:left}.content{flex:1;min-width:0}'
+    CSS = (_CSS_COLORFUL_REGULAR if COLORFUL_MODE else _CSS_BASE_REGULAR) + (_CSS_SIDEBAR_REGULAR if SIDEBAR_NAV else '')
+
+    _reg_tabs_horizontal = '<div class="tabs"><label class="tab-label" for="tab-admissions">&#x1f393; Admissions</label><label class="tab-label" for="tab-forms">&#x1f4cb; Forms</label><label class="tab-label" for="tab-amity-forms">&#x1f4ca; Amity Forms YoY</label><label class="tab-label" for="tab-amity-adm">&#x1f4ca; Amity Adm YoY</label></div>'
+    _reg_tabs_sidebar    = '<div class="layout"><nav class="sidebar"><label class="tab-label" for="tab-admissions">&#x1f393; Admissions</label><label class="tab-label" for="tab-forms">&#x1f4cb; Forms</label><label class="tab-label" for="tab-amity-forms">&#x1f4ca; Amity Forms YoY</label><label class="tab-label" for="tab-amity-adm">&#x1f4ca; Amity Adm YoY</label></nav><div class="content">'
+    _reg_tabs_block = _reg_tabs_sidebar if SIDEBAR_NAV else _reg_tabs_horizontal
+    _reg_close = '</div></div></div>' if SIDEBAR_NAV else '</div>'   # .content + .layout + .shell  OR just .shell
 
     html_doc = f'''<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Regular Admissions Dashboard</title><style>{CSS}</style></head><body>
 <input type="radio" name="view" id="tab-admissions" checked>
@@ -1370,7 +1417,7 @@ tbody tr:hover td{background:#eef4ff}
 <input type="radio" name="view" id="tab-amity-adm">
 <div class="shell">
 <header class="header"><div class="header-top"><div><div class="brand">Performance Intelligence &middot; Regular</div><h1 class="title">Regular Admissions &amp; Forms Tracker</h1></div><div class="header-meta"><div class="badge">Live Report</div><div class="date">{MONTH_LABEL} &middot; FTD {report_date.strftime('%d %b')}</div></div></div></header>
-<div class="tabs"><label class="tab-label" for="tab-admissions">&#x1f393; Admissions</label><label class="tab-label" for="tab-forms">&#x1f4cb; Forms</label><label class="tab-label" for="tab-amity-forms">&#x1f4ca; Amity Forms YoY</label><label class="tab-label" for="tab-amity-adm">&#x1f4ca; Amity Adm YoY</label></div>
+{_reg_tabs_block}
 
 <section class="panel" id="panel-admissions">
 <div class="kpis">
@@ -1378,9 +1425,8 @@ tbody tr:hover td{background:#eef4ff}
 <div class="kpi"><div class="kpi-label">{MONTH_SHORT} Ach %</div><div class="kpi-value {pc(admt.iloc[4])}">{pv(admt.iloc[4]):.1f}%</div><div class="kpi-ratio" style="font-size:11px;opacity:0.8">{admt.iloc[3]}/{admt.iloc[2]}</div></div>
 <div class="kpi"><div class="kpi-label">Week Ach %</div><div class="kpi-value {pc(admt.iloc[7])}">{pv(admt.iloc[7]):.1f}%</div><div class="kpi-ratio" style="font-size:11px;opacity:0.8">{admt.iloc[6]}/{admt.iloc[5]}</div></div>
 </div>
-<div class="section-label"><span>College-wise Breakdown &middot; YTD from 1 Jan {report_date.year}</span></div>
+<div class="section-label"><span>College-wise Breakdown</span></div>
 <div class="table-wrap"><table><thead><tr><th rowspan="2" style="width:30%;vertical-align:middle;border-right:1px solid rgba(255,255,255,.12)">College</th><th rowspan="2" style="vertical-align:middle;color:rgba(255,255,255,.9);border-right:1px solid rgba(255,255,255,.12)">YTD</th><th colspan="3" class="th-group">{MONTH_SHORT}</th><th colspan="3" class="th-group">Week</th><th colspan="3" class="th-group">FTD</th></tr><tr><th>Target</th><th>Ach</th><th>Ach %</th><th>Target</th><th>Ach</th><th>Ach %</th><th>Target</th><th>Ach</th><th>Ach %</th></tr></thead><tbody>{rows(adm)}</tbody></table></div>
-<div class="legend"><div class="legend-item"><span class="dot green"></span> &ge; 100% &mdash; Exceeding</div><div class="legend-item"><span class="dot amber"></span> 70&ndash;99% &mdash; On Track</div><div class="legend-item"><span class="dot red"></span> &lt; 70% &mdash; Needs Attention</div></div>
 </section>
 
 <section class="panel" id="panel-forms">
@@ -1389,9 +1435,8 @@ tbody tr:hover td{background:#eef4ff}
 <div class="kpi"><div class="kpi-label">{MONTH_SHORT} Ach %</div><div class="kpi-value {pc(formt.iloc[4])}">{pv(formt.iloc[4]):.1f}%</div><div class="kpi-ratio" style="font-size:11px;opacity:0.8">{formt.iloc[3]}/{formt.iloc[2]}</div></div>
 <div class="kpi"><div class="kpi-label">Week Ach %</div><div class="kpi-value {pc(formt.iloc[7])}">{pv(formt.iloc[7]):.1f}%</div><div class="kpi-ratio" style="font-size:11px;opacity:0.8">{formt.iloc[6]}/{formt.iloc[5]}</div></div>
 </div>
-<div class="section-label"><span>College-wise Breakdown &middot; YTD from 1 Jan {report_date.year}</span></div>
+<div class="section-label"><span>College-wise Breakdown</span></div>
 <div class="table-wrap"><table><thead><tr><th rowspan="2" style="width:30%;vertical-align:middle;border-right:1px solid rgba(255,255,255,.12)">College</th><th rowspan="2" style="vertical-align:middle;color:rgba(255,255,255,.9);border-right:1px solid rgba(255,255,255,.12)">YTD</th><th colspan="3" class="th-group">{MONTH_SHORT}</th><th colspan="3" class="th-group">Week</th><th colspan="3" class="th-group">FTD</th></tr><tr><th>Target</th><th>Ach</th><th>Ach %</th><th>Target</th><th>Ach</th><th>Ach %</th><th>Target</th><th>Ach</th><th>Ach %</th></tr></thead><tbody>{rows(forms)}</tbody></table></div>
-<div class="legend"><div class="legend-item"><span class="dot green"></span> &ge; 100% &mdash; Exceeding</div><div class="legend-item"><span class="dot amber"></span> 70&ndash;99% &mdash; On Track</div><div class="legend-item"><span class="dot red"></span> &lt; 70% &mdash; Needs Attention</div></div>
 </section>
 
 <section class="panel" id="panel-amity-forms">
@@ -1402,8 +1447,7 @@ tbody tr:hover td{background:#eef4ff}
 {_amity_adm_yoy_html_section(amity_adm_df)}
 </section>
 
-<footer class="footer"><div class="footer-note">Percentages show achievement vs target. Ratios shown in KPIs. FTD = For The Day.</div><div class="footer-brand">Regular &middot; Performance &middot; {MONTH_LABEL}</div></footer>
-</div></body></html>'''
+{_reg_close}</body></html>'''
 
     with open(out_path, 'w', encoding='utf-8-sig') as f:
         f.write(html_doc)
@@ -1492,9 +1536,10 @@ def send_via_whapi(file_path, caption, group_id=None):
 # SCREENSHOT — per-tab
 # ═══════════════════════════════════════════════════════════════════════════════
 
-async def screenshot_html_tabs(html_path, tab_ids, png_paths, viewport_width=1024):
+async def screenshot_html_tabs(html_path, tab_ids, png_paths, viewport_width=1600, sidebar_nav=False):
     """Screenshot a tabbed HTML page once per tab by clicking each tab label.
     tab_ids: list of the `for` attr values on each <label> (e.g. ['t1','t2',...]).
+    sidebar_nav: if True, screenshots the .content div (tabs excluded) instead of .shell.
     Returns list of booleans indicating success for each tab."""
     try:
         from playwright.async_api import async_playwright
@@ -1507,11 +1552,15 @@ async def screenshot_html_tabs(html_path, tab_ids, png_paths, viewport_width=102
         async with async_playwright() as pw:
             browser = await pw.chromium.launch(args=['--no-sandbox', '--disable-setuid-sandbox'])
             for tab_id, png_path in zip(tab_ids, png_paths):
-                page = await browser.new_page(viewport={'width': viewport_width, 'height': 900})
+                page = await browser.new_page(
+                    viewport={'width': viewport_width, 'height': 900},
+                    device_scale_factor=2,   # 2x for crisp, non-blurry output
+                )
                 await page.goto(f'file:///{os.path.abspath(html_path)}', wait_until='networkidle', timeout=30000)
                 await page.click(f'label[for="{tab_id}"]')
                 await page.wait_for_timeout(400)
-                await page.locator('.shell').screenshot(path=png_path)
+                _locator = '.content' if sidebar_nav else '.shell'
+                await page.locator(_locator).screenshot(path=png_path)
                 await page.close()
                 print(f"  ✅ Screenshot saved: {os.path.basename(png_path)}")
                 results.append(True)
@@ -1538,12 +1587,24 @@ async def main():
 
     # ── STEP 1: Online LMS ─────────────────────────────────────────────────
     print("─── STEP 1/3: Online LMS Report ────────────────────────────────────")
+    print("  [1a-pre] Syncing counsellor roster from DB → Google Sheet...")
+    try:
+        added = await sync_online_counsellors(ONLINE_DB)
+        if added:
+            # Reload config so newly added counsellors are picked up this run
+            global ONLINE_REVENUE_TARGETS, ONLINE_SUPERVISOR_TARGETS
+            _refreshed = load_online_config()
+            ONLINE_SUPERVISOR_TARGETS = _refreshed.get("supervisor_targets", {})
+            ONLINE_REVENUE_TARGETS    = _refreshed.get("counsellor_targets", {})
+            print("  🔄 Config reloaded with new counsellors.")
+    except Exception as e:
+        print(f"  ⚠️  Counsellor sync failed (non-fatal): {e}")
     online_summary = None
     try:
         print("  [1a] Fetching online LMS data from DB...")
-        df_couns, df_adm, df_form = await online_get_data()
+        df_couns, df_couns_fee, df_couns_adm, df_college = await online_get_data()
         print("  [1b] Preparing online LMS data...")
-        online_sheets = online_prepare_data(df_couns, df_adm, df_form)
+        online_sheets = online_prepare_data(df_couns, df_couns_fee, df_couns_adm, df_college)
         print("  [1c] Generating online LMS HTML report...")
         online_html, online_summary = online_generate_html(online_sheets)
         print("  ✅ STEP 1 complete — Online LMS report generated")
@@ -1564,11 +1625,18 @@ async def main():
             os.path.join(OUTPUT_DIR, f'Online_LMS_{name}_{RUN_STAMP}.png')
             for name in _online_tab_names
         ]
-        online_png_ok = await screenshot_html_tabs(online_html, _online_tab_ids, online_pngs)
+        online_png_ok = await screenshot_html_tabs(online_html, _online_tab_ids, online_pngs, sidebar_nav=SIDEBAR_NAV)
         online_pngs = [p for p, ok in zip(online_pngs, online_png_ok) if ok]
 
     # ── STEP 2: Regular LMS ────────────────────────────────────────────────
     print("─── STEP 2/3: Regular LMS Report ───────────────────────────────────")
+    print("  [2a-pre] Syncing Regular_Targets period dates...")
+    try:
+        _month_start = report_date.replace(day=1).strftime('%Y-%m-%d')
+        _month_end   = report_date.replace(day=calendar.monthrange(report_date.year, report_date.month)[1]).strftime('%Y-%m-%d')
+        sync_regular_dates(_month_start, _month_end, REG_WEEK_START, REG_WEEK_END)
+    except Exception as e:
+        print(f"  Warning: Could not sync Regular_Targets dates (non-fatal): {e}")
     regular_summary = None
     try:
         print("  [2a] Fetching regular LMS data from DB (REGULAR + CGC + AMITY)...")
@@ -1612,7 +1680,7 @@ async def main():
             os.path.join(OUTPUT_DIR, f'Regular_LMS_{name}_{RUN_STAMP}.png')
             for name in _reg_tab_names
         ]
-        reg_png_ok = await screenshot_html_tabs(regular_html, _reg_tab_ids, regular_pngs)
+        reg_png_ok = await screenshot_html_tabs(regular_html, _reg_tab_ids, regular_pngs, sidebar_nav=SIDEBAR_NAV)
         regular_pngs = [p for p, ok in zip(regular_pngs, reg_png_ok) if ok]
 
     # ── STEP 3: Send Screenshots via WhatsApp ─────────────────────────────

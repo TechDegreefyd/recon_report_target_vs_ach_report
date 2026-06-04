@@ -83,6 +83,13 @@ def _int(val):
         return 0
 
 
+import re as _re
+
+def _norm(name: str) -> str:
+    """Canonical name: collapse internal spaces, strip, title-case."""
+    return _re.sub(r'\s+', ' ', str(name)).strip().title()
+
+
 # ─── Online config ──────────────────────────────────────────────────────────────
 
 def load_online_config():
@@ -103,7 +110,7 @@ def load_online_config():
     for row in rows:
         if not row or not row[0].strip():
             continue
-        sup = row[0].strip()
+        sup = _norm(row[0])
         supervisor_targets[sup] = _int(row[1]) if len(row) > 1 else 0
         supervisor_admission_targets[sup] = _int(row[2]) if len(row) > 2 else 0
 
@@ -113,8 +120,8 @@ def load_online_config():
     for row in c_rows:
         if len(row) < 2 or not row[0].strip() or not row[1].strip():
             continue
-        sup = row[0].strip()
-        couns = row[1].strip()
+        sup = _norm(row[0])
+        couns = _norm(row[1])
         counsellor_targets.setdefault(sup, {})[couns] = 0
 
     return {
@@ -163,6 +170,100 @@ def load_regular_config():
         "month_period":  {"start_date": month_start or '', "end_date": month_end or ''},
         "college_targets": college_targets,
     }
+
+
+# ─── Auto-detect missing counsellors ────────────────────────────────────────────
+
+async def sync_online_counsellors(online_db: dict):
+    """
+    Compares active counsellors in the DB (via assigned_to) against the
+    Online_Counsellors sheet. Appends any missing ones under their supervisor
+    with a blank target row so they're tracked in the next report run.
+
+    online_db: the ONLINE_DB dict (host/port/database/user/password).
+    Returns list of (supervisor_name, counsellor_name) tuples that were added.
+    """
+    import asyncpg
+
+    conn = await asyncpg.connect(**online_db)
+
+    sup_ids = await conn.fetch("""
+        SELECT counsellor_id, counsellor_name
+        FROM counsellors
+        WHERE status = 'active'
+    """)
+    id_to_name = {r['counsellor_id']: _norm(r['counsellor_name']) for r in sup_ids}
+
+    db_rows = await conn.fetch("""
+        SELECT counsellor_name, assigned_to
+        FROM counsellors
+        WHERE status = 'active'
+          AND assigned_to IS NOT NULL
+          AND assigned_to != '[default]'
+    """)
+    await conn.close()
+
+    # Build supervisor_name → set of counsellor names from DB
+    db_mapping = {}
+    for r in db_rows:
+        sup_id = r['assigned_to']
+        sup_name = id_to_name.get(sup_id, '')
+        couns_name = _norm(r['counsellor_name'])
+        if sup_name and couns_name and sup_name != couns_name:
+            db_mapping.setdefault(sup_name, set()).add(couns_name)
+
+    # Read current sheet contents
+    existing_rows = _read_range('Online_Counsellors!A2:B500')
+    existing = set()
+    for row in existing_rows:
+        if len(row) >= 2 and row[0].strip() and row[1].strip():
+            existing.add((_norm(row[0]), _norm(row[1])))
+
+    # Also read supervisors from Online_Targets to know which ones we track
+    target_rows = _read_range('Online_Targets!A2:A200')
+    tracked_supervisors = {_norm(r[0]) for r in target_rows if r and r[0].strip()}
+
+    # Find counsellors in DB but missing from sheet, for tracked supervisors only
+    to_add = []
+    for sup_name, couns_set in sorted(db_mapping.items()):
+        if sup_name not in tracked_supervisors:
+            continue
+        for couns_name in sorted(couns_set):
+            if (sup_name, couns_name) not in existing:
+                to_add.append([sup_name, couns_name])
+
+    if to_add:
+        svc = get_service()
+        svc.spreadsheets().values().append(
+            spreadsheetId=SPREADSHEET_ID,
+            range='Online_Counsellors!A:B',
+            valueInputOption='USER_ENTERED',
+            body={'values': to_add}
+        ).execute()
+        print(f"  [sync] Auto-added {len(to_add)} counsellor(s) to Online_Counsellors sheet:")
+        for row in to_add:
+            print(f"     + {row[1]}  (under {row[0]})")
+    else:
+        print("  [sync] Online_Counsellors sheet is up to date — no missing counsellors.")
+
+    return [(r[0], r[1]) for r in to_add]
+
+
+# ─── Auto-update Regular period dates ───────────────────────────────────────────
+
+def sync_regular_dates(month_start: str, month_end: str, week_start: str, week_end: str):
+    """
+    Overwrites the period dates in Regular_Targets row 2 (cols B-E) with the
+    current computed dates so the sheet always reflects the active reporting window.
+    """
+    svc = get_service()
+    svc.spreadsheets().values().update(
+        spreadsheetId=SPREADSHEET_ID,
+        range='Regular_Targets!B2:E2',
+        valueInputOption='USER_ENTERED',
+        body={'values': [[month_start, month_end, week_start, week_end]]}
+    ).execute()
+    print(f"  [sync] Regular_Targets dates updated: month {month_start} -> {month_end}, week {week_start} -> {week_end}")
 
 
 # ─── Report Logs ────────────────────────────────────────────────────────────────
