@@ -42,8 +42,11 @@ BASE_DIR = os.environ.get('WORKSPACE_DIR', SCRIPT_DIR)
 load_dotenv(os.path.join(BASE_DIR, '.env'))
 
 # ─── DATE ───────────────────────────────────────────────────────────────────────
-if len(sys.argv) > 1:
-    REPORT_DATE_STR = sys.argv[1]
+APPEND_MODE = '--append' in sys.argv
+date_args = [a for a in sys.argv[1:] if not a.startswith('--')]
+
+if date_args:
+    REPORT_DATE_STR = date_args[0]
 else:
     now_utc = datetime.now(UTC)
     now_ist = now_utc + timedelta(hours=5, minutes=30)
@@ -129,26 +132,27 @@ WITH first_form AS (
     SELECT
         student_id,
         course_id,
-        assigned_l3_counsellor_id,
         MIN(created_at) AS first_form_date
     FROM course_status_journeys
     WHERE course_status IN (
         'Form Submitted – Portal Pending',
         'Form Submitted – Completed',
         'Walkin Completed',
+        'Walkin Marked',
         'Exam/Interview Scheduled',
         'Offer Letter/Results Pending',
         'Offer Letter/Results Released',
         'Ready For Admission'
     )
     AND student_id IN (SELECT student_id FROM students)
-    GROUP BY student_id, course_id, assigned_l3_counsellor_id
+    GROUP BY student_id, course_id
 ),
 latest_fee_type AS (
     SELECT DISTINCT ON (student_id, course_id)
         student_id, course_id, fee_type AS admission_type
     FROM course_status_journeys
     WHERE student_id IN (SELECT student_id FROM students)
+      AND fee_type IS NOT NULL
     ORDER BY student_id, course_id, created_at DESC
 ),
 deduped_deposit AS (
@@ -226,6 +230,8 @@ def normalize_institute(name: str) -> str:
         return 'Lovely Professional University , Phagwara'
     if 'chandigarh university' in n and 'lucknow' in n:
         return 'Chandigarh University, Lucknow'
+    if 'chandigarh university' in n and ('mohali' in n or 'punjab' in n):
+        return 'Chandigarh University, Mohali'
     if 'chandigarh university' in n:
         return 'Chandigarh University, Mohali'
     if 'cgc' in n or 'chandigarh group' in n or 'landran' in n:
@@ -289,7 +295,7 @@ async def fetch_all():
 
 # ─── WRITE TO GOOGLE SHEET ─────────────────────────────────────────────────────
 
-def write_to_sheet(rows, sheet_title):
+def write_to_sheet(rows, sheet_title, append=False):
     service = get_sheets_service()
 
     headers = [
@@ -298,21 +304,29 @@ def write_to_sheet(rows, sheet_title):
         'Team-Owner', 'Primary Lead ID', 'Source Name', 'Camp Name For Ref', 'Campaign Name'
     ]
 
-    # Clear everything from A1 down
-    print(f"  Clearing existing data from '{sheet_title}'...")
-    service.spreadsheets().values().clear(
-        spreadsheetId=TARGET_SPREADSHEET_ID,
-        range=f"'{sheet_title}'!A1:P"
-    ).execute()
-
-    # Write headers + data in one batch
-    all_data = [headers] + rows
-    service.spreadsheets().values().update(
-        spreadsheetId=TARGET_SPREADSHEET_ID,
-        range=f"'{sheet_title}'!A1",
-        valueInputOption='USER_ENTERED',
-        body={'values': all_data}
-    ).execute()
+    if not append:
+        # Clear everything from A1 down and write headers + data
+        print(f"  Clearing existing data from '{sheet_title}'...")
+        service.spreadsheets().values().clear(
+            spreadsheetId=TARGET_SPREADSHEET_ID,
+            range=f"'{sheet_title}'!A1:P"
+        ).execute()
+        all_data = [headers] + rows
+        service.spreadsheets().values().update(
+            spreadsheetId=TARGET_SPREADSHEET_ID,
+            range=f"'{sheet_title}'!A1",
+            valueInputOption='USER_ENTERED',
+            body={'values': all_data}
+        ).execute()
+    else:
+        # Append rows after existing content (no header, no clear)
+        service.spreadsheets().values().append(
+            spreadsheetId=TARGET_SPREADSHEET_ID,
+            range=f"'{sheet_title}'!A1",
+            valueInputOption='USER_ENTERED',
+            insertDataOption='INSERT_ROWS',
+            body={'values': rows}
+        ).execute()
 
     print(f"  ✅ Wrote {len(rows)} rows to '{sheet_title}'")
 
@@ -335,7 +349,7 @@ async def main():
     print("─── Writing to Google Sheet ───────────────────────────────────────")
     sheet_title = find_sheet_title(get_sheets_service())
     print(f"   Sheet: '{sheet_title}' (gid={TARGET_GID})")
-    write_to_sheet(rows, sheet_title)
+    write_to_sheet(rows, sheet_title, append=APPEND_MODE)
 
     print()
     print("=" * 60)

@@ -12,7 +12,12 @@ Required tabs and their column layout:
 
   Online_Counsellors  (A:B)
     A: Supervisor  B: Counsellor
-    — All counsellor fee targets are always 0
+    — Roster only; per-counsellor fee targets live in the Counsellor Targets tab (gid below)
+
+  Counsellor WIse Targets   (gid=299650822, A:C)  — tab name has trailing space
+    A: Supervisor  B: Counsellor  C: Fee Target (number or '-' for no target)
+    — New counsellors are auto-appended with '-' as target.
+    — Used in the "Counsellor T vs A" report tab.
 
   Regular_Targets  (A:G)
     A: College  B: Month Start  C: Month End  D: Week Start  E: Week End
@@ -35,6 +40,10 @@ from googleapiclient.discovery import build
 
 SCOPES = ['https://www.googleapis.com/auth/spreadsheets']
 SPREADSHEET_ID = '1GELJ5Win5MTonlzPqvMsC0OwQ4K_h6MJoox51WrselQ'
+
+# gid of the per-counsellor fee-targets tab
+_COUNSELLOR_TARGETS_GID = 299650822
+_counsellor_targets_tab_name = None   # resolved once on first use
 
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 _CLIENT_SECRET = os.path.join(
@@ -90,23 +99,77 @@ def _norm(name: str) -> str:
     return _re.sub(r'\s+', ' ', str(name)).strip().title()
 
 
+def _get_counsellor_targets_tab() -> str:
+    """Resolve gid → sheet title once per process, cache the result."""
+    global _counsellor_targets_tab_name
+    if _counsellor_targets_tab_name:
+        return _counsellor_targets_tab_name
+    svc = get_service()
+    meta = svc.spreadsheets().get(spreadsheetId=SPREADSHEET_ID).execute()
+    for sheet in meta.get('sheets', []):
+        props = sheet.get('properties', {})
+        if props.get('sheetId') == _COUNSELLOR_TARGETS_GID:
+            _counsellor_targets_tab_name = props['title']
+            return _counsellor_targets_tab_name
+    raise ValueError(
+        f"No sheet with gid={_COUNSELLOR_TARGETS_GID} found in spreadsheet {SPREADSHEET_ID}. "
+        "Create the tab with columns: A=Supervisor, B=Counsellor, C=Fee Target."
+    )
+
+
+def load_counsellor_fee_targets() -> dict:
+    """
+    Read per-counsellor fee targets from the Counsellor Targets tab (gid=299650822).
+
+    Expected sheet layout (A:C, row 1 = header):
+      A: Supervisor   B: Name (counsellor)   C: Sum of Target <month>
+
+    Supervisor-total rows (Name == "Total") and the Grand Total row are skipped.
+    Returns {counsellor_name_normalised: int_or_None}
+      — None means no target set ('-' / blank in column C).
+    """
+    tab = _get_counsellor_targets_tab()
+    rows = _read_range(f"'{tab}'!A2:C2000")
+    targets = {}
+    sup_map = {}   # counsellor_name → supervisor_name (both normalised)
+    current_sup = ''
+    for row in rows:
+        if len(row) < 2:
+            continue
+        sup_raw  = row[0].strip() if row[0].strip() else current_sup
+        name_raw = row[1].strip()
+        if not name_raw or name_raw.lower() in ('total', 'grand total'):
+            if sup_raw:
+                current_sup = sup_raw
+            continue
+        if sup_raw:
+            current_sup = sup_raw
+        couns = _norm(name_raw)
+        sup   = _norm(current_sup)
+        raw   = row[2].strip() if len(row) > 2 else ''
+        targets[couns] = None if (raw in ('-', '', '—') or raw.lower() == 'none') else _int(raw)
+        if sup:
+            sup_map[couns] = sup
+    return targets, sup_map
+
+
 # ─── Online config ──────────────────────────────────────────────────────────────
 
 def load_online_config():
     """
-    Returns a dict that matches the old report_config.json structure:
+    Returns:
     {
-      "target_period":                 {"start_date": ..., "end_date": ...},
-      "supervisor_targets":            {sup: fee_target, ...},
-      "supervisor_admission_targets":  {sup: adm_target, ...},
-      "counsellor_targets":            {sup: {couns: 0, ...}, ...},
+      "supervisor_targets":            {sup: fee_target, ...},       — from Online_Targets
+      "supervisor_admission_targets":  {sup: adm_target, ...},       — from Online_Targets
+      "counsellor_fee_targets":        {couns_name: int_or_None, ...} — flat dict from Counsellor Wise Targets tab
     }
+    Roster (which counsellors exist under which supervisor) is fetched live from the DB
+    in online_get_data(), so Online_Counsellors sheet is no longer used.
     """
-    # --- Online_Targets (cols A:C only — no week dates needed) ---
+    # --- Online_Targets (supervisor-level targets) ---
     rows = _read_range('Online_Targets!A2:C200')
     supervisor_targets = {}
     supervisor_admission_targets = {}
-
     for row in rows:
         if not row or not row[0].strip():
             continue
@@ -114,20 +177,19 @@ def load_online_config():
         supervisor_targets[sup] = _int(row[1]) if len(row) > 1 else 0
         supervisor_admission_targets[sup] = _int(row[2]) if len(row) > 2 else 0
 
-    # --- Online_Counsellors ---
-    c_rows = _read_range('Online_Counsellors!A2:B500')
-    counsellor_targets = {}
-    for row in c_rows:
-        if len(row) < 2 or not row[0].strip() or not row[1].strip():
-            continue
-        sup = _norm(row[0])
-        couns = _norm(row[1])
-        counsellor_targets.setdefault(sup, {})[couns] = 0
+    # --- Per-counsellor fee targets + supervisor map (Counsellor Wise Targets tab) ---
+    counsellor_fee_targets = {}
+    counsellor_supervisor_map = {}   # {couns_name: sup_name} for supplementing DB roster
+    try:
+        counsellor_fee_targets, counsellor_supervisor_map = load_counsellor_fee_targets()
+    except Exception as e:
+        print(f"  ⚠️  Could not load per-counsellor fee targets (non-fatal): {e}")
 
     return {
         "supervisor_targets": supervisor_targets,
         "supervisor_admission_targets": supervisor_admission_targets,
-        "counsellor_targets": counsellor_targets,
+        "counsellor_fee_targets": counsellor_fee_targets,
+        "counsellor_supervisor_map": counsellor_supervisor_map,
     }
 
 
@@ -243,6 +305,32 @@ async def sync_online_counsellors(online_db: dict):
         print(f"  [sync] Auto-added {len(to_add)} counsellor(s) to Online_Counsellors sheet:")
         for row in to_add:
             print(f"     + {row[1]}  (under {row[0]})")
+
+        # Also append to Counsellor Targets tab with '-' as placeholder target.
+        # Use the DB-derived supervisor name (already normalised to match Online_Targets)
+        # so the new row is consistent with the rest of the sheet.
+        try:
+            tab = _get_counsellor_targets_tab()
+            # Read existing counsellor names (column B) to avoid duplicates
+            existing_tva = _read_range(f"'{tab}'!B2:B2000")
+            existing_couns_set = {_norm(row[0]) for row in existing_tva if row and row[0].strip()}
+            tva_rows = [
+                [sup, couns, '-']
+                for sup, couns in to_add
+                if _norm(couns) not in existing_couns_set
+            ]
+            if tva_rows:
+                svc.spreadsheets().values().append(
+                    spreadsheetId=SPREADSHEET_ID,
+                    range=f"'{tab}'!A:C",
+                    valueInputOption='USER_ENTERED',
+                    body={'values': tva_rows}
+                ).execute()
+                print(f"  [sync] Added {len(tva_rows)} counsellor(s) to '{tab}' with '-' target:")
+                for row in tva_rows:
+                    print(f"     + {row[1]}  (under {row[0]})  target='-'")
+        except Exception as e:
+            print(f"  ⚠️  Could not sync to Counsellor Targets tab (non-fatal): {e}")
     else:
         print("  [sync] Online_Counsellors sheet is up to date — no missing counsellors.")
 
