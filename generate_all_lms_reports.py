@@ -1785,6 +1785,7 @@ async def main():
     print("─── STEP 3/3: Sending Screenshots to WhatsApp + Logging ────────────")
     _tab_labels = {
         'Online_LMS_Overview':         'Owner wise Achievement Report - Online Business',
+        'Online_LMS_Fee_Collected':    'Target VS Ach',
         'Online_LMS_Colleges':         'Online LOB - University wise Forms & Adm',
         'Online_LMS_Counsellor_TVA':   'Counsellor Targets vs Achievements — Fee & Admissions',
         'Regular_LMS_Admissions':  'Admission Target vs Achieved',
@@ -1795,6 +1796,7 @@ async def main():
     # Route each report key to its target WhatsApp group
     _group_map = {
         'Online_LMS_Overview':         WHATSAPP_GROUP_ONLINE,
+        'Online_LMS_Fee_Collected':    WHATSAPP_GROUP_ONLINE,
         'Online_LMS_Colleges':         WHATSAPP_GROUP_ONLINE,
         'Online_LMS_Counsellor_TVA':   WHATSAPP_GROUP_ONLINE,
         'Regular_LMS_Admissions':  WHATSAPP_GROUP_REGULAR,
