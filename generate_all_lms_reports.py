@@ -289,29 +289,45 @@ async def online_get_data():
 
     last_activity_query = """
     WITH last_adm AS (
-      SELECT DISTINCT ON (csj.counsellor_id)
-        csj.counsellor_id,
-        MIN(csj.created_at) AT TIME ZONE 'Asia/Kolkata' AS last_admission_date
-      FROM course_status_journeys csj
-      WHERE csj.course_status = 'Admission'
-        AND INITCAP(TRIM(csj.fee_type)) NOT IN ('Partial Paid','Partially Paid','Partial Done')
-        AND csj.student_id IN (SELECT student_id FROM students)
-      GROUP BY csj.counsellor_id, csj.student_id, csj.course_id
-      ORDER BY csj.counsellor_id, MIN(csj.created_at) DESC
+      SELECT DISTINCT ON (attr_counsellor_id)
+        attr_counsellor_id AS counsellor_id,
+        MIN(created_at) AT TIME ZONE 'Asia/Kolkata' AS last_admission_date
+      FROM (
+        SELECT csj.created_at,
+          CASE WHEN mc.role = 'to' THEN s.assigned_counsellor_id
+               ELSE csj.counsellor_id
+          END AS attr_counsellor_id,
+          csj.student_id, csj.course_id
+        FROM course_status_journeys csj
+        JOIN students s ON s.student_id = csj.student_id
+        JOIN counsellors mc ON mc.counsellor_id = csj.counsellor_id
+        WHERE csj.course_status = 'Admission'
+          AND INITCAP(TRIM(csj.fee_type)) NOT IN ('Partial Paid','Partially Paid','Partial Done')
+      ) x
+      GROUP BY attr_counsellor_id, student_id, course_id
+      ORDER BY attr_counsellor_id, MIN(created_at) DESC
     ),
     last_adm_final AS (
       SELECT counsellor_id, MAX(last_admission_date) AS last_admission
       FROM last_adm GROUP BY counsellor_id
     ),
     last_app AS (
-      SELECT DISTINCT ON (csj.counsellor_id)
-        csj.counsellor_id,
-        MIN(csj.created_at) AT TIME ZONE 'Asia/Kolkata' AS last_app_date
-      FROM course_status_journeys csj
-      WHERE csj.course_status = 'Application'
-        AND csj.student_id IN (SELECT student_id FROM students)
-      GROUP BY csj.counsellor_id, csj.student_id, csj.course_id
-      ORDER BY csj.counsellor_id, MIN(csj.created_at) DESC
+      SELECT DISTINCT ON (attr_counsellor_id)
+        attr_counsellor_id AS counsellor_id,
+        MIN(created_at) AT TIME ZONE 'Asia/Kolkata' AS last_app_date
+      FROM (
+        SELECT csj.created_at,
+          CASE WHEN mc.role = 'to' THEN s.assigned_counsellor_id
+               ELSE csj.counsellor_id
+          END AS attr_counsellor_id,
+          csj.student_id, csj.course_id
+        FROM course_status_journeys csj
+        JOIN students s ON s.student_id = csj.student_id
+        JOIN counsellors mc ON mc.counsellor_id = csj.counsellor_id
+        WHERE csj.course_status = 'Application'
+      ) x
+      GROUP BY attr_counsellor_id, student_id, course_id
+      ORDER BY attr_counsellor_id, MIN(created_at) DESC
     ),
     last_app_final AS (
       SELECT counsellor_id, MAX(last_app_date) AS last_application
