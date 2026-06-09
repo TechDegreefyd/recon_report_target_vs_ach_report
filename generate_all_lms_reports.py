@@ -84,6 +84,14 @@ MTD_END = FTD_DATE
 MONTH_LABEL = report_date.strftime('%B %Y')
 MONTH_SHORT = report_date.strftime('%b')
 
+# Last month date range — same day window as current MTD
+# e.g. today = Jun 9  →  compare May 1–9 vs Jun 1–9
+_lm_first       = (report_date.replace(day=1) - timedelta(days=1)).replace(day=1)
+_lm_same_day    = _lm_first.replace(day=report_date.day)
+LAST_MTD_START  = _lm_first.strftime('%Y-%m-%d')
+LAST_MTD_END    = _lm_same_day.strftime('%Y-%m-%d')
+LAST_MONTH_LABEL = _lm_first.strftime('%B %Y')
+
 # Timestamp of this run (IST) — appended to all output filenames
 _run_ist = datetime.now(UTC) + timedelta(hours=5, minutes=30)
 RUN_STAMP = _run_ist.strftime('%Y-%m-%d_%H-%M')
@@ -346,12 +354,103 @@ async def online_get_data():
     ORDER BY m.counsellor_name, c.counsellor_name;
     """
 
-    rows_mtd_fee       = await conn.fetch(couns_mtd_fee_query)
-    rows_ftd_fee       = await conn.fetch(couns_ftd_fee_query)
-    rows_mtd_adm       = await conn.fetch(couns_mtd_adm_query)
-    rows_ftd_adm       = await conn.fetch(couns_ftd_adm_query)
-    rows_college       = await conn.fetch(college_query)
-    rows_last_activity = await conn.fetch(last_activity_query)
+    # ── Last month counsellor admissions (for MoM supervisor comparison) ──
+    couns_last_mtd_adm_query = f"""
+    SELECT c.counsellor_name, COUNT(DISTINCT csj.student_id) AS last_mtd_adm
+    FROM course_status_journeys csj
+    JOIN students s ON s.student_id = csj.student_id
+    LEFT JOIN counsellors c ON c.counsellor_id = s.assigned_counsellor_id
+    WHERE csj.course_status = 'Admission'
+      AND INITCAP(TRIM(csj.fee_type)) NOT IN ('Partial Paid', 'Partially Paid', 'Partial Done')
+      AND (csj.created_at AT TIME ZONE 'Asia/Kolkata')::date >= '{LAST_MTD_START}'::date
+      AND (csj.created_at AT TIME ZONE 'Asia/Kolkata')::date <= '{LAST_MTD_END}'::date
+    GROUP BY c.counsellor_name;
+    """
+
+    # ── Last month college admissions (for MoM university comparison) ──
+    college_last_mtd_query = f"""
+    SELECT
+        uc.university_name AS college_name,
+        COUNT(DISTINCT CASE
+            WHEN csj.course_status IN ('Admission', 'Enrolled')
+             AND INITCAP(TRIM(csj.fee_type)) NOT IN ('Partial Paid', 'Partially Paid', 'Partial Done')
+             AND (csj.created_at AT TIME ZONE 'Asia/Kolkata')::date >= '{LAST_MTD_START}'::date
+             AND (csj.created_at AT TIME ZONE 'Asia/Kolkata')::date <= '{LAST_MTD_END}'::date
+            THEN csj.student_id END) AS last_mtd_adm
+    FROM course_status_journeys csj
+    JOIN university_courses uc ON uc.course_id = csj.course_id
+    WHERE (csj.created_at AT TIME ZONE 'Asia/Kolkata')::date >= '{LAST_MTD_START}'::date
+      AND (csj.created_at AT TIME ZONE 'Asia/Kolkata')::date <= '{LAST_MTD_END}'::date
+    GROUP BY uc.university_name;
+    """
+
+    # ── This month college fee collected (for MoM university fee comparison) ──
+    college_mtd_fee_query = f"""
+    WITH deduped AS (
+        SELECT DISTINCT ON (csj.student_id, uc.university_name)
+            uc.university_name AS college_name,
+            csj.deposit_amount
+        FROM course_status_journeys csj
+        JOIN university_courses uc ON uc.course_id = csj.course_id
+        WHERE csj.course_status = 'Admission'
+          AND INITCAP(TRIM(csj.fee_type)) NOT IN ('Partial Paid', 'Partially Paid', 'Partial Done')
+          AND (csj.created_at AT TIME ZONE 'Asia/Kolkata')::date >= '{MTD_START_}'::date
+          AND (csj.created_at AT TIME ZONE 'Asia/Kolkata')::date <= '{MTD_END_}'::date
+        ORDER BY csj.student_id, uc.university_name, csj.deposit_amount DESC
+    )
+    SELECT college_name, COALESCE(SUM(deposit_amount), 0) AS mtd_fee
+    FROM deduped GROUP BY college_name;
+    """
+
+    # ── Last month college fee collected (for MoM university fee comparison) ──
+    college_last_mtd_fee_query = f"""
+    WITH deduped AS (
+        SELECT DISTINCT ON (csj.student_id, uc.university_name)
+            uc.university_name AS college_name,
+            csj.deposit_amount
+        FROM course_status_journeys csj
+        JOIN university_courses uc ON uc.course_id = csj.course_id
+        WHERE csj.course_status = 'Admission'
+          AND INITCAP(TRIM(csj.fee_type)) NOT IN ('Partial Paid', 'Partially Paid', 'Partial Done')
+          AND (csj.created_at AT TIME ZONE 'Asia/Kolkata')::date >= '{LAST_MTD_START}'::date
+          AND (csj.created_at AT TIME ZONE 'Asia/Kolkata')::date <= '{LAST_MTD_END}'::date
+        ORDER BY csj.student_id, uc.university_name, csj.deposit_amount DESC
+    )
+    SELECT college_name, COALESCE(SUM(deposit_amount), 0) AS last_mtd_fee
+    FROM deduped GROUP BY college_name;
+    """
+
+    # ── Last month counsellor fee collected (for MoM revenue comparison) ──
+    couns_last_mtd_fee_query = f"""
+    WITH deduped AS (
+        SELECT DISTINCT ON (csj.student_id)
+            s.assigned_counsellor_id,
+            csj.deposit_amount
+        FROM course_status_journeys csj
+        JOIN students s ON s.student_id = csj.student_id
+        WHERE csj.course_status = 'Admission'
+          AND INITCAP(TRIM(csj.fee_type)) NOT IN ('Partial Paid', 'Partially Paid', 'Partial Done')
+          AND (csj.created_at AT TIME ZONE 'Asia/Kolkata')::date >= '{LAST_MTD_START}'::date
+          AND (csj.created_at AT TIME ZONE 'Asia/Kolkata')::date <= '{LAST_MTD_END}'::date
+        ORDER BY csj.student_id, csj.deposit_amount DESC
+    )
+    SELECT c.counsellor_name, COALESCE(SUM(d.deposit_amount), 0) AS last_mtd_fee
+    FROM deduped d
+    LEFT JOIN counsellors c ON c.counsellor_id = d.assigned_counsellor_id
+    GROUP BY c.counsellor_name;
+    """
+
+    rows_mtd_fee              = await conn.fetch(couns_mtd_fee_query)
+    rows_ftd_fee              = await conn.fetch(couns_ftd_fee_query)
+    rows_mtd_adm              = await conn.fetch(couns_mtd_adm_query)
+    rows_ftd_adm              = await conn.fetch(couns_ftd_adm_query)
+    rows_college              = await conn.fetch(college_query)
+    rows_last_activity        = await conn.fetch(last_activity_query)
+    rows_last_mtd_adm         = await conn.fetch(couns_last_mtd_adm_query)
+    rows_college_last_mtd     = await conn.fetch(college_last_mtd_query)
+    rows_last_mtd_fee         = await conn.fetch(couns_last_mtd_fee_query)
+    rows_college_mtd_fee      = await conn.fetch(college_mtd_fee_query)
+    rows_college_last_mtd_fee = await conn.fetch(college_last_mtd_fee_query)
     await conn.close()
 
     def _norm_name(df, col):
@@ -381,7 +480,13 @@ async def online_get_data():
     )
     df_last_activity_raw = _norm_name(df_last_activity_raw, 'supervisor')
 
-    return df_couns, df_couns_fee, df_couns_adm, df_college, df_last_activity_raw, df_couns_all
+    df_last_mtd_adm         = _norm_name(_safe_df(rows_last_mtd_adm, ['counsellor_name', 'last_mtd_adm']), 'counsellor_name')
+    df_college_last_mtd     = _safe_df(rows_college_last_mtd, ['college_name', 'last_mtd_adm'])
+    df_last_mtd_fee         = _norm_name(_safe_df(rows_last_mtd_fee, ['counsellor_name', 'last_mtd_fee']), 'counsellor_name')
+    df_college_mtd_fee      = _safe_df(rows_college_mtd_fee, ['college_name', 'mtd_fee'])
+    df_college_last_mtd_fee = _safe_df(rows_college_last_mtd_fee, ['college_name', 'last_mtd_fee'])
+
+    return df_couns, df_couns_fee, df_couns_adm, df_college, df_last_activity_raw, df_couns_all, df_last_mtd_adm, df_college_last_mtd, df_last_mtd_fee, df_college_mtd_fee, df_college_last_mtd_fee
 
 
 def online_pct(achieved, target):
@@ -398,7 +503,7 @@ def online_pct(achieved, target):
     return f"{(achieved / target * 100):.1f}%"
 
 
-def online_prepare_data(df_couns, df_couns_fee, df_couns_adm, df_college, df_last_activity_raw=None, df_couns_all=None):
+def online_prepare_data(df_couns, df_couns_fee, df_couns_adm, df_college, df_last_activity_raw=None, df_couns_all=None, df_last_mtd_adm=None, df_college_last_mtd=None, df_last_mtd_fee=None, df_college_mtd_fee=None, df_college_last_mtd_fee=None):
     """Build all Online report DataFrames from pre-aggregated SQL results."""
 
     sup_order     = list(ONLINE_SUPERVISOR_TARGETS.keys())
@@ -524,14 +629,106 @@ def online_prepare_data(df_couns, df_couns_fee, df_couns_adm, df_college, df_las
             rows.append([display_names.get(sup, sup), cn, last_adm_str, days_adm, last_app_str, days_app])
     df_last_activity = pd.DataFrame(rows, columns=['Supervisor', 'Counsellor', 'Last Admission', 'Days Since Adm', 'Last Application', 'Days Since App'])
 
+    # ── Month-over-Month lookups ──────────────────────────────────────────────
+    _last_adm_lookup = {}
+    if df_last_mtd_adm is not None and not df_last_mtd_adm.empty:
+        _last_adm_lookup = dict(zip(df_last_mtd_adm['counsellor_name'], df_last_mtd_adm['last_mtd_adm']))
+    _last_fee_lookup = {}
+    if df_last_mtd_fee is not None and not df_last_mtd_fee.empty:
+        _last_fee_lookup = dict(zip(df_last_mtd_fee['counsellor_name'], df_last_mtd_fee['last_mtd_fee']))
+
+    def _chg_pct(chg, last):
+        if last: return f"{(chg / last * 100):+.1f}%"
+        return "+100%" if chg > 0 else "N/A"
+
+    # ── Supervisor Month-over-Month Comparison ────────────────────────────────
+    sup_mom_rows = []
+    for sup in sup_order:
+        s_adm  = df_c_adm[df_c_adm['supervisor_name'] == sup]
+        s_rev  = df_c_rev[df_c_rev['supervisor_name'] == sup]
+        this_adm = int(s_adm['Achieve'].sum()) if not s_adm.empty else 0
+        this_fee = float(s_rev['Achieved'].sum()) if not s_rev.empty else 0.0
+        last_adm = last_fee = 0
+        for _, r in s_adm.iterrows():
+            cn = r['counsellor_name']
+            last_adm += int(_last_adm_lookup.get(cn, 0))
+            last_fee += float(_last_fee_lookup.get(cn, 0))
+        chg_adm = this_adm - last_adm
+        chg_fee = this_fee - last_fee
+        sup_mom_rows.append([display_names.get(sup, sup), last_adm, this_adm, chg_adm, _chg_pct(chg_adm, last_adm), last_fee, this_fee, chg_fee, _chg_pct(chg_fee, last_fee)])
+    gt_la = sum(r[1] for r in sup_mom_rows); gt_ta = sum(r[2] for r in sup_mom_rows)
+    gt_lf = sum(r[5] for r in sup_mom_rows); gt_tf = sum(r[6] for r in sup_mom_rows)
+    sup_mom_rows.append(['Grand Total', gt_la, gt_ta, gt_ta - gt_la, _chg_pct(gt_ta - gt_la, gt_la), gt_lf, gt_tf, gt_tf - gt_lf, _chg_pct(gt_tf - gt_lf, gt_lf)])
+    df_sup_mom = pd.DataFrame(sup_mom_rows, columns=['Supervisor', f'Adm {LAST_MONTH_LABEL}', f'Adm {MONTH_LABEL}', 'Adm Change', 'Adm %', f'Fee {LAST_MONTH_LABEL}', f'Fee {MONTH_LABEL}', 'Fee Change', 'Fee %'])
+
+    # ── Counsellor Month-over-Month Comparison (adm + revenue) ───────────────
+    couns_mom_rows = []
+    for sup in sup_order:
+        s_adm = df_c_adm[df_c_adm['supervisor_name'] == sup]
+        s_rev = df_c_rev[df_c_rev['supervisor_name'] == sup]
+        if s_adm.empty:
+            continue
+        for _, r in s_adm.iterrows():
+            cn = r['counsellor_name']
+            this_adm = int(float(r['Achieve']))
+            last_adm = int(_last_adm_lookup.get(cn, 0))
+            rev_row  = s_rev[s_rev['counsellor_name'] == cn]
+            this_fee = float(rev_row.iloc[0]['Achieved']) if not rev_row.empty else 0.0
+            last_fee = float(_last_fee_lookup.get(cn, 0))
+            chg_adm  = this_adm - last_adm
+            chg_fee  = this_fee - last_fee
+            couns_mom_rows.append([display_names.get(sup, sup), cn, last_adm, this_adm, chg_adm, _chg_pct(chg_adm, last_adm), last_fee, this_fee, chg_fee, _chg_pct(chg_fee, last_fee)])
+    df_couns_mom = pd.DataFrame(couns_mom_rows, columns=['Supervisor', 'Counsellor', f'Adm {LAST_MONTH_LABEL}', f'Adm {MONTH_LABEL}', 'Adm Change', 'Adm %', f'Fee {LAST_MONTH_LABEL}', f'Fee {MONTH_LABEL}', 'Fee Change', 'Fee %'])
+
+    # ── College Month-over-Month Comparison ───────────────────────────────────
+    _last_col_adm_lookup = {}
+    if df_college_last_mtd is not None and not df_college_last_mtd.empty:
+        _last_col_adm_lookup = dict(zip(df_college_last_mtd['college_name'], df_college_last_mtd['last_mtd_adm']))
+    _this_col_fee_lookup = {}
+    if df_college_mtd_fee is not None and not df_college_mtd_fee.empty:
+        _this_col_fee_lookup = dict(zip(df_college_mtd_fee['college_name'], df_college_mtd_fee['mtd_fee']))
+    _last_col_fee_lookup = {}
+    if df_college_last_mtd_fee is not None and not df_college_last_mtd_fee.empty:
+        _last_col_fee_lookup = dict(zip(df_college_last_mtd_fee['college_name'], df_college_last_mtd_fee['last_mtd_fee']))
+
+    col_mom_rows = []
+    for _, r in df_college.iterrows():
+        cname    = r['college_name']
+        this_adm = int(r.get('mtd_adm', 0))
+        last_adm = int(_last_col_adm_lookup.get(cname, 0))
+        this_fee = float(_this_col_fee_lookup.get(cname, 0))
+        last_fee = float(_last_col_fee_lookup.get(cname, 0))
+        chg_adm  = this_adm - last_adm
+        chg_fee  = this_fee - last_fee
+        adm_pct  = f"{(chg_adm / last_adm * 100):+.1f}%" if last_adm else ("+100%" if this_adm else "N/A")
+        fee_pct  = f"{(chg_fee / last_fee * 100):+.1f}%" if last_fee else ("+100%" if this_fee else "N/A")
+        c_name_disp = str(cname).title()
+        for wrong, right in [('Gla', 'GLA'), ('Lpu', 'LPU'), ('Iit', 'IIT'), ('Nit', 'NIT'), ('Smu', 'SMU'), ('Nmims', 'NMIMS')]:
+            c_name_disp = c_name_disp.replace(wrong, right)
+        col_mom_rows.append([c_name_disp, last_adm, this_adm, chg_adm, adm_pct, last_fee, this_fee, chg_fee, fee_pct])
+    col_mom_rows.sort(key=lambda x: -x[2])  # sort by this month admissions desc
+    gt_col_la = sum(r[1] for r in col_mom_rows); gt_col_ta = sum(r[2] for r in col_mom_rows)
+    gt_col_lf = sum(r[5] for r in col_mom_rows); gt_col_tf = sum(r[6] for r in col_mom_rows)
+    gt_col_ca = gt_col_ta - gt_col_la; gt_col_cf = gt_col_tf - gt_col_lf
+    col_mom_rows.append(['Total', gt_col_la, gt_col_ta, gt_col_ca,
+                         f"{(gt_col_ca/gt_col_la*100):+.1f}%" if gt_col_la else "N/A",
+                         gt_col_lf, gt_col_tf, gt_col_cf,
+                         f"{(gt_col_cf/gt_col_lf*100):+.1f}%" if gt_col_lf else "N/A"])
+    df_col_mom = pd.DataFrame(col_mom_rows, columns=[
+        'College', f'Adm {LAST_MONTH_LABEL}', f'Adm {MONTH_LABEL}', 'Adm Change', 'Adm %',
+        f'Fee {LAST_MONTH_LABEL}', f'Fee {MONTH_LABEL}', 'Fee Change', 'Fee %'])
+
     print("✅ Online LMS data prepared")
     return {
-        'Counsellor_Fee_Collected': df_c_rev_sheet,
-        'Supervisor_Fee_Collected': df_sup_rev_sheet,
-        'Counsellor_Admission':     df_c_adm_sheet,
-        'Supervisor_Admission':     df_sup_adm_sheet,
-        'College_Performance':      df_college_sheet,
-        'Counsellor_Last_Activity': df_last_activity,
+        'Counsellor_Fee_Collected':    df_c_rev_sheet,
+        'Supervisor_Fee_Collected':    df_sup_rev_sheet,
+        'Counsellor_Admission':        df_c_adm_sheet,
+        'Supervisor_Admission':        df_sup_adm_sheet,
+        'College_Performance':         df_college_sheet,
+        'Counsellor_Last_Activity':    df_last_activity,
+        'Supervisor_Month_Comparison': df_sup_mom,
+        'Counsellor_Month_Comparison': df_couns_mom,
+        'College_Month_Comparison':    df_col_mom,
     }
 
 
@@ -547,6 +744,9 @@ def online_generate_html(sheets):
     c_adm = sheets['Counsellor_Admission']
     college = sheets['College_Performance']
     last_activity = sheets.get('Counsellor_Last_Activity', pd.DataFrame())
+    sup_mom   = sheets.get('Supervisor_Month_Comparison', pd.DataFrame())
+    couns_mom = sheets.get('Counsellor_Month_Comparison', pd.DataFrame())
+    col_mom   = sheets.get('College_Month_Comparison', pd.DataFrame())
 
     def esc(v):
         return html.escape(str(v))
@@ -938,12 +1138,112 @@ tbody tr:hover td{background:#eef4ff}
     _CSS_SIDEBAR_ONLINE = '.layout{display:flex;gap:16px;align-items:flex-start}.sidebar{width:155px;flex-shrink:0;position:sticky;top:10px;display:flex;flex-direction:column;gap:6px}.sidebar .tab-label{justify-content:flex-start;padding:10px 12px;white-space:normal;text-align:left}.content{flex:1;min-width:0}'
     CSS = (_CSS_COLORFUL_ONLINE if COLORFUL_MODE else _CSS_BASE_ONLINE) + ((_CSS_SIDEBAR_ONLINE) if SIDEBAR_NAV else '')
 
-    p1 = '<input type="radio" name="dash" id="t1" checked><input type="radio" name="dash" id="t2"><input type="radio" name="dash" id="t3"><input type="radio" name="dash" id="t4"><input type="radio" name="dash" id="t5"><input type="radio" name="dash" id="t6">'
+    # ── Month-over-Month helpers ──
+    def _mom_change_cell(chg):
+        try: chg = int(float(chg))
+        except: chg = 0
+        arrow = '▲' if chg > 0 else ('▼' if chg < 0 else '—')
+        color = 'green' if chg > 0 else ('red' if chg < 0 else 'gray')
+        return f'<span style="color:var(--{color},#666);font-weight:700">{arrow} {abs(chg)}</span>'
+
+    def _mom_fee_change_cell(chg):
+        try: chg = float(chg)
+        except: chg = 0.0
+        arrow = '▲' if chg > 0 else ('▼' if chg < 0 else '—')
+        color = 'green' if chg > 0 else ('red' if chg < 0 else 'gray')
+        return f'<span style="color:var(--{color},#666);font-weight:700">{arrow} {money(abs(chg))}</span>'
+
+    def _mom_pct_cell(chg_pct):
+        s = str(chg_pct)
+        color = 'green' if s.startswith('+') else ('red' if s.startswith('-') else 'gray')
+        return f'<span class="pct {color}" style="min-width:64px">{esc(s)}</span>'
+
+    # ── Supervisor MoM rows (adm + fee) ──
+    sup_mom_rows_html = ''
+    last_lbl = LAST_MONTH_LABEL
+    this_lbl = MONTH_LABEL
+    if not sup_mom.empty:
+        adm_last_col = sup_mom.columns[1]
+        adm_this_col = sup_mom.columns[2]
+        fee_last_col = sup_mom.columns[5]
+        fee_this_col = sup_mom.columns[6]
+        for _, r in sup_mom.iterrows():
+            is_total = str(r['Supervisor']) == 'Grand Total'
+            row_cls  = ' class="grand-total"' if is_total else ''
+            sup_mom_rows_html += (
+                f'<tr{row_cls}>'
+                f'<td class="left bold">{esc(r["Supervisor"])}</td>'
+                f'<td>{int(r[adm_last_col])}</td>'
+                f'<td>{int(r[adm_this_col])}</td>'
+                f'<td>{_mom_change_cell(r["Adm Change"])}</td>'
+                f'<td>{_mom_pct_cell(r["Adm %"])}</td>'
+                f'<td class="rev">{money(r[fee_last_col])}</td>'
+                f'<td class="rev">{money(r[fee_this_col])}</td>'
+                f'<td>{_mom_fee_change_cell(r["Fee Change"])}</td>'
+                f'<td>{_mom_pct_cell(r["Fee %"])}</td>'
+                f'</tr>\n'
+            )
+
+    # ── Counsellor MoM rows (grouped by supervisor, adm + fee) ──
+    couns_mom_rows_html = ''
+    if not couns_mom.empty:
+        for sup_name, grp in couns_mom.groupby('Supervisor', sort=False):
+            couns_mom_rows_html += f'<tr class="sup-header"><td colspan="9">&#128100; {esc(sup_name)} Team</td></tr>\n'
+            for _, r in grp.iterrows():
+                couns_mom_rows_html += (
+                    f'<tr>'
+                    f'<td class="left">{esc(r["Counsellor"])}</td>'
+                    f'<td>{int(r[couns_mom.columns[2]])}</td>'
+                    f'<td>{int(r[couns_mom.columns[3]])}</td>'
+                    f'<td>{_mom_change_cell(r["Adm Change"])}</td>'
+                    f'<td>{_mom_pct_cell(r["Adm %"])}</td>'
+                    f'<td class="rev">{money(r[couns_mom.columns[6]])}</td>'
+                    f'<td class="rev">{money(r[couns_mom.columns[7]])}</td>'
+                    f'<td>{_mom_fee_change_cell(r["Fee Change"])}</td>'
+                    f'<td>{_mom_pct_cell(r["Fee %"])}</td>'
+                    f'</tr>\n'
+                )
+            sub_la = grp[couns_mom.columns[2]].sum(); sub_ta = grp[couns_mom.columns[3]].sum()
+            sub_lf = grp[couns_mom.columns[6]].sum(); sub_tf = grp[couns_mom.columns[7]].sum()
+            sub_ca = int(sub_ta) - int(sub_la); sub_cf = sub_tf - sub_lf
+            def _spct(c, l): return f"{(c/l*100):+.1f}%" if l else ("+100%" if c > 0 else "N/A")
+            couns_mom_rows_html += (
+                f'<tr class="sub-total">'
+                f'<td class="left bold">Total ({esc(sup_name)})</td>'
+                f'<td>{int(sub_la)}</td><td>{int(sub_ta)}</td>'
+                f'<td>{_mom_change_cell(sub_ca)}</td><td>{_mom_pct_cell(_spct(sub_ca, sub_la))}</td>'
+                f'<td class="rev">{money(sub_lf)}</td><td class="rev">{money(sub_tf)}</td>'
+                f'<td>{_mom_fee_change_cell(sub_cf)}</td><td>{_mom_pct_cell(_spct(sub_cf, sub_lf))}</td>'
+                f'</tr>\n'
+            )
+
+    col_mom_rows_html = ''
+    if not col_mom.empty:
+        for _, r in col_mom.iterrows():
+            is_total = str(r['College']) == 'Total'
+            row_cls  = ' class="grand-total"' if is_total else ''
+            chg_adm  = int(r['Adm Change']) if not pd.isna(r['Adm Change']) else 0
+            chg_fee  = float(r['Fee Change']) if not pd.isna(r['Fee Change']) else 0.0
+            col_mom_rows_html += (
+                f'<tr{row_cls}>'
+                f'<td class="left bold">{esc(r["College"])}</td>'
+                f'<td>{int(r[col_mom.columns[1]])}</td>'
+                f'<td>{int(r[col_mom.columns[2]])}</td>'
+                f'<td>{_mom_change_cell(chg_adm)}</td>'
+                f'<td>{_mom_pct_cell(r["Adm %"])}</td>'
+                f'<td class="rev">{money(r[col_mom.columns[5]])}</td>'
+                f'<td class="rev">{money(r[col_mom.columns[6]])}</td>'
+                f'<td>{_mom_fee_change_cell(chg_fee)}</td>'
+                f'<td>{_mom_pct_cell(r["Fee %"])}</td>'
+                f'</tr>\n'
+            )
+
+    p1 = '<input type="radio" name="dash" id="t1" checked><input type="radio" name="dash" id="t2"><input type="radio" name="dash" id="t3"><input type="radio" name="dash" id="t4"><input type="radio" name="dash" id="t5"><input type="radio" name="dash" id="t6"><input type="radio" name="dash" id="t7"><input type="radio" name="dash" id="t8">'
     p2 = f'<div class="shell"><header class="header"><div class="header-top"><div><div class="brand">Performance Intelligence &middot; Online</div><h1 class="title">Online Admissions &amp; Fee Collected Tracker</h1></div><div class="header-meta"><div class="badge">Live Report</div><div class="date">{MONTH_LABEL} &middot; FTD {report_date.strftime("%d %b")}</div></div></div></header>'
     if SIDEBAR_NAV:
-        p3 = '<div class="layout"><nav class="sidebar"><label class="tab-label" for="t1">&#x1f4ca; Overview</label><label class="tab-label" for="t2">&#x1f4b0; Fee Collected</label><label class="tab-label" for="t3">&#x1f393; Admissions</label><label class="tab-label" for="t4">&#x1f3eb; Colleges</label><label class="tab-label" for="t5">&#x1f465; Counsellor T vs A</label><label class="tab-label" for="t6">&#x23f0; Last Activity</label></nav><div class="content">'
+        p3 = '<div class="layout"><nav class="sidebar"><label class="tab-label" for="t1">&#x1f4ca; Overview</label><label class="tab-label" for="t2">&#x1f4b0; Fee Collected</label><label class="tab-label" for="t3">&#x1f393; Admissions</label><label class="tab-label" for="t4">&#x1f3eb; Colleges</label><label class="tab-label" for="t5">&#x1f465; Counsellor T vs A</label><label class="tab-label" for="t6">&#x23f0; Last Activity</label><label class="tab-label" for="t7">&#x1f4c8; Supervisor MoM</label><label class="tab-label" for="t8">&#x1f3db;&#xfe0f; University MoM</label></nav><div class="content">'
     else:
-        p3 = '<div class="tabs"><label class="tab-label" for="t1">&#x1f4ca; Overview</label><label class="tab-label" for="t2">&#x1f4b0; Fee Collected</label><label class="tab-label" for="t3">&#x1f393; Admissions</label><label class="tab-label" for="t4">&#x1f3eb; Colleges</label><label class="tab-label" for="t5">&#x1f465; Counsellor T vs A</label><label class="tab-label" for="t6">&#x23f0; Last Activity</label></div>'
+        p3 = '<div class="tabs" style="grid-template-columns:repeat(8,1fr)"><label class="tab-label" for="t1">&#x1f4ca; Overview</label><label class="tab-label" for="t2">&#x1f4b0; Fee Collected</label><label class="tab-label" for="t3">&#x1f393; Admissions</label><label class="tab-label" for="t4">&#x1f3eb; Colleges</label><label class="tab-label" for="t5">&#x1f465; Counsellor T vs A</label><label class="tab-label" for="t6">&#x23f0; Last Activity</label><label class="tab-label" for="t7">&#x1f4c8; Supervisor MoM</label><label class="tab-label" for="t8">&#x1f3db;&#xfe0f; University MoM</label></div>'
     p4_overview_kpis = f'<div class="kpis"><div class="kpi"><div class="kpi-label">Total Fee Collected</div><div class="kpi-value {pct_class((gt_fee_ach / gt_fee_tgt * 100) if gt_fee_tgt else 0)}">{money(gt_fee_ach)}</div><div class="kpi-sub">of {money(gt_fee_tgt)} target</div></div><div class="kpi"><div class="kpi-label">Fee Ach %</div><div class="kpi-value {pct_class((gt_fee_ach / gt_fee_tgt * 100) if gt_fee_tgt else 0)}">{gt_fee_pct_str}</div><div class="kpi-ratio">{money(gt_fee_ach).replace(chr(0x20b9), "")}/{money(gt_fee_tgt).replace(chr(0x20b9), "")}</div><div class="kpi-sub">Grand Total</div></div><div class="kpi"><div class="kpi-label">Admissions</div><div class="kpi-value">{gt_adm_ach}</div><div class="kpi-sub">Grand Total</div></div></div>'
     p4 = f'<section class="panel" id="p1">{p4_overview_kpis}<div class="slabel"><span>Team Owner Snapshot</span></div><div class="sup-cards">{sup_card_html}</div><div class="slabel"><span>Team Owner Summary Table</span></div><div class="table-wrap"><table><thead><tr><th class="left">Team Owner</th><th>Adm Ach</th><th>Fee TG</th><th>Fee Ach</th><th>Fee Ach %</th><th>FTD Fee</th><th>FTD Adm</th></tr></thead><tbody>{sup_summary_rows}</tbody></table></div></section>'
     p5_fee_kpis = f'<div class="kpis"><div class="kpi"><div class="kpi-label">Fee Target</div><div class="kpi-value">{money(gt_fee_tgt)}</div><div class="kpi-sub">{MONTH_LABEL}</div></div><div class="kpi"><div class="kpi-label">Achieved</div><div class="kpi-value {pct_class((gt_fee_ach / gt_fee_tgt * 100) if gt_fee_tgt else 0)}">{money(gt_fee_ach)}</div><div class="kpi-sub">{gt_fee_pct_str} overall</div></div><div class="kpi"><div class="kpi-label">FTD</div><div class="kpi-value green">{money(gt_fee_ftd)}</div><div class="kpi-sub">Today\'s fee collected</div></div></div>'
@@ -954,13 +1254,46 @@ tbody tr:hover td{background:#eef4ff}
     p7b_kpis = f'<div class="kpis"><div class="kpi"><div class="kpi-label">Fee Target (MTD)</div><div class="kpi-value">{money(gt_tva_fee_tgt)}</div><div class="kpi-sub">{MONTH_LABEL}</div></div><div class="kpi"><div class="kpi-label">Fee Achieved (MTD)</div><div class="kpi-value {pct_class((gt_tva_fee_ach / gt_tva_fee_tgt * 100) if gt_tva_fee_tgt else 0)}">{money(gt_tva_fee_ach)}</div><div class="kpi-sub">{online_pct(gt_tva_fee_ach, gt_tva_fee_tgt)} overall</div></div><div class="kpi"><div class="kpi-label">Admissions (MTD)</div><div class="kpi-value">{gt_tva_adm_mtd}</div><div class="kpi-sub">Grand Total</div></div><div class="kpi"><div class="kpi-label">FTD Fee</div><div class="kpi-value green">{money(gt_tva_fee_ftd)}</div><div class="kpi-sub">Today</div></div><div class="kpi"><div class="kpi-label">FTD Admissions</div><div class="kpi-value green">{gt_tva_adm_ftd if gt_tva_adm_ftd else 0}</div><div class="kpi-sub">Today</div></div></div>'
     p7b = f'<section class="panel" id="p5">{p7b_kpis}<div class="slabel"><span>Counsellor-wise Targets vs Achievements &middot; Fee &amp; Admissions &middot; {MONTH_LABEL}</span></div><div class="table-wrap"><table><thead><tr><th class="left">Counsellor</th><th>Fee Target</th><th>Fee MTD Ach</th><th>Fee Ach %</th><th>Fee FTD</th><th>Adm MTD</th><th>Adm FTD</th></tr></thead><tbody>{c_tva_rows}</tbody></table></div></section>'
     p7c = f'<section class="panel" id="p6"><div class="slabel"><span>Supervisor-wise Counsellor Last Admission &amp; Last Application &middot; {report_date.strftime("%d %b %Y")}</span></div><div class="table-wrap"><table><thead><tr><th class="left">Counsellor</th><th>Last Admission</th><th>Adm Since</th><th>Last Application</th><th>Application Since</th></tr></thead><tbody>{last_act_rows}</tbody></table></div></section>'
+    _lm_range_label  = f'{_lm_first.day} {_lm_first.strftime("%b")} – {_lm_same_day.day} {_lm_same_day.strftime("%b %Y")}'
+    _tm_range_label  = f'{report_date.replace(day=1).day} {report_date.strftime("%b")} – {report_date.day} {report_date.strftime("%b %Y")}'
+    _mom_note = f'<div style="font-size:11px;color:var(--ink-light,#8896a8);margin-bottom:14px;padding:6px 10px;background:var(--surface2,#eef2f7);border-left:3px solid var(--teal,#0097a7);border-radius:3px">Comparing same day window &nbsp;·&nbsp; <strong>{_lm_range_label}</strong> &nbsp;vs&nbsp; <strong>{_tm_range_label}</strong></div>'
+    _sup_mom_thead = f'<tr><th class="left">Team Owner</th><th>Adm {esc(LAST_MONTH_LABEL)}</th><th>Adm {esc(MONTH_LABEL)}</th><th>Adm Δ</th><th>Adm %</th><th>Fee {esc(LAST_MONTH_LABEL)}</th><th>Fee {esc(MONTH_LABEL)}</th><th>Fee Δ</th><th>Fee %</th></tr>'
+    _couns_mom_thead = f'<tr><th class="left">Counsellor</th><th>Adm {esc(LAST_MONTH_LABEL)}</th><th>Adm {esc(MONTH_LABEL)}</th><th>Adm Δ</th><th>Adm %</th><th>Fee {esc(LAST_MONTH_LABEL)}</th><th>Fee {esc(MONTH_LABEL)}</th><th>Fee Δ</th><th>Fee %</th></tr>'
+    p7d = (
+        f'<section class="panel" id="p7">'
+        f'<div class="slabel"><span>Team Owner &amp; Counsellor &middot; Admissions + Revenue &middot; {LAST_MONTH_LABEL} vs {MONTH_LABEL}</span></div>'
+        f'{_mom_note}'
+        f'<div class="slabel" style="margin-top:16px"><span>&#128202; Team Owner Summary</span></div>'
+        f'<div class="table-wrap"><table><thead>{_sup_mom_thead}</thead><tbody>{sup_mom_rows_html}</tbody></table></div>'
+        f'<div class="slabel" style="margin-top:20px"><span>&#128100; Counsellor Drill-Down</span></div>'
+        f'<div class="table-wrap"><table><thead>{_couns_mom_thead}</thead><tbody>{couns_mom_rows_html}</tbody></table></div>'
+        f'</section>'
+    )
+    p7e = (
+        f'<section class="panel" id="p8">'
+        f'<div class="slabel"><span>Partner University-wise Admissions + Revenue &middot; {LAST_MONTH_LABEL} vs {MONTH_LABEL}</span></div>'
+        f'{_mom_note}'
+        f'<div class="table-wrap"><table><thead>'
+        f'<tr><th class="left" rowspan="2">University</th>'
+        f'<th colspan="4">Admissions</th>'
+        f'<th colspan="4">Fee Collected</th></tr>'
+        f'<tr><th>{esc(LAST_MONTH_LABEL)}</th><th>{esc(MONTH_LABEL)}</th><th>Δ</th><th>%</th>'
+        f'<th>{esc(LAST_MONTH_LABEL)}</th><th>{esc(MONTH_LABEL)}</th><th>Δ</th><th>%</th></tr>'
+        f'</thead><tbody>{col_mom_rows_html}</tbody></table></div>'
+        f'</section>'
+    )
     if SIDEBAR_NAV:
         p8 = '</div></div></div></body></html>'   # close .content, .layout, .shell
     else:
         p8 = '</div></body></html>'               # close .shell
 
-    html_doc = f'''<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Online Admissions Dashboard</title><style>{CSS}#t6{{display:none}}#t6:checked~.shell label[for=t6]{{background:var(--navy,#1a1a18);color:#fff;border-color:var(--navy,#1a1a18)}}#t6:checked~.shell #p6{{display:block}}</style></head><body>
-{p1}{p2}{p3}{p4}{p5}{p6}{p7}{p7b}{p7c}{p8}'''
+    _extra_css = (
+        '#t6{display:none}#t6:checked~.shell label[for=t6]{background:var(--navy,#1a1a18);color:#fff;border-color:var(--navy,#1a1a18)}#t6:checked~.shell #p6{display:block}'
+        '#t7{display:none}#t7:checked~.shell label[for=t7]{background:var(--navy,#1a1a18);color:#fff;border-color:var(--navy,#1a1a18)}#t7:checked~.shell #p7{display:block}'
+        '#t8{display:none}#t8:checked~.shell label[for=t8]{background:var(--navy,#1a1a18);color:#fff;border-color:var(--navy,#1a1a18)}#t8:checked~.shell #p8{display:block}'
+    )
+    html_doc = f'''<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Online Admissions Dashboard</title><style>{CSS}{_extra_css}</style></head><body>
+{p1}{p2}{p3}{p4}{p5}{p6}{p7}{p7b}{p7c}{p7d}{p7e}{p8}'''
 
     with open(out_path, 'w', encoding='utf-8-sig') as f:
         f.write(html_doc)
@@ -1867,9 +2200,9 @@ async def main():
     online_summary = None
     try:
         print("  [1a] Fetching online LMS data from DB...")
-        df_couns, df_couns_fee, df_couns_adm, df_college, df_last_activity_raw, df_couns_all = await online_get_data()
+        df_couns, df_couns_fee, df_couns_adm, df_college, df_last_activity_raw, df_couns_all, df_last_mtd_adm, df_college_last_mtd, df_last_mtd_fee, df_college_mtd_fee, df_college_last_mtd_fee = await online_get_data()
         print("  [1b] Preparing online LMS data...")
-        online_sheets = online_prepare_data(df_couns, df_couns_fee, df_couns_adm, df_college, df_last_activity_raw, df_couns_all)
+        online_sheets = online_prepare_data(df_couns, df_couns_fee, df_couns_adm, df_college, df_last_activity_raw, df_couns_all, df_last_mtd_adm, df_college_last_mtd, df_last_mtd_fee, df_college_mtd_fee, df_college_last_mtd_fee)
         print("  [1c] Generating online LMS HTML report...")
         online_html, online_summary = online_generate_html(online_sheets)
         print("  ✅ STEP 1 complete — Online LMS report generated")
@@ -1888,8 +2221,8 @@ async def main():
             _online_tab_ids   = ['t6']
             _online_tab_names = ['Last_Activity']
         else:
-            _online_tab_ids   = ['t1',        't2',            't4',       't5',                't6']
-            _online_tab_names = ['Overview', 'Fee_Collected', 'Colleges', 'Counsellor_TVA', 'Last_Activity']
+            _online_tab_ids   = ['t1',        't2',            't4',       't5',                't6',           't7',              't8']
+            _online_tab_names = ['Overview', 'Fee_Collected', 'Colleges', 'Counsellor_TVA', 'Last_Activity', 'Supervisor_MoM', 'University_MoM']
         online_pngs = [
             os.path.join(OUTPUT_DIR, f'Online_LMS_{name}_{RUN_STAMP}.png')
             for name in _online_tab_names
@@ -1966,6 +2299,8 @@ async def main():
         'Online_LMS_Colleges':         'Online LOB - University wise Forms & Adm',
         'Online_LMS_Counsellor_TVA':   'Counsellor Targets vs Achievements — Fee & Admissions',
         'Online_LMS_Last_Activity':    'Admission and Application Ageing Report',
+        'Online_LMS_Supervisor_MoM':   f'Till Date Supervisor Month on Month — {LAST_MONTH_LABEL} vs {MONTH_LABEL}',
+        'Online_LMS_University_MoM':   f'Till Date University Month on Month — {LAST_MONTH_LABEL} vs {MONTH_LABEL}',
         'Regular_LMS_Admissions':  'Admission Target vs Achieved',
         'Regular_LMS_Forms':       'Form Target vs Achieved',
         'Regular_LMS_Amity_Forms': 'Amity Total Forms - Campus YoY',
@@ -1978,6 +2313,8 @@ async def main():
         'Online_LMS_Colleges':         WHATSAPP_GROUP_ONLINE,
         'Online_LMS_Counsellor_TVA':   WHATSAPP_GROUP_ONLINE,
         'Online_LMS_Last_Activity':    WHATSAPP_GROUP_ONLINE,
+        'Online_LMS_Supervisor_MoM':   ['120363424062745706@g.us'],
+        'Online_LMS_University_MoM':   ['120363424062745706@g.us'],
         'Regular_LMS_Admissions':  WHATSAPP_GROUP_REGULAR,
         'Regular_LMS_Forms':       WHATSAPP_GROUP_REGULAR,
         'Regular_LMS_Amity_Forms': WHATSAPP_GROUP_DAILY,
@@ -2047,7 +2384,7 @@ async def main():
     print("📊 ALL REPORTS GENERATED SUCCESSFULLY")
     print("=" * 60)
     print(f"   FTD: {FTD_DATE}")
-    print(f"   Online screenshots:  {'✅' if online_pngs else '❌'} ({len(online_pngs)}/5)")
+    print(f"   Online screenshots:  {'✅' if online_pngs else '❌'} ({len(online_pngs)}/7)")
     print(f"   Regular screenshots: {'✅' if regular_pngs else '❌'} ({len(regular_pngs)}/4)")
     print(f"   WHAPI sends: {'skipped (--local mode)' if LOCAL_MODE else ('attempted' if WHAPI_TOKEN else 'skipped (no token)')}")
     print("=" * 60)

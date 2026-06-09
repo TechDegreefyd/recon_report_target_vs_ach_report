@@ -51,20 +51,25 @@ def _yesterday_full():
     yesterday = now_ist - timedelta(days=1)
     return [yesterday.strftime('%Y-%m-%d')]
 
+def _today_cutoff_10am():
+    """10 AM IST (4:30 UTC): today's recon data from midnight to 10 AM IST."""
+    now_ist = datetime.now(IST)
+    return [now_ist.strftime('%Y-%m-%d'), '10']
+
 def _today_cutoff_12pm():
     """12 PM IST (6:30 UTC): today's recon data from midnight to 12 PM IST."""
     now_ist = datetime.now(IST)
     return [now_ist.strftime('%Y-%m-%d'), '12']
 
-def _today_12pm_to_4pm():
-    """4 PM IST (10:30 UTC): today's recon data from 12 PM to 4 PM IST."""
+def _today_midnight_to_4pm():
+    """4 PM IST (10:30 UTC): today's cumulative recon data from midnight to 4 PM IST."""
     now_ist = datetime.now(IST)
-    return [now_ist.strftime('%Y-%m-%d'), '16', '12']
+    return [now_ist.strftime('%Y-%m-%d'), '16']
 
-def _today_12pm_to_7pm():
-    """7 PM IST (13:30 UTC): today's recon data from 12 PM to 7 PM IST."""
+def _today_midnight_to_7pm():
+    """7 PM IST (13:30 UTC): today's cumulative recon data from midnight to 7 PM IST."""
     now_ist = datetime.now(IST)
-    return [now_ist.strftime('%Y-%m-%d'), '19', '12']
+    return [now_ist.strftime('%Y-%m-%d'), '19']
 
 def _lms_yesterday():
     """10 AM IST (4:30 UTC): Last Activity report only, for previous day (IST)."""
@@ -72,12 +77,13 @@ def _lms_yesterday():
 
 
 SCHEDULE = [
-    (4, 30,  "generate_all_recon_reports.py",      "Recon — Yesterday (full day)",          _yesterday_full),
-    (4, 30,  "generate_all_lms_reports.py",         "LMS Reports — Morning (yesterday IST)", _lms_yesterday),
-    (6, 30,  "generate_all_recon_reports.py",      "Recon — Today (until 12 PM)",           _today_cutoff_12pm),
-    (10, 30, "generate_all_recon_reports.py",      "Recon — Today (12 PM → 4 PM)",          _today_12pm_to_4pm),
-    (13, 30, "generate_all_recon_reports.py",      "Recon — Today (12 PM → 7 PM)",          _today_12pm_to_7pm),
-    (15, 0,  "generate_all_lms_reports.py",        "LMS Reports (Online + Regular)",        None),
+    (4,  30, "generate_all_recon_reports.py", "Recon — Yesterday (full day)",               _yesterday_full),
+    (4,  35, "generate_all_recon_reports.py", "Recon — Today (midnight → 10 AM)",           _today_cutoff_10am),
+    (4,  30, "generate_all_lms_reports.py",   "LMS Reports — Morning (yesterday IST)",      _lms_yesterday),
+    (6,  30, "generate_all_recon_reports.py", "Recon — Today (midnight → 12 PM)",           _today_cutoff_12pm),
+    (10, 30, "generate_all_recon_reports.py", "Recon — Today (midnight → 4 PM cumulative)", _today_midnight_to_4pm),
+    (13, 30, "generate_all_recon_reports.py", "Recon — Today (midnight → 7 PM cumulative)", _today_midnight_to_7pm),
+    (15, 0,  "generate_all_lms_reports.py",   "LMS Reports (Online + Regular)",             None),
 ]
 
 
@@ -85,7 +91,7 @@ def ist_now():
     return datetime.now(IST)
 
 
-def run_script(script, label, args_fn=None):
+def run_script(script, label, args_fn=None, extra_env=None):
     script_path = os.path.join(BASE_DIR, script)
     extra_args = args_fn() if args_fn else []
     cmd = [sys.executable, script_path] + extra_args
@@ -107,6 +113,7 @@ def run_script(script, label, args_fn=None):
             text=True,
             cwd=BASE_DIR,
             timeout=600,
+            env=extra_env,
         )
         elapsed = (ist_now() - start_dt).total_seconds()
         end_mark = ist_now().strftime('%Y-%m-%d %H:%M:%S IST')
@@ -167,18 +174,24 @@ def main():
     print("  Scheduler started. Waiting for jobs...\n", flush=True)
 
     # ── DEPLOYMENT SMOKE TEST ───────────────────────────────────────────
-    # Runs immediately on startup — sends live reports to all 3 WhatsApp
-    # groups so the team knows the server is up and running.
-    #   Group 1 (ONLINE)   → Online LMS overview + colleges screenshots
-    #   Group 2 (REGULAR)  → Regular admissions + forms screenshots
-    #   Group 3 (DAILY)    → Amity Forms YoY + Admissions YoY screenshots
+    # Runs immediately on startup — sends reports ONLY to the admin group
+    # (120363426619711887@g.us) so the team knows the server is up.
+    # All three group env vars are overridden to point at that single group.
+    _SMOKE_GROUP = "120363426619711887@g.us"
+    _smoke_env = {
+        **os.environ,
+        "WHATSAPP_GROUP_ONLINE_LMS":    _SMOKE_GROUP,
+        "WHATSAPP_GROUP_REGULAR_LMS":   _SMOKE_GROUP,
+        "WHATSAPP_GROUP_DAILY_UPDATES": _SMOKE_GROUP,
+        "WHATSAPP_GROUP":               _SMOKE_GROUP,
+    }
     print("=" * 70, flush=True)
-    print("  🔍 DEPLOY SMOKE TEST — Sending reports to all 3 WhatsApp groups...", flush=True)
+    print(f"  🔍 DEPLOY SMOKE TEST — Sending reports to admin group only ({_SMOKE_GROUP})...", flush=True)
     print("=" * 70, flush=True)
-    run_script("generate_all_lms_reports.py", "SMOKE TEST — LMS Reports (all 3 groups)", None)
-    run_script("generate_all_recon_reports.py", "SMOKE TEST — Recon Report (yesterday full day)", _yesterday_full)
+    run_script("generate_all_lms_reports.py",    "SMOKE TEST — LMS Reports (admin group only)",         None,              extra_env=_smoke_env)
+    run_script("generate_all_recon_reports.py",  "SMOKE TEST — Recon Report (yesterday full day)",      _yesterday_full,   extra_env=_smoke_env)
     print("=" * 70, flush=True)
-    print("  SMOKE TEST COMPLETE — All groups notified. Scheduler is live.\n", flush=True)
+    print("  SMOKE TEST COMPLETE — Admin group notified. Scheduler is live.\n", flush=True)
 
     try:
         scheduler.start()
