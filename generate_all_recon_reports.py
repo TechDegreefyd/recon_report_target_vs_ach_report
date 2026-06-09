@@ -43,7 +43,7 @@ os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 # ─── WHAPI ──────────────────────────────────────────────────────────────────────
 WHAPI_TOKEN = os.getenv('WHAPI_TOKEN')
-WHATSAPP_GROUP = os.getenv('WHATSAPP_GROUP_DAILY', os.getenv('WHATSAPP_GROUP', '120363426619711887@g.us'))
+WHATSAPP_GROUP = [g.strip() for g in os.getenv('WHATSAPP_GROUP_DAILY_UPDATES', os.getenv('WHATSAPP_GROUP', '120363426619711887@g.us')).split(',') if g.strip()]
 
 # ─── DB ─────────────────────────────────────────────────────────────────────────
 DB_CONFIG = {
@@ -401,28 +401,34 @@ def send_via_whapi(file_path, caption):
     is_png = filename.lower().endswith('.png')
     mime = 'image/png' if is_png else 'text/html'
     media_data = f'data:{mime};name={filename};base64,{b64}'
-    payload = {'to': WHATSAPP_GROUP, 'media': media_data, 'caption': caption}
     headers = {'accept': 'application/json', 'authorization': f'Bearer {WHAPI_TOKEN}',
                'content-type': 'application/json'}
     endpoint = 'messages/image' if is_png else 'messages/document'
-
-    for attempt in range(2):
-        try:
-            r = requests.post(f'https://gate.whapi.cloud/{endpoint}',
-                              headers=headers, json=payload, timeout=20)
-            if 200 <= r.status_code < 300:
-                print(f"  ✅ WHAPI sent: {filename}")
-                return True
-            print(f"  ⚠️  WHAPI HTTP {r.status_code}: {r.text[:120]}")
-            return False
-        except requests.exceptions.Timeout:
-            print(f"  ⚠️  WHAPI timeout (network unreachable?)")
-            return False
-        except Exception as e:
-            print(f"  ⚠️  WHAPI error: {e}")
-            if attempt == 0:
-                time.sleep(3)
-    return False
+    results = []
+    for gid in WHATSAPP_GROUP:
+        payload = {'to': gid, 'media': media_data, 'caption': caption}
+        for attempt in range(2):
+            try:
+                r = requests.post(f'https://gate.whapi.cloud/{endpoint}',
+                                  headers=headers, json=payload, timeout=20)
+                if 200 <= r.status_code < 300:
+                    print(f"  ✅ WHAPI sent: {filename} → {gid}")
+                    results.append(True)
+                    break
+                print(f"  ⚠️  WHAPI HTTP {r.status_code}: {r.text[:120]}")
+                results.append(False)
+                break
+            except requests.exceptions.Timeout:
+                print(f"  ⚠️  WHAPI timeout (network unreachable?)")
+                results.append(False)
+                break
+            except Exception as e:
+                print(f"  ⚠️  WHAPI error: {e}")
+                if attempt == 0:
+                    time.sleep(3)
+                else:
+                    results.append(False)
+    return all(results)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

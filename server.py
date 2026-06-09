@@ -66,13 +66,18 @@ def _today_12pm_to_7pm():
     now_ist = datetime.now(IST)
     return [now_ist.strftime('%Y-%m-%d'), '19', '12']
 
+def _lms_yesterday():
+    """10 AM IST (4:30 UTC): Last Activity report only, for previous day (IST)."""
+    return ['--yesterday', '--last-activity-only']
+
 
 SCHEDULE = [
-    (4, 30,  "generate_all_recon_reports.py",      "Recon — Yesterday (full day)",     _yesterday_full),
-    (6, 30,  "generate_all_recon_reports.py",      "Recon — Today (until 12 PM)",      _today_cutoff_12pm),
-    (10, 30, "generate_all_recon_reports.py",      "Recon — Today (12 PM → 4 PM)",     _today_12pm_to_4pm),
-    (13, 30, "generate_all_recon_reports.py",      "Recon — Today (12 PM → 7 PM)",     _today_12pm_to_7pm),
-    (15, 0,  "generate_all_lms_reports.py",        "LMS Reports (Online + Regular)",   None),
+    (4, 30,  "generate_all_recon_reports.py",      "Recon — Yesterday (full day)",          _yesterday_full),
+    (4, 30,  "generate_all_lms_reports.py",         "LMS Reports — Morning (yesterday IST)", _lms_yesterday),
+    (6, 30,  "generate_all_recon_reports.py",      "Recon — Today (until 12 PM)",           _today_cutoff_12pm),
+    (10, 30, "generate_all_recon_reports.py",      "Recon — Today (12 PM → 4 PM)",          _today_12pm_to_4pm),
+    (13, 30, "generate_all_recon_reports.py",      "Recon — Today (12 PM → 7 PM)",          _today_12pm_to_7pm),
+    (15, 0,  "generate_all_lms_reports.py",        "LMS Reports (Online + Regular)",        None),
 ]
 
 

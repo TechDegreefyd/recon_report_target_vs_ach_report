@@ -31,10 +31,12 @@ if sys.stdout.encoding != 'utf-8':
 # ─── ARGS ───────────────────────────────────────────────────────────────────────
 # --local   →  skip WhatsApp, keep files in OUTPUT_DIR instead of sending
 # --plain   →  revert to plain (non-colourful) theme
-LOCAL_MODE    = '--local'     in sys.argv
-NO_CLEANUP    = '--nocleanup' in sys.argv
-COLORFUL_MODE = '--plain'       not in sys.argv   # colourful is default
-SIDEBAR_NAV   = '--no-sidebar' not in sys.argv      # sidebar is default; pass --no-sidebar to revert
+LOCAL_MODE          = '--local'              in sys.argv
+NO_CLEANUP          = '--nocleanup'          in sys.argv
+COLORFUL_MODE       = '--plain'              not in sys.argv   # colourful is default
+SIDEBAR_NAV         = '--no-sidebar'         not in sys.argv   # sidebar is default; pass --no-sidebar to revert
+YESTERDAY           = '--yesterday'          in sys.argv       # force report_date = yesterday (IST); useful for 10 AM cron
+LAST_ACTIVITY_ONLY  = '--last-activity-only' in sys.argv       # only generate + send the Last Activity tab (skips Regular LMS)
 
 import pandas as pd
 import asyncpg
@@ -60,9 +62,9 @@ WHAPI_TOKEN = os.getenv('WHAPI_TOKEN')
 #   WHATSAPP_GROUP_ONLINE   → Online LMS reports (Overview + Colleges)
 #   WHATSAPP_GROUP_REGULAR  → Regular LMS reports (Admissions + Forms)
 #   WHATSAPP_GROUP_DAILY    → Amity YoY reports (Forms YoY + Adm YoY)
-WHATSAPP_GROUP_ONLINE  = os.getenv('WHATSAPP_GROUP_ONLINE',  os.getenv('WHATSAPP_GROUP', '120363426619711887@g.us'))
-WHATSAPP_GROUP_REGULAR = os.getenv('WHATSAPP_GROUP_REGULAR', os.getenv('WHATSAPP_GROUP', '120363426619711887@g.us'))
-WHATSAPP_GROUP_DAILY   = os.getenv('WHATSAPP_GROUP_DAILY',   os.getenv('WHATSAPP_GROUP', '120363426619711887@g.us'))
+WHATSAPP_GROUP_ONLINE  = [g.strip() for g in os.getenv('WHATSAPP_GROUP_ONLINE_LMS',     os.getenv('WHATSAPP_GROUP', '120363426619711887@g.us')).split(',') if g.strip()]
+WHATSAPP_GROUP_REGULAR = [g.strip() for g in os.getenv('WHATSAPP_GROUP_REGULAR_LMS',    os.getenv('WHATSAPP_GROUP', '120363426619711887@g.us')).split(',') if g.strip()]
+WHATSAPP_GROUP_DAILY   = [g.strip() for g in os.getenv('WHATSAPP_GROUP_DAILY_UPDATES',  os.getenv('WHATSAPP_GROUP', '120363426619711887@g.us')).split(',') if g.strip()]
 
 # ─── DATE LOGIC (IST, before 6AM = previous day) ────────────────────────────────
 # Override with REPORT_DATE=YYYY-MM-DD env var to run for a specific date
@@ -71,7 +73,10 @@ if os.getenv('REPORT_DATE'):
 else:
     now_utc = datetime.now(UTC)
     now_ist = now_utc + timedelta(hours=5, minutes=30)
-    report_date = now_ist - timedelta(days=1) if now_ist.hour < 6 else now_ist
+    if YESTERDAY or now_ist.hour < 6:
+        report_date = now_ist - timedelta(days=1)
+    else:
+        report_date = now_ist
 
 FTD_DATE = report_date.strftime('%Y-%m-%d')
 MTD_START = report_date.replace(day=1).strftime('%Y-%m-%d')
@@ -146,6 +151,17 @@ async def online_get_data():
 
     df_couns = pd.DataFrame(couns_data).drop_duplicates(subset=['supervisor_name', 'counsellor_name']) \
                if couns_data else pd.DataFrame(columns=['supervisor_name', 'counsellor_name'])
+
+    # Broader roster for Last Activity — tracked supervisor filter only, no has_target filter
+    couns_data_all = []
+    for r in roster_rows:
+        sup   = _norm(r['supervisor_name'])
+        couns = _norm(r['counsellor_name'])
+        sup   = _SUP_ALIAS.get(sup, sup)
+        if sup in tracked_supervisors and sup != couns:
+            couns_data_all.append({'supervisor_name': sup, 'counsellor_name': couns})
+    df_couns_all = pd.DataFrame(couns_data_all).drop_duplicates(subset=['supervisor_name', 'counsellor_name']) \
+                   if couns_data_all else pd.DataFrame(columns=['supervisor_name', 'counsellor_name'])
 
     # Supplement with counsellors that have a target in the sheet but are missing from DB
     db_couns_set = set(df_couns['counsellor_name'].tolist())
@@ -271,28 +287,85 @@ async def online_get_data():
         THEN csj.student_id END) > 0;
     """
 
-    rows_mtd_fee  = await conn.fetch(couns_mtd_fee_query)
-    rows_ftd_fee  = await conn.fetch(couns_ftd_fee_query)
-    rows_mtd_adm  = await conn.fetch(couns_mtd_adm_query)
-    rows_ftd_adm  = await conn.fetch(couns_ftd_adm_query)
-    rows_college  = await conn.fetch(college_query)
+    last_activity_query = """
+    WITH last_adm AS (
+      SELECT DISTINCT ON (csj.counsellor_id)
+        csj.counsellor_id,
+        MIN(csj.created_at) AT TIME ZONE 'Asia/Kolkata' AS last_admission_date
+      FROM course_status_journeys csj
+      WHERE csj.course_status = 'Admission'
+        AND INITCAP(TRIM(csj.fee_type)) NOT IN ('Partial Paid','Partially Paid','Partial Done')
+        AND csj.student_id IN (SELECT student_id FROM students)
+      GROUP BY csj.counsellor_id, csj.student_id, csj.course_id
+      ORDER BY csj.counsellor_id, MIN(csj.created_at) DESC
+    ),
+    last_adm_final AS (
+      SELECT counsellor_id, MAX(last_admission_date) AS last_admission
+      FROM last_adm GROUP BY counsellor_id
+    ),
+    last_app AS (
+      SELECT DISTINCT ON (csj.counsellor_id)
+        csj.counsellor_id,
+        MIN(csj.created_at) AT TIME ZONE 'Asia/Kolkata' AS last_app_date
+      FROM course_status_journeys csj
+      WHERE csj.course_status = 'Application'
+        AND csj.student_id IN (SELECT student_id FROM students)
+      GROUP BY csj.counsellor_id, csj.student_id, csj.course_id
+      ORDER BY csj.counsellor_id, MIN(csj.created_at) DESC
+    ),
+    last_app_final AS (
+      SELECT counsellor_id, MAX(last_app_date) AS last_application
+      FROM last_app GROUP BY counsellor_id
+    )
+    SELECT
+      c.counsellor_name,
+      m.counsellor_name AS supervisor,
+      la.last_admission::DATE AS last_admission,
+      lap.last_application::DATE AS last_application
+    FROM counsellors c
+    JOIN counsellors m ON c.assigned_to = m.counsellor_id
+    LEFT JOIN last_adm_final la ON c.counsellor_id = la.counsellor_id
+    LEFT JOIN last_app_final lap ON c.counsellor_id = lap.counsellor_id
+    WHERE c.role = 'l2'
+    ORDER BY m.counsellor_name, c.counsellor_name;
+    """
+
+    rows_mtd_fee       = await conn.fetch(couns_mtd_fee_query)
+    rows_ftd_fee       = await conn.fetch(couns_ftd_fee_query)
+    rows_mtd_adm       = await conn.fetch(couns_mtd_adm_query)
+    rows_ftd_adm       = await conn.fetch(couns_ftd_adm_query)
+    rows_college       = await conn.fetch(college_query)
+    rows_last_activity = await conn.fetch(last_activity_query)
     await conn.close()
 
     def _norm_name(df, col):
+        if col not in df.columns:
+            df[col] = pd.Series(dtype=str)
         df[col] = df[col].apply(_norm)
         return df
 
-    df_couns_fee = _norm_name(pd.DataFrame([dict(r) for r in rows_mtd_fee]), 'counsellor_name') \
-        .merge(_norm_name(pd.DataFrame([dict(r) for r in rows_ftd_fee]), 'counsellor_name'),
+    def _safe_df(rows, columns):
+        if rows:
+            return pd.DataFrame([dict(r) for r in rows])
+        return pd.DataFrame(columns=columns)
+
+    df_couns_fee = _norm_name(_safe_df(rows_mtd_fee, ['counsellor_name', 'mtd_fee']), 'counsellor_name') \
+        .merge(_norm_name(_safe_df(rows_ftd_fee, ['counsellor_name', 'ftd_fee']), 'counsellor_name'),
                on='counsellor_name', how='outer').fillna(0)
 
-    df_couns_adm = _norm_name(pd.DataFrame([dict(r) for r in rows_mtd_adm]), 'counsellor_name') \
-        .merge(_norm_name(pd.DataFrame([dict(r) for r in rows_ftd_adm]), 'counsellor_name'),
+    df_couns_adm = _norm_name(_safe_df(rows_mtd_adm, ['counsellor_name', 'mtd_adm']), 'counsellor_name') \
+        .merge(_norm_name(_safe_df(rows_ftd_adm, ['counsellor_name', 'ftd_adm']), 'counsellor_name'),
                on='counsellor_name', how='outer').fillna(0)
 
     df_college = pd.DataFrame([dict(r) for r in rows_college])
 
-    return df_couns, df_couns_fee, df_couns_adm, df_college
+    df_last_activity_raw = _norm_name(
+        _safe_df(rows_last_activity, ['counsellor_name', 'supervisor', 'last_admission', 'last_application']),
+        'counsellor_name'
+    )
+    df_last_activity_raw = _norm_name(df_last_activity_raw, 'supervisor')
+
+    return df_couns, df_couns_fee, df_couns_adm, df_college, df_last_activity_raw, df_couns_all
 
 
 def online_pct(achieved, target):
@@ -309,7 +382,7 @@ def online_pct(achieved, target):
     return f"{(achieved / target * 100):.1f}%"
 
 
-def online_prepare_data(df_couns, df_couns_fee, df_couns_adm, df_college):
+def online_prepare_data(df_couns, df_couns_fee, df_couns_adm, df_college, df_last_activity_raw=None, df_couns_all=None):
     """Build all Online report DataFrames from pre-aggregated SQL results."""
 
     sup_order     = list(ONLINE_SUPERVISOR_TARGETS.keys())
@@ -399,6 +472,42 @@ def online_prepare_data(df_couns, df_couns_fee, df_couns_adm, df_college):
                                                     'MTD Forms', 'MTD Admissions', 'MTD F2A %',
                                                     'FTD Forms', 'FTD Admissions', 'FTD F2A %'])
 
+    # ── Counsellor_Last_Activity — roster from Google Sheet, dates from SQL ─────
+    # df_couns_all controls WHO appears; df_last_activity_raw is a date lookup only
+    _raw     = df_last_activity_raw if df_last_activity_raw is not None else pd.DataFrame(
+        columns=['counsellor_name', 'last_admission', 'last_application'])
+    # roster = everyone explicitly listed in the sheet (numeric target OR "-"), under a tracked supervisor
+    _in_sheet = set(ONLINE_COUNSELLOR_FEE_TARGETS.keys())
+    _roster   = (df_couns_all if df_couns_all is not None else df_couns)
+    _roster   = _roster[_roster['counsellor_name'].isin(_in_sheet)]
+    _today   = report_date.date() if hasattr(report_date, 'date') else report_date
+    rows = []
+    for sup in sup_order:
+        team = _roster[_roster['supervisor_name'] == sup]
+        if team.empty:
+            continue
+        for _, r in team.iterrows():
+            cn      = r['counsellor_name']
+            match   = _raw[_raw['counsellor_name'] == cn]
+            # last admission
+            la_date = match.iloc[0]['last_admission'] if not match.empty else None
+            if la_date is not None and not (isinstance(la_date, float) and math.isnan(la_date)):
+                if hasattr(la_date, 'date'): la_date = la_date.date()
+                last_adm_str = la_date.strftime('%d %b %Y')
+                days_adm     = (_today - la_date).days
+            else:
+                last_adm_str, days_adm = '—', None
+            # last application
+            lap_date = match.iloc[0]['last_application'] if not match.empty else None
+            if lap_date is not None and not (isinstance(lap_date, float) and math.isnan(lap_date)):
+                if hasattr(lap_date, 'date'): lap_date = lap_date.date()
+                last_app_str = lap_date.strftime('%d %b %Y')
+                days_app     = (_today - lap_date).days
+            else:
+                last_app_str, days_app = '—', None
+            rows.append([display_names.get(sup, sup), cn, last_adm_str, days_adm, last_app_str, days_app])
+    df_last_activity = pd.DataFrame(rows, columns=['Supervisor', 'Counsellor', 'Last Admission', 'Days Since Adm', 'Last Application', 'Days Since App'])
+
     print("✅ Online LMS data prepared")
     return {
         'Counsellor_Fee_Collected': df_c_rev_sheet,
@@ -406,6 +515,7 @@ def online_prepare_data(df_couns, df_couns_fee, df_couns_adm, df_college):
         'Counsellor_Admission':     df_c_adm_sheet,
         'Supervisor_Admission':     df_sup_adm_sheet,
         'College_Performance':      df_college_sheet,
+        'Counsellor_Last_Activity': df_last_activity,
     }
 
 
@@ -420,6 +530,7 @@ def online_generate_html(sheets):
     sup_adm = sheets['Supervisor_Admission']
     c_adm = sheets['Counsellor_Admission']
     college = sheets['College_Performance']
+    last_activity = sheets.get('Counsellor_Last_Activity', pd.DataFrame())
 
     def esc(v):
         return html.escape(str(v))
@@ -673,6 +784,45 @@ def online_generate_html(sheets):
         f'</tr>\n'
     )
 
+    # ── Pre-build counsellor last activity rows (supervisor-grouped) ──
+    def _status_badge(days):
+        if days is None:
+            return '<span style="color:#8896a8">—</span>'
+        label = f'{days} Days'
+        if days <= 2:
+            return f'<span class="pct green">{label}</span>'
+        if days <= 7:
+            return f'<span class="pct amber">{label}</span>'
+        if days <= 14:
+            return f'<span class="pct orange">{label}</span>'
+        return f'<span class="pct red">{label}</span>'
+
+    def _safe_days(d):
+        return int(d) if d is not None and not (isinstance(d, float) and math.isnan(d)) else None
+
+    last_act_rows = ''
+    if not last_activity.empty:
+        for sup_name, grp in last_activity.groupby('Supervisor', sort=False):
+            last_act_rows += f'<tr class="sup-header"><td colspan="6">&#128100; {esc(sup_name)} Team</td></tr>\n'
+            for _, r in grp.iterrows():
+                cn       = str(r['Counsellor'])
+                last_adm = esc(str(r['Last Admission']))  if r['Last Admission'] not in (None, '—', float('nan')) else '—'
+                days_adm = r['Days Since Adm']
+                last_app = esc(str(r['Last Application'])) if r['Last Application'] not in (None, '—', float('nan')) else '—'
+                days_app = r['Days Since App']
+                adm_badge = _status_badge(_safe_days(days_adm)) if last_adm != '—' else '<span style="color:#8896a8">—</span>'
+                app_badge = _status_badge(_safe_days(days_app)) if last_app != '—' else '<span style="color:#8896a8">—</span>'
+
+                last_act_rows += (
+                    f'<tr>'
+                    f'<td class="left">{esc(cn)}</td>'
+                    f'<td>{last_adm}</td>'
+                    f'<td>{adm_badge}</td>'
+                    f'<td>{last_app}</td>'
+                    f'<td>{app_badge}</td>'
+                    f'</tr>\n'
+                )
+
     # ── Pre-build college rows ──
     college_rows = ''
     for _, r in college.iterrows():
@@ -772,12 +922,12 @@ tbody tr:hover td{background:#eef4ff}
     _CSS_SIDEBAR_ONLINE = '.layout{display:flex;gap:16px;align-items:flex-start}.sidebar{width:155px;flex-shrink:0;position:sticky;top:10px;display:flex;flex-direction:column;gap:6px}.sidebar .tab-label{justify-content:flex-start;padding:10px 12px;white-space:normal;text-align:left}.content{flex:1;min-width:0}'
     CSS = (_CSS_COLORFUL_ONLINE if COLORFUL_MODE else _CSS_BASE_ONLINE) + ((_CSS_SIDEBAR_ONLINE) if SIDEBAR_NAV else '')
 
-    p1 = '<input type="radio" name="dash" id="t1" checked><input type="radio" name="dash" id="t2"><input type="radio" name="dash" id="t3"><input type="radio" name="dash" id="t4"><input type="radio" name="dash" id="t5">'
+    p1 = '<input type="radio" name="dash" id="t1" checked><input type="radio" name="dash" id="t2"><input type="radio" name="dash" id="t3"><input type="radio" name="dash" id="t4"><input type="radio" name="dash" id="t5"><input type="radio" name="dash" id="t6">'
     p2 = f'<div class="shell"><header class="header"><div class="header-top"><div><div class="brand">Performance Intelligence &middot; Online</div><h1 class="title">Online Admissions &amp; Fee Collected Tracker</h1></div><div class="header-meta"><div class="badge">Live Report</div><div class="date">{MONTH_LABEL} &middot; FTD {report_date.strftime("%d %b")}</div></div></div></header>'
     if SIDEBAR_NAV:
-        p3 = '<div class="layout"><nav class="sidebar"><label class="tab-label" for="t1">&#x1f4ca; Overview</label><label class="tab-label" for="t2">&#x1f4b0; Fee Collected</label><label class="tab-label" for="t3">&#x1f393; Admissions</label><label class="tab-label" for="t4">&#x1f3eb; Colleges</label><label class="tab-label" for="t5">&#x1f465; Counsellor T vs A</label></nav><div class="content">'
+        p3 = '<div class="layout"><nav class="sidebar"><label class="tab-label" for="t1">&#x1f4ca; Overview</label><label class="tab-label" for="t2">&#x1f4b0; Fee Collected</label><label class="tab-label" for="t3">&#x1f393; Admissions</label><label class="tab-label" for="t4">&#x1f3eb; Colleges</label><label class="tab-label" for="t5">&#x1f465; Counsellor T vs A</label><label class="tab-label" for="t6">&#x23f0; Last Activity</label></nav><div class="content">'
     else:
-        p3 = '<div class="tabs"><label class="tab-label" for="t1">&#x1f4ca; Overview</label><label class="tab-label" for="t2">&#x1f4b0; Fee Collected</label><label class="tab-label" for="t3">&#x1f393; Admissions</label><label class="tab-label" for="t4">&#x1f3eb; Colleges</label><label class="tab-label" for="t5">&#x1f465; Counsellor T vs A</label></div>'
+        p3 = '<div class="tabs"><label class="tab-label" for="t1">&#x1f4ca; Overview</label><label class="tab-label" for="t2">&#x1f4b0; Fee Collected</label><label class="tab-label" for="t3">&#x1f393; Admissions</label><label class="tab-label" for="t4">&#x1f3eb; Colleges</label><label class="tab-label" for="t5">&#x1f465; Counsellor T vs A</label><label class="tab-label" for="t6">&#x23f0; Last Activity</label></div>'
     p4_overview_kpis = f'<div class="kpis"><div class="kpi"><div class="kpi-label">Total Fee Collected</div><div class="kpi-value {pct_class((gt_fee_ach / gt_fee_tgt * 100) if gt_fee_tgt else 0)}">{money(gt_fee_ach)}</div><div class="kpi-sub">of {money(gt_fee_tgt)} target</div></div><div class="kpi"><div class="kpi-label">Fee Ach %</div><div class="kpi-value {pct_class((gt_fee_ach / gt_fee_tgt * 100) if gt_fee_tgt else 0)}">{gt_fee_pct_str}</div><div class="kpi-ratio">{money(gt_fee_ach).replace(chr(0x20b9), "")}/{money(gt_fee_tgt).replace(chr(0x20b9), "")}</div><div class="kpi-sub">Grand Total</div></div><div class="kpi"><div class="kpi-label">Admissions</div><div class="kpi-value">{gt_adm_ach}</div><div class="kpi-sub">Grand Total</div></div></div>'
     p4 = f'<section class="panel" id="p1">{p4_overview_kpis}<div class="slabel"><span>Team Owner Snapshot</span></div><div class="sup-cards">{sup_card_html}</div><div class="slabel"><span>Team Owner Summary Table</span></div><div class="table-wrap"><table><thead><tr><th class="left">Team Owner</th><th>Adm Ach</th><th>Fee TG</th><th>Fee Ach</th><th>Fee Ach %</th><th>FTD Fee</th><th>FTD Adm</th></tr></thead><tbody>{sup_summary_rows}</tbody></table></div></section>'
     p5_fee_kpis = f'<div class="kpis"><div class="kpi"><div class="kpi-label">Fee Target</div><div class="kpi-value">{money(gt_fee_tgt)}</div><div class="kpi-sub">{MONTH_LABEL}</div></div><div class="kpi"><div class="kpi-label">Achieved</div><div class="kpi-value {pct_class((gt_fee_ach / gt_fee_tgt * 100) if gt_fee_tgt else 0)}">{money(gt_fee_ach)}</div><div class="kpi-sub">{gt_fee_pct_str} overall</div></div><div class="kpi"><div class="kpi-label">FTD</div><div class="kpi-value green">{money(gt_fee_ftd)}</div><div class="kpi-sub">Today\'s fee collected</div></div></div>'
@@ -787,13 +937,14 @@ tbody tr:hover td{background:#eef4ff}
     p7 = f'<section class="panel" id="p4"><div class="slabel"><span>College-wise Performance &middot; Forms to Admissions</span></div><div class="table-wrap"><table><thead><tr><th class="left" rowspan="2">College</th><th colspan="3">Year to Date</th><th colspan="3">Month to Date</th><th colspan="3">FTD</th></tr><tr><th>Forms</th><th>Adm</th><th>F2A %</th><th>Forms</th><th>Adm</th><th>F2A %</th><th>Forms</th><th>Adm</th><th>F2A %</th></tr></thead><tbody>{college_rows}</tbody></table></div></section>'
     p7b_kpis = f'<div class="kpis"><div class="kpi"><div class="kpi-label">Fee Target (MTD)</div><div class="kpi-value">{money(gt_tva_fee_tgt)}</div><div class="kpi-sub">{MONTH_LABEL}</div></div><div class="kpi"><div class="kpi-label">Fee Achieved (MTD)</div><div class="kpi-value {pct_class((gt_tva_fee_ach / gt_tva_fee_tgt * 100) if gt_tva_fee_tgt else 0)}">{money(gt_tva_fee_ach)}</div><div class="kpi-sub">{online_pct(gt_tva_fee_ach, gt_tva_fee_tgt)} overall</div></div><div class="kpi"><div class="kpi-label">Admissions (MTD)</div><div class="kpi-value">{gt_tva_adm_mtd}</div><div class="kpi-sub">Grand Total</div></div><div class="kpi"><div class="kpi-label">FTD Fee</div><div class="kpi-value green">{money(gt_tva_fee_ftd)}</div><div class="kpi-sub">Today</div></div><div class="kpi"><div class="kpi-label">FTD Admissions</div><div class="kpi-value green">{gt_tva_adm_ftd if gt_tva_adm_ftd else 0}</div><div class="kpi-sub">Today</div></div></div>'
     p7b = f'<section class="panel" id="p5">{p7b_kpis}<div class="slabel"><span>Counsellor-wise Targets vs Achievements &middot; Fee &amp; Admissions &middot; {MONTH_LABEL}</span></div><div class="table-wrap"><table><thead><tr><th class="left">Counsellor</th><th>Fee Target</th><th>Fee MTD Ach</th><th>Fee Ach %</th><th>Fee FTD</th><th>Adm MTD</th><th>Adm FTD</th></tr></thead><tbody>{c_tva_rows}</tbody></table></div></section>'
+    p7c = f'<section class="panel" id="p6"><div class="slabel"><span>Supervisor-wise Counsellor Last Admission &amp; Last Application &middot; {report_date.strftime("%d %b %Y")}</span></div><div class="table-wrap"><table><thead><tr><th class="left">Counsellor</th><th>Last Admission</th><th>Adm Since</th><th>Last Application</th><th>Application Since</th></tr></thead><tbody>{last_act_rows}</tbody></table></div></section>'
     if SIDEBAR_NAV:
         p8 = '</div></div></div></body></html>'   # close .content, .layout, .shell
     else:
         p8 = '</div></body></html>'               # close .shell
 
-    html_doc = f'''<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Online Admissions Dashboard</title><style>{CSS}</style></head><body>
-{p1}{p2}{p3}{p4}{p5}{p6}{p7}{p7b}{p8}'''
+    html_doc = f'''<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Online Admissions Dashboard</title><style>{CSS}#t6{{display:none}}#t6:checked~.shell label[for=t6]{{background:var(--navy,#1a1a18);color:#fff;border-color:var(--navy,#1a1a18)}}#t6:checked~.shell #p6{{display:block}}</style></head><body>
+{p1}{p2}{p3}{p4}{p5}{p6}{p7}{p7b}{p7c}{p8}'''
 
     with open(out_path, 'w', encoding='utf-8-sig') as f:
         f.write(html_doc)
@@ -1700,9 +1851,9 @@ async def main():
     online_summary = None
     try:
         print("  [1a] Fetching online LMS data from DB...")
-        df_couns, df_couns_fee, df_couns_adm, df_college = await online_get_data()
+        df_couns, df_couns_fee, df_couns_adm, df_college, df_last_activity_raw, df_couns_all = await online_get_data()
         print("  [1b] Preparing online LMS data...")
-        online_sheets = online_prepare_data(df_couns, df_couns_fee, df_couns_adm, df_college)
+        online_sheets = online_prepare_data(df_couns, df_couns_fee, df_couns_adm, df_college, df_last_activity_raw, df_couns_all)
         print("  [1c] Generating online LMS HTML report...")
         online_html, online_summary = online_generate_html(online_sheets)
         print("  ✅ STEP 1 complete — Online LMS report generated")
@@ -1713,12 +1864,16 @@ async def main():
         traceback.print_exc(file=sys.stdout)
         online_html = None
 
-    # ── STEP 1d: Screenshot Online (4 tabs) ───────────────────────────────
+    # ── STEP 1d: Screenshot Online tabs ───────────────────────────────────
     online_pngs = []
     if online_html:
         print("  [1d] Taking screenshots of Online LMS tabs...")
-        _online_tab_ids   = ['t1',        't2',            't4',       't5']
-        _online_tab_names = ['Overview', 'Fee_Collected', 'Colleges', 'Counsellor_TVA']
+        if LAST_ACTIVITY_ONLY:
+            _online_tab_ids   = ['t6']
+            _online_tab_names = ['Last_Activity']
+        else:
+            _online_tab_ids   = ['t1',        't2',            't4',       't5',                't6']
+            _online_tab_names = ['Overview', 'Fee_Collected', 'Colleges', 'Counsellor_TVA', 'Last_Activity']
         online_pngs = [
             os.path.join(OUTPUT_DIR, f'Online_LMS_{name}_{RUN_STAMP}.png')
             for name in _online_tab_names
@@ -1727,59 +1882,65 @@ async def main():
         online_pngs = [p for p, ok in zip(online_pngs, online_png_ok) if ok]
 
     # ── STEP 2: Regular LMS ────────────────────────────────────────────────
-    print("─── STEP 2/3: Regular LMS Report ───────────────────────────────────")
-    print("  [2a-pre] Syncing Regular_Targets period dates...")
-    try:
-        _month_start = report_date.replace(day=1).strftime('%Y-%m-%d')
-        _month_end   = report_date.replace(day=calendar.monthrange(report_date.year, report_date.month)[1]).strftime('%Y-%m-%d')
-        sync_regular_dates(_month_start, _month_end, REG_WEEK_START, REG_WEEK_END)
-    except Exception as e:
-        print(f"  Warning: Could not sync Regular_Targets dates (non-fatal): {e}")
-    regular_summary = None
-    try:
-        print("  [2a] Fetching regular LMS data from DB (REGULAR + CGC + AMITY)...")
-        reg_adm, reg_forms = await regular_get_data()
-        print("  [2b] Preparing regular LMS data...")
-        regular_sheets = regular_prepare_data(reg_adm, reg_forms)
-        print("  [2b2] Building Amity YoY total-forms table...")
-        try:
-            amity_ly = amity_get_total_forms_last_year()
-            amity_ty = await amity_get_total_forms_this_year()
-            amity_yoy_df = amity_build_yoy_table(amity_ly, amity_ty)
-            print("  ✅ Amity Total Forms YoY table built")
-        except Exception as e_yoy:
-            print(f"  ⚠️  Amity Total Forms YoY failed (non-fatal): {e_yoy}")
-            amity_yoy_df = None
-        try:
-            amity_adm_ly = amity_get_admissions_last_year()
-            amity_adm_ty = await amity_get_admissions_this_year()
-            amity_adm_df = amity_build_admission_yoy_table(amity_adm_ly, amity_adm_ty)
-            print("  ✅ Amity Admissions YoY table built")
-        except Exception as e_adm:
-            print(f"  ⚠️  Amity Admissions YoY failed (non-fatal): {e_adm}")
-            amity_adm_df = None
-        print("  [2c] Generating regular LMS HTML report...")
-        regular_html, regular_summary = regular_generate_html(regular_sheets, amity_yoy_df=amity_yoy_df, amity_adm_df=amity_adm_df)
-        print("  ✅ STEP 2 complete — Regular LMS report generated")
-        print()
-    except Exception as e:
-        print(f"  ❌ STEP 2 FAILED: {e}")
-        import traceback
-        traceback.print_exc(file=sys.stdout)
+    if LAST_ACTIVITY_ONLY:
+        print("─── STEP 2/3: Regular LMS skipped (--last-activity-only) ───────────")
         regular_html = None
+        regular_pngs = []
+        regular_summary = None
+    else:
+        print("─── STEP 2/3: Regular LMS Report ───────────────────────────────────")
+        print("  [2a-pre] Syncing Regular_Targets period dates...")
+        try:
+            _month_start = report_date.replace(day=1).strftime('%Y-%m-%d')
+            _month_end   = report_date.replace(day=calendar.monthrange(report_date.year, report_date.month)[1]).strftime('%Y-%m-%d')
+            sync_regular_dates(_month_start, _month_end, REG_WEEK_START, REG_WEEK_END)
+        except Exception as e:
+            print(f"  Warning: Could not sync Regular_Targets dates (non-fatal): {e}")
+        regular_summary = None
+        try:
+            print("  [2a] Fetching regular LMS data from DB (REGULAR + CGC + AMITY)...")
+            reg_adm, reg_forms = await regular_get_data()
+            print("  [2b] Preparing regular LMS data...")
+            regular_sheets = regular_prepare_data(reg_adm, reg_forms)
+            print("  [2b2] Building Amity YoY total-forms table...")
+            try:
+                amity_ly = amity_get_total_forms_last_year()
+                amity_ty = await amity_get_total_forms_this_year()
+                amity_yoy_df = amity_build_yoy_table(amity_ly, amity_ty)
+                print("  ✅ Amity Total Forms YoY table built")
+            except Exception as e_yoy:
+                print(f"  ⚠️  Amity Total Forms YoY failed (non-fatal): {e_yoy}")
+                amity_yoy_df = None
+            try:
+                amity_adm_ly = amity_get_admissions_last_year()
+                amity_adm_ty = await amity_get_admissions_this_year()
+                amity_adm_df = amity_build_admission_yoy_table(amity_adm_ly, amity_adm_ty)
+                print("  ✅ Amity Admissions YoY table built")
+            except Exception as e_adm:
+                print(f"  ⚠️  Amity Admissions YoY failed (non-fatal): {e_adm}")
+                amity_adm_df = None
+            print("  [2c] Generating regular LMS HTML report...")
+            regular_html, regular_summary = regular_generate_html(regular_sheets, amity_yoy_df=amity_yoy_df, amity_adm_df=amity_adm_df)
+            print("  ✅ STEP 2 complete — Regular LMS report generated")
+            print()
+        except Exception as e:
+            print(f"  ❌ STEP 2 FAILED: {e}")
+            import traceback
+            traceback.print_exc(file=sys.stdout)
+            regular_html = None
 
-    # ── STEP 2d: Screenshot Regular (2 tabs) ──────────────────────────────
-    regular_pngs = []
-    if regular_html:
-        print("  [2d] Taking screenshots of Regular LMS tabs...")
-        _reg_tab_ids   = ['tab-admissions', 'tab-forms', 'tab-amity-forms', 'tab-amity-adm']
-        _reg_tab_names = ['Admissions',     'Forms',     'Amity_Forms',      'Amity_Adm']
-        regular_pngs = [
-            os.path.join(OUTPUT_DIR, f'Regular_LMS_{name}_{RUN_STAMP}.png')
-            for name in _reg_tab_names
-        ]
-        reg_png_ok = await screenshot_html_tabs(regular_html, _reg_tab_ids, regular_pngs, sidebar_nav=SIDEBAR_NAV)
-        regular_pngs = [p for p, ok in zip(regular_pngs, reg_png_ok) if ok]
+        # ── STEP 2d: Screenshot Regular tabs ──────────────────────────────
+        regular_pngs = []
+        if regular_html:
+            print("  [2d] Taking screenshots of Regular LMS tabs...")
+            _reg_tab_ids   = ['tab-admissions', 'tab-forms', 'tab-amity-forms', 'tab-amity-adm']
+            _reg_tab_names = ['Admissions',     'Forms',     'Amity_Forms',      'Amity_Adm']
+            regular_pngs = [
+                os.path.join(OUTPUT_DIR, f'Regular_LMS_{name}_{RUN_STAMP}.png')
+                for name in _reg_tab_names
+            ]
+            reg_png_ok = await screenshot_html_tabs(regular_html, _reg_tab_ids, regular_pngs, sidebar_nav=SIDEBAR_NAV)
+            regular_pngs = [p for p, ok in zip(regular_pngs, reg_png_ok) if ok]
 
     # ── STEP 3: Send Screenshots via WhatsApp ─────────────────────────────
     print("─── STEP 3/3: Sending Screenshots to WhatsApp + Logging ────────────")
@@ -1788,6 +1949,7 @@ async def main():
         'Online_LMS_Fee_Collected':    'Target VS Ach',
         'Online_LMS_Colleges':         'Online LOB - University wise Forms & Adm',
         'Online_LMS_Counsellor_TVA':   'Counsellor Targets vs Achievements — Fee & Admissions',
+        'Online_LMS_Last_Activity':    'Admission and Application Ageing Report',
         'Regular_LMS_Admissions':  'Admission Target vs Achieved',
         'Regular_LMS_Forms':       'Form Target vs Achieved',
         'Regular_LMS_Amity_Forms': 'Amity Total Forms - Campus YoY',
@@ -1799,6 +1961,7 @@ async def main():
         'Online_LMS_Fee_Collected':    WHATSAPP_GROUP_ONLINE,
         'Online_LMS_Colleges':         WHATSAPP_GROUP_ONLINE,
         'Online_LMS_Counsellor_TVA':   WHATSAPP_GROUP_ONLINE,
+        'Online_LMS_Last_Activity':    WHATSAPP_GROUP_ONLINE,
         'Regular_LMS_Admissions':  WHATSAPP_GROUP_REGULAR,
         'Regular_LMS_Forms':       WHATSAPP_GROUP_REGULAR,
         'Regular_LMS_Amity_Forms': WHATSAPP_GROUP_DAILY,
@@ -1816,8 +1979,8 @@ async def main():
             base = os.path.basename(png_path)
             key = '_'.join(base.replace('.png', '').split('_')[:-2])
             cap = _tab_labels.get(key, base)
-            group_id = _group_map.get(key, WHATSAPP_GROUP_ONLINE)
-            sent = send_via_whapi(png_path, f"{cap} — {FTD_DATE}", group_id=group_id)
+            group_ids = _group_map.get(key, WHATSAPP_GROUP_ONLINE)
+            sent = all(send_via_whapi(png_path, f"{cap} — {FTD_DATE}", group_id=gid) for gid in group_ids)
             whapi_results[key] = sent
 
     # ── STEP 3b: Log to Google Sheets Report_Logs ─────────────────────────
@@ -1868,7 +2031,7 @@ async def main():
     print("📊 ALL REPORTS GENERATED SUCCESSFULLY")
     print("=" * 60)
     print(f"   FTD: {FTD_DATE}")
-    print(f"   Online screenshots:  {'✅' if online_pngs else '❌'} ({len(online_pngs)}/3)")
+    print(f"   Online screenshots:  {'✅' if online_pngs else '❌'} ({len(online_pngs)}/5)")
     print(f"   Regular screenshots: {'✅' if regular_pngs else '❌'} ({len(regular_pngs)}/4)")
     print(f"   WHAPI sends: {'skipped (--local mode)' if LOCAL_MODE else ('attempted' if WHAPI_TOKEN else 'skipped (no token)')}")
     print("=" * 60)
