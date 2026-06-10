@@ -1,0 +1,571 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Bhugoal Daily Sales Report</title>
+<style>
+  :root {
+    --sidebar-w: 220px;
+    --accent: #0ea5c8;
+    --accent-light: #e0f7fd;
+    --bg-page: #f5f6fa;
+    --bg-card: #ffffff;
+    --bg-sidebar: #ffffff;
+    --text-primary: #1e1f26;
+    --text-secondary: #6b7280;
+    --text-muted: #9ca3af;
+    --border: #e5e7eb;
+    --border-col: #d1d5db;
+    --row-alt: #f9fafb;
+    --row-grand: #f0f9ff;
+    --row-grand-text: #0c4a6e;
+    --chip-bg: #e0f7fd;
+    --chip-text: #0369a1;
+    --radius: 12px;
+    --shadow: 0 1px 3px rgba(0,0,0,.06), 0 1px 2px rgba(0,0,0,.04);
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    background: var(--bg-page);
+    color: var(--text-primary);
+    font-size: 13px;
+    line-height: 1.5;
+    display: flex;
+    flex-direction: column;
+    min-height: 100vh;
+  }
+
+  /* TOP HEADER */
+  .top-header {
+    position: fixed; top: 0; left: 0; right: 0; height: 52px;
+    background: #fff;
+    border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; padding: 0 24px; gap: 10px;
+    z-index: 100;
+  }
+  .logo-dot {
+    width: 26px; height: 26px;
+    background: var(--accent);
+    border-radius: 6px;
+    display: flex; align-items: center; justify-content: center;
+    color: #fff; font-size: 12px; font-weight: 700; flex-shrink: 0;
+  }
+  .top-header h1 { font-size: 14px; font-weight: 600; letter-spacing: -.2px; }
+  .header-meta { margin-left: auto; display: flex; align-items: center; gap: 10px; }
+  .header-badge {
+    font-size: 11.5px; color: var(--text-secondary);
+    background: var(--bg-page); padding: 3px 10px;
+    border-radius: 20px; border: 1px solid var(--border);
+  }
+
+  /* LAYOUT */
+  .layout { display: flex; margin-top: 52px; flex: 1; }
+
+  /* SIDEBAR */
+  .sidebar {
+    width: var(--sidebar-w); position: fixed;
+    top: 52px; left: 0; bottom: 0;
+    background: var(--bg-sidebar); border-right: 1px solid var(--border);
+    overflow-y: auto; padding: 14px 0; z-index: 50;
+  }
+  .sidebar-label {
+    font-size: 10px; font-weight: 600; text-transform: uppercase;
+    letter-spacing: .08em; color: var(--text-muted); padding: 6px 16px 4px;
+  }
+  .nav-item {
+    display: flex; align-items: flex-start; gap: 8px;
+    padding: 7px 16px; cursor: pointer; color: var(--text-secondary);
+    font-size: 12px; line-height: 1.4; text-decoration: none;
+    border-left: 2px solid transparent; transition: background .1s;
+  }
+  .nav-item:hover { background: var(--bg-page); color: var(--text-primary); }
+  .nav-item.active {
+    background: var(--accent-light); color: #0369a1;
+    border-left-color: var(--accent); font-weight: 500;
+  }
+  .nav-num {
+    width: 17px; height: 17px; background: var(--border); border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 10px; font-weight: 600; color: var(--text-muted); flex-shrink: 0; margin-top: 1px;
+  }
+  .nav-item.active .nav-num { background: var(--accent); color: #fff; }
+
+  /* MAIN */
+  .main { margin-left: var(--sidebar-w); flex: 1; padding: 20px; display: flex; flex-direction: column; gap: 20px; }
+
+  /* SECTION CARD */
+  .section-card {
+    background: var(--bg-card); border-radius: var(--radius);
+    border: 1px solid var(--border); box-shadow: var(--shadow); overflow: hidden;
+  }
+  .section-header {
+    padding: 14px 18px 12px; border-bottom: 1px solid var(--border);
+    display: flex; align-items: flex-start; gap: 10px; flex-wrap: wrap;
+  }
+  .section-title { font-size: 13px; font-weight: 600; letter-spacing: -.15px; }
+  .section-sub { font-size: 11px; color: var(--text-muted); margin-top: 1px; }
+  .section-header-right { margin-left: auto; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+  .date-badge {
+    font-size: 11px; font-weight: 500;
+    background: var(--chip-bg); color: var(--chip-text);
+    padding: 3px 9px; border-radius: 20px; border: 1px solid #bae6fd;
+  }
+  .stat-chip {
+    font-size: 11px; padding: 3px 9px; border-radius: 20px;
+    border: 1px solid var(--border); background: var(--row-alt); color: var(--text-secondary); white-space: nowrap;
+  }
+  .stat-chip strong { color: var(--text-primary); font-weight: 600; }
+
+  /* SUB-SECTION LABEL */
+  .sub-label {
+    font-size: 11px; font-weight: 600; color: var(--text-secondary);
+    text-transform: uppercase; letter-spacing: .06em;
+    padding: 10px 18px 7px; background: #fafafa;
+    border-top: 1px solid var(--border); border-bottom: 1px solid var(--border);
+  }
+  .sub-label:first-child { border-top: none; }
+
+  /* TABLE */
+  .table-wrap { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  thead tr { background: #1e293b; }
+  th {
+    padding: 9px 10px;
+    text-align: center;
+    font-size: 11px; font-weight: 600; color: #e2e8f0;
+    text-transform: uppercase; letter-spacing: .05em;
+    white-space: nowrap;
+    border-right: 1px solid #334155;
+  }
+  th:last-child { border-right: none; }
+  th.left { text-align: left; padding-left: 18px; }
+  td {
+    padding: 8px 10px;
+    text-align: center;
+    border-bottom: 1px solid #f1f5f9;
+    border-right: 1px solid var(--border-col);
+    color: var(--text-primary);
+    white-space: nowrap;
+  }
+  td:last-child { border-right: none; }
+  td.left { text-align: left; padding-left: 18px; font-weight: 500; }
+  tr:nth-child(even) td { background: var(--row-alt); }
+  tr:hover td { background: #f0f9ff55; }
+  tr.grand-total td {
+    background: var(--row-grand) !important;
+    font-weight: 700; color: var(--row-grand-text);
+    border-top: 1.5px solid #bae6fd; border-bottom: none;
+  }
+
+  /* RATE BADGES */
+  .badge { border-radius: 20px; padding: 2px 8px; font-size: 11.5px; font-weight: 600; display: inline-block; }
+  .badge-green  { background: #d1fae5; color: #065f46; }
+  .badge-orange { background: #fef3c7; color: #92400e; }
+  .badge-red    { background: #fee2e2; color: #991b1b; }
+  .badge-pink   { background: #fce7f3; color: #9d174d; }
+  .badge-blue   { background: #dbeafe; color: #1e40af; }
+
+  /* EMPTY STATE */
+  .empty-state { padding: 48px 20px; text-align: center; color: var(--text-muted); }
+  .empty-title { font-size: 13px; font-weight: 500; margin-bottom: 4px; }
+  .empty-sub { font-size: 11.5px; }
+
+  /* APPOINTMENT SPECIAL */
+  .meeting-chip {
+    font-size: 12px; background: #fef9c3; color: #713f12;
+    border: 1px solid #fde68a; padding: 3px 12px; border-radius: 20px; font-weight: 500;
+  }
+
+  /* TEAM ROW */
+  tr.team-row td {
+    background: #e0f7fd !important;
+    color: #0369a1; font-weight: 600; font-size: 11.5px;
+    text-align: center; letter-spacing: .04em; border-bottom: 1px solid #bae6fd;
+    border-right: none;
+  }
+
+  @media (max-width: 768px) {
+    .sidebar { display: none; }
+    .main { margin-left: 0; padding: 12px; }
+    .header-badge { display: none; }
+  }
+</style>
+</head>
+<body>
+
+<div class="top-header">
+  <div class="logo-dot">B</div>
+  <h1>Bhugoal Daily Sales Report</h1>
+  <div class="header-meta">
+    <span class="header-badge" id="today-date">—</span>
+    <span class="header-badge" id="gen-time">Generated at —</span>
+  </div>
+</div>
+
+<div class="layout">
+  <nav class="sidebar">
+    <div class="sidebar-label">Sections</div>
+    <a class="nav-item active" href="#s1"><span class="nav-num">1</span>Productivity Report</a>
+    <a class="nav-item" href="#s2"><span class="nav-num">2</span>Lead Status — Yesterday</a>
+    <a class="nav-item" href="#s3"><span class="nav-num">3</span>Lead Status — MTD</a>
+    <a class="nav-item" href="#s4"><span class="nav-num">4</span>Funnel — Last 7 Days</a>
+    <a class="nav-item" href="#s5"><span class="nav-num">5</span>Funnel — 15 May Range</a>
+    <a class="nav-item" href="#s6"><span class="nav-num">6</span>Funnel — MTD</a>
+    <a class="nav-item" href="#s7"><span class="nav-num">7</span>Appointment Status</a>
+  </nav>
+
+  <main class="main" id="main-content"></main>
+</div>
+
+<script>
+const DATA = {"dates": {"yesterday": "9 Jun 2026", "last7From": "3 Jun 2026", "mtdFrom": "1 Jun 2026", "rangeFrom": "15 May 2026", "monthName": "June", "year": "2026"}, "productivity": [{"counselorName": "Meghana L", "totalConnectedCalls": 5, "totalRemarks": 17, "totalPercentage": "29.41%", "timeSlots": {"09:00 - 10:00": {"count": 0, "percentage": 0}, "10:00 - 11:00": {"count": 1, "percentage": 20}, "11:00 - 12:00": {"count": 0, "percentage": 0}, "12:00 - 13:00": {"count": 1, "percentage": 20}, "13:00 - 14:00": {"count": 0, "percentage": 0}, "14:00 - 15:00": {"count": 0, "percentage": 0}, "15:00 - 16:00": {"count": 0, "percentage": 0}, "16:00 - 17:00": {"count": 3, "percentage": 60}, "17:00 - 18:00": {"count": 0, "percentage": 0}, "18:00 - 19:00": {"count": 0, "percentage": 0}, "19:00 - 20:00": {"count": 0, "percentage": 0}}}, {"counselorName": "Nagarjuna Rajkumar", "totalConnectedCalls": 6, "totalRemarks": 15, "totalPercentage": "40%", "timeSlots": {"09:00 - 10:00": {"count": 0, "percentage": 0}, "10:00 - 11:00": {"count": 0, "percentage": 0}, "11:00 - 12:00": {"count": 0, "percentage": 0}, "12:00 - 13:00": {"count": 5, "percentage": 83.33}, "13:00 - 14:00": {"count": 0, "percentage": 0}, "14:00 - 15:00": {"count": 0, "percentage": 0}, "15:00 - 16:00": {"count": 1, "percentage": 16.67}, "16:00 - 17:00": {"count": 0, "percentage": 0}, "17:00 - 18:00": {"count": 0, "percentage": 0}, "18:00 - 19:00": {"count": 0, "percentage": 0}, "19:00 - 20:00": {"count": 0, "percentage": 0}}}, {"counselorName": "Nagavamsi G", "totalConnectedCalls": 0, "totalRemarks": 17, "totalPercentage": "0%", "timeSlots": {"09:00 - 10:00": {"count": 0, "percentage": 0}, "10:00 - 11:00": {"count": 0, "percentage": 0}, "11:00 - 12:00": {"count": 0, "percentage": 0}, "12:00 - 13:00": {"count": 0, "percentage": 0}, "13:00 - 14:00": {"count": 0, "percentage": 0}, "14:00 - 15:00": {"count": 0, "percentage": 0}, "15:00 - 16:00": {"count": 0, "percentage": 0}, "16:00 - 17:00": {"count": 0, "percentage": 0}, "17:00 - 18:00": {"count": 0, "percentage": 0}, "18:00 - 19:00": {"count": 0, "percentage": 0}, "19:00 - 20:00": {"count": 0, "percentage": 0}}}, {"counselorName": "Yashvi Patidar", "totalConnectedCalls": 30, "totalRemarks": 69, "totalPercentage": "43.48%", "timeSlots": {"09:00 - 10:00": {"count": 0, "percentage": 0}, "10:00 - 11:00": {"count": 3, "percentage": 10}, "11:00 - 12:00": {"count": 4, "percentage": 13.33}, "12:00 - 13:00": {"count": 6, "percentage": 20}, "13:00 - 14:00": {"count": 2, "percentage": 6.67}, "14:00 - 15:00": {"count": 2, "percentage": 6.67}, "15:00 - 16:00": {"count": 4, "percentage": 13.33}, "16:00 - 17:00": {"count": 3, "percentage": 10}, "17:00 - 18:00": {"count": 6, "percentage": 20}, "18:00 - 19:00": {"count": 0, "percentage": 0}, "19:00 - 20:00": {"count": 0, "percentage": 0}}}], "leadStatusYesterday": {"tableData": [{"l1Name": "Nagavamsi G", "grandTotal": 14, "Counselling yet to be done": 4, "Fresh": 8, "Initial Counseling Completed": 1, "Not Interested": 1}, {"l1Name": "Meghana L", "grandTotal": 12, "Counselling yet to be done": 7, "Fresh": 0, "Initial Counseling Completed": 1, "Not Interested": 4}, {"l1Name": "Nagarjuna Rajkumar", "grandTotal": 14, "Counselling yet to be done": 6, "Fresh": 0, "Initial Counseling Completed": 4, "Not Interested": 4}, {"l1Name": "Swathi S", "grandTotal": 3, "Counselling yet to be done": 1, "Fresh": 2, "Initial Counseling Completed": 0, "Not Interested": 0}, {"l1Name": "Yashvi Patidar", "grandTotal": 21, "Counselling yet to be done": 8, "Fresh": 0, "Initial Counseling Completed": 2, "Not Interested": 11}, {"l1Name": "Grand Total", "grandTotal": 64, "Counselling yet to be done": 26, "Fresh": 10, "Initial Counseling Completed": 8, "Not Interested": 20}], "allStages": ["Counselling yet to be done", "Fresh", "Initial Counseling Completed", "Not Interested"], "summary": {"totalLeads": 64, "totalRecords": 6, "currentPageRecords": 6, "page": 1, "limit": 30, "totalPages": 1, "totalL1s": 5, "totalSources": 2, "totalCampaigns": 6, "timezone": "IST (+05:30)"}}, "leadStatusRange": {"tableData": [{"l1Name": "Nagavamsi G", "grandTotal": 85, "Counselling yet to be done": 9, "Fresh": 48, "Initial Counseling Completed": 5, "Meeting Not Attended": 0, "Meeting Scheduled": 0, "Not Interested": 23}, {"l1Name": "Meghana L", "grandTotal": 93, "Counselling yet to be done": 41, "Fresh": 0, "Initial Counseling Completed": 13, "Meeting Not Attended": 2, "Meeting Scheduled": 0, "Not Interested": 37}, {"l1Name": "Nagarjuna Rajkumar", "grandTotal": 105, "Counselling yet to be done": 32, "Fresh": 1, "Initial Counseling Completed": 11, "Meeting Not Attended": 0, "Meeting Scheduled": 0, "Not Interested": 61}, {"l1Name": "Swathi S", "grandTotal": 70, "Counselling yet to be done": 30, "Fresh": 9, "Initial Counseling Completed": 3, "Meeting Not Attended": 0, "Meeting Scheduled": 2, "Not Interested": 26}, {"l1Name": "Yashvi Patidar", "grandTotal": 208, "Counselling yet to be done": 20, "Fresh": 37, "Initial Counseling Completed": 9, "Meeting Not Attended": 0, "Meeting Scheduled": 0, "Not Interested": 142}, {"l1Name": "Grand Total", "grandTotal": 561, "Counselling yet to be done": 132, "Fresh": 95, "Initial Counseling Completed": 41, "Meeting Not Attended": 2, "Meeting Scheduled": 2, "Not Interested": 289}], "allStages": ["Counselling yet to be done", "Fresh", "Initial Counseling Completed", "Meeting Not Attended", "Meeting Scheduled", "Not Interested"], "summary": {"totalLeads": 561, "totalRecords": 6, "currentPageRecords": 6, "page": 1, "limit": 30, "totalPages": 1, "totalL1s": 5, "totalSources": 4, "totalCampaigns": 8, "timezone": "IST (+05:30)"}}, "funnelDateWise": {"tableData": [{"leadCreatedAt (Date & Time)": "10/6/2026", "Leads": 5, "ICC": 1, "LIS": 0, "LIC": 0, "App": 0, "Pre NI": 0, "ICC %": "20.0%", "ICC 2 LIS %": "0.0%", "LIS 2 LIC %": "0.0%", "LIC 2 App %": "0.0%", "Pre NI %": "0.0%"}, {"leadCreatedAt (Date & Time)": "9/6/2026", "Leads": 64, "ICC": 10, "LIS": 0, "LIC": 0, "App": 0, "Pre NI": 19, "ICC %": "15.6%", "ICC 2 LIS %": "0.0%", "LIS 2 LIC %": "0.0%", "LIC 2 App %": "0.0%", "Pre NI %": "29.7%"}, {"leadCreatedAt (Date & Time)": "8/6/2026", "Leads": 77, "ICC": 12, "LIS": 0, "LIC": 0, "App": 0, "Pre NI": 25, "ICC %": "15.6%", "ICC 2 LIS %": "0.0%", "LIS 2 LIC %": "0.0%", "LIC 2 App %": "0.0%", "Pre NI %": "32.5%"}, {"leadCreatedAt (Date & Time)": "7/6/2026", "Leads": 70, "ICC": 5, "LIS": 0, "LIC": 0, "App": 0, "Pre NI": 14, "ICC %": "7.1%", "ICC 2 LIS %": "0.0%", "LIS 2 LIC %": "0.0%", "LIC 2 App %": "0.0%", "Pre NI %": "20.0%"}, {"leadCreatedAt (Date & Time)": "6/6/2026", "Leads": 71, "ICC": 6, "LIS": 0, "LIC": 0, "App": 0, "Pre NI": 23, "ICC %": "8.5%", "ICC 2 LIS %": "0.0%", "LIS 2 LIC %": "0.0%", "LIC 2 App %": "0.0%", "Pre NI %": "32.4%"}, {"leadCreatedAt (Date & Time)": "5/6/2026", "Leads": 59, "ICC": 12, "LIS": 1, "LIC": 0, "App": 0, "Pre NI": 31, "ICC %": "20.3%", "ICC 2 LIS %": "8.3%", "LIS 2 LIC %": "0.0%", "LIC 2 App %": "0.0%", "Pre NI %": "52.5%"}, {"leadCreatedAt (Date & Time)": "4/6/2026", "Leads": 32, "ICC": 7, "LIS": 1, "LIC": 0, "App": 0, "Pre NI": 19, "ICC %": "21.9%", "ICC 2 LIS %": "14.3%", "LIS 2 LIC %": "0.0%", "LIC 2 App %": "0.0%", "Pre NI %": "59.4%"}, {"leadCreatedAt (Date & Time)": "3/6/2026", "Leads": 56, "ICC": 7, "LIS": 0, "LIC": 0, "App": 0, "Pre NI": 34, "ICC %": "12.5%", "ICC 2 LIS %": "0.0%", "LIS 2 LIC %": "0.0%", "LIC 2 App %": "0.0%", "Pre NI %": "60.7%"}, {"leadCreatedAt (Date & Time)": "Grand Total", "Leads": 434, "ICC": 60, "LIS": 2, "LIC": 0, "App": 0, "Pre NI": 165, "ICC %": "13.8%", "ICC 2 LIS %": "3.3%", "LIS 2 LIC %": "0.0%", "LIC 2 App %": "0.0%", "Pre NI %": "38.0%"}], "summary": {"totalLeads": 434, "totalRecords": 9, "currentPageRecords": 9, "page": 1, "limit": 30, "totalPages": 1, "timezone": "IST (+05:30)"}}, "funnelRange": {"tableData": [{"campaign": "Bhugoal_Germany_JD_Multiple", "Leads": 517, "ICC": 104, "LIS": 4, "LIC": 0, "App": 0, "Pre NI": 278, "ICC %": "20.1%", "ICC 2 LIS %": "3.8%", "LIS 2 LIC %": "0.0%", "LIC 2 App %": "0.0%", "Pre NI %": "53.8%"}, {"campaign": "Bhugoal_Germany_LAL_GHC_South", "Leads": 110, "ICC": 17, "LIS": 0, "LIC": 0, "App": 0, "Pre NI": 47, "ICC %": "15.5%", "ICC 2 LIS %": "0.0%", "LIS 2 LIC %": "0.0%", "LIC 2 App %": "0.0%", "Pre NI %": "42.7%"}, {"campaign": "Bhugoal_Germany_Nurse_LAL_ALL_IMM_South", "Leads": 120, "ICC": 20, "LIS": 4, "LIC": 1, "App": 0, "Pre NI": 56, "ICC %": "16.7%", "ICC 2 LIS %": "20.0%", "LIS 2 LIC %": "25.0%", "LIC 2 App %": "0.0%", "Pre NI %": "46.7%"}, {"campaign": "Bhugoal_Germany_Nurse_FS_South", "Leads": 133, "ICC": 28, "LIS": 2, "LIC": 1, "App": 0, "Pre NI": 74, "ICC %": "21.1%", "ICC 2 LIS %": "7.1%", "LIS 2 LIC %": "50.0%", "LIC 2 App %": "0.0%", "Pre NI %": "55.6%"}, {"campaign": "Bhugoal_Physiotherapist_Germany_Telugu_MH", "Leads": 43, "ICC": 6, "LIS": 0, "LIC": 0, "App": 0, "Pre NI": 17, "ICC %": "14.0%", "ICC 2 LIS %": "0.0%", "LIS 2 LIC %": "0.0%", "LIC 2 App %": "0.0%", "Pre NI %": "39.5%"}, {"campaign": "WhatsApp Inbound", "Leads": 73, "ICC": 13, "LIS": 0, "LIC": 0, "App": 0, "Pre NI": 55, "ICC %": "17.8%", "ICC 2 LIS %": "0.0%", "LIS 2 LIC %": "0.0%", "LIC 2 App %": "0.0%", "Pre NI %": "75.3%"}, {"campaign": "Direct", "Leads": 6, "ICC": 3, "LIS": 0, "LIC": 0, "App": 0, "Pre NI": 3, "ICC %": "50.0%", "ICC 2 LIS %": "0.0%", "LIS 2 LIC %": "0.0%", "LIC 2 App %": "0.0%", "Pre NI %": "50.0%"}, {"campaign": "Other Referral", "Leads": 1, "ICC": 1, "LIS": 0, "LIC": 0, "App": 0, "Pre NI": 0, "ICC %": "100.0%", "ICC 2 LIS %": "0.0%", "LIS 2 LIC %": "0.0%", "LIC 2 App %": "0.0%", "Pre NI %": "0.0%"}, {"campaign": "919484958356", "Leads": 8, "ICC": 1, "LIS": 0, "LIC": 0, "App": 0, "Pre NI": 6, "ICC %": "12.5%", "ICC 2 LIS %": "0.0%", "LIS 2 LIC %": "0.0%", "LIC 2 App %": "0.0%", "Pre NI %": "75.0%"}, {"campaign": "Bhugoal_Germany_Nurse_LAL_ALL_IMM_Tamil", "Leads": 21, "ICC": 7, "LIS": 1, "LIC": 0, "App": 0, "Pre NI": 13, "ICC %": "33.3%", "ICC 2 LIS %": "14.3%", "LIS 2 LIC %": "0.0%", "LIC 2 App %": "0.0%", "Pre NI %": "61.9%"}, {"campaign": "Bhugoal_Germany_Nurse_INT_South_TN_ML", "Leads": 8, "ICC": 1, "LIS": 0, "LIC": 0, "App": 0, "Pre NI": 2, "ICC %": "12.5%", "ICC 2 LIS %": "0.0%", "LIS 2 LIC %": "0.0%", "LIC 2 App %": "0.0%", "Pre NI %": "25.0%"}, {"campaign": "Bhugoal_Germany_LAL_GHC_South_AP_TS", "Leads": 38, "ICC": 18, "LIS": 4, "LIC": 3, "App": 0, "Pre NI": 13, "ICC %": "47.4%", "ICC 2 LIS %": "22.2%", "LIS 2 LIC %": "75.0%", "LIC 2 App %": "0.0%", "Pre NI %": "34.2%"}, {"campaign": "Bhugoal_Germany_Nurse_INT_South_AP_TS", "Leads": 31, "ICC": 16, "LIS": 4, "LIC": 1, "App": 0, "Pre NI": 12, "ICC %": "51.6%", "ICC 2 LIS %": "25.0%", "LIS 2 LIC %": "25.0%", "LIC 2 App %": "0.0%", "Pre NI %": "38.7%"}, {"campaign": "Bhugoal_Germany_Nurse_INT_South_TN", "Leads": 11, "ICC": 0, "LIS": 0, "LIC": 0, "App": 0, "Pre NI": 9, "ICC %": "0.0%", "ICC 2 LIS %": "0.0%", "LIS 2 LIC %": "0.0%", "LIC 2 App %": "0.0%", "Pre NI %": "81.8%"}, {"campaign": "Grand Total", "Leads": 1120, "ICC": 235, "LIS": 19, "LIC": 6, "App": 0, "Pre NI": 585, "ICC %": "21.0%", "ICC 2 LIS %": "8.1%", "LIS 2 LIC %": "31.6%", "LIC 2 App %": "0.0%", "Pre NI %": "52.2%"}], "summary": {"totalLeads": 1120, "totalRecords": 15, "currentPageRecords": 15, "page": 1, "limit": 30, "totalPages": 1, "timezone": "IST (+05:30)"}}, "funnelMTD": {"tableData": [{"campaign": "Bhugoal_Germany_JD_Multiple", "Leads": 266, "ICC": 41, "LIS": 3, "LIC": 0, "App": 0, "Pre NI": 120, "ICC %": "15.4%", "ICC 2 LIS %": "7.3%", "LIS 2 LIC %": "0.0%", "LIC 2 App %": "0.0%", "Pre NI %": "45.1%"}, {"campaign": "Bhugoal_Germany_LAL_GHC_South", "Leads": 63, "ICC": 9, "LIS": 0, "LIC": 0, "App": 0, "Pre NI": 22, "ICC %": "14.3%", "ICC 2 LIS %": "0.0%", "LIS 2 LIC %": "0.0%", "LIC 2 App %": "0.0%", "Pre NI %": "34.9%"}, {"campaign": "Bhugoal_Germany_Nurse_LAL_ALL_IMM_South", "Leads": 70, "ICC": 11, "LIS": 2, "LIC": 0, "App": 0, "Pre NI": 19, "ICC %": "15.7%", "ICC 2 LIS %": "18.2%", "LIS 2 LIC %": "0.0%", "LIC 2 App %": "0.0%", "Pre NI %": "27.1%"}, {"campaign": "Bhugoal_Germany_Nurse_FS_South", "Leads": 79, "ICC": 19, "LIS": 1, "LIC": 0, "App": 0, "Pre NI": 34, "ICC %": "24.1%", "ICC 2 LIS %": "5.3%", "LIS 2 LIC %": "0.0%", "LIC 2 App %": "0.0%", "Pre NI %": "43.0%"}, {"campaign": "Bhugoal_Physiotherapist_Germany_Telugu_MH", "Leads": 43, "ICC": 6, "LIS": 0, "LIC": 0, "App": 0, "Pre NI": 17, "ICC %": "14.0%", "ICC 2 LIS %": "0.0%", "LIS 2 LIC %": "0.0%", "LIC 2 App %": "0.0%", "Pre NI %": "39.5%"}, {"campaign": "WhatsApp Inbound", "Leads": 37, "ICC": 6, "LIS": 0, "LIC": 0, "App": 0, "Pre NI": 27, "ICC %": "16.2%", "ICC 2 LIS %": "0.0%", "LIS 2 LIC %": "0.0%", "LIC 2 App %": "0.0%", "Pre NI %": "73.0%"}, {"campaign": "Direct", "Leads": 3, "ICC": 1, "LIS": 0, "LIC": 0, "App": 0, "Pre NI": 2, "ICC %": "33.3%", "ICC 2 LIS %": "0.0%", "LIS 2 LIC %": "0.0%", "LIC 2 App %": "0.0%", "Pre NI %": "66.7%"}, {"campaign": "Other Referral", "Leads": 1, "ICC": 1, "LIS": 0, "LIC": 0, "App": 0, "Pre NI": 0, "ICC %": "100.0%", "ICC 2 LIS %": "0.0%", "LIS 2 LIC %": "0.0%", "LIC 2 App %": "0.0%", "Pre NI %": "0.0%"}, {"campaign": "Grand Total", "Leads": 562, "ICC": 94, "LIS": 6, "LIC": 0, "App": 0, "Pre NI": 241, "ICC %": "16.7%", "ICC 2 LIS %": "6.4%", "LIS 2 LIC %": "0.0%", "LIC 2 App %": "0.0%", "Pre NI %": "42.9%"}], "summary": {"totalLeads": 562, "totalRecords": 9, "currentPageRecords": 9, "page": 1, "limit": 30, "totalPages": 1, "timezone": "IST (+05:30)"}}, "appointment": {"tableData": [{"supervisor": "Sharath", "counselor": "Swathi S", "totalAppointments": 3, "completed": 0, "missed": 3, "upcoming": 0, "notAttended": 0}, {"supervisor": "Sharath", "counselor": "Meghana L", "totalAppointments": 3, "completed": 2, "missed": 0, "upcoming": 0, "notAttended": 1}, {"supervisor": "Sharath", "counselor": "Nagavamsi G", "totalAppointments": 3, "completed": 0, "missed": 3, "upcoming": 0, "notAttended": 0}], "summary": {"totalAppointments": 9, "totalRecords": 3, "currentPageRecords": 3, "page": 1, "limit": 30, "totalPages": 1, "studentsWithFirstMeetingToday": 9, "uniqueStudentsInReport": 9, "timezone": "IST (+05:30)", "dateFilters": {"meetingCreatedFrom": "2026-06-01", "meetingCreatedTo": "2026-06-09"}}}};
+
+// ---- STAGE RENAMES ----
+const STAGE_RENAME = {
+  'Counselling Call Completed': 'ICC',
+  'Registration Completed':     'Pre App',
+  'Language Interview Conducted': 'VC Conducted',
+  'Language Interview Scheduled': 'VC Scheduled',
+};
+
+// ---- HELPERS ----
+function rateClass(pct) {
+  const n = parseFloat(pct);
+  if (n >= 40) return 'badge-green';
+  if (n >= 20) return 'badge-orange';
+  return 'badge-red';
+}
+function shortSlot(s) { return s.replace(':00 - ','–').replace(/:00/g,''); }
+function chip(label, val) { return `<span class="stat-chip"><strong>${val}</strong> ${label}</span>`; }
+
+// ---- SECTION 1: Productivity ----
+function buildProductivity() {
+  const d = DATA.productivity;
+  if (!d || !d.length) return emptySection('s1', 'Productivity Report', 'No data');
+  const slots = Object.keys(d[0].timeSlots);
+  const gt = { counselorName:'Grand Total', totalConnectedCalls:0, totalRemarks:0, timeSlots:{} };
+  slots.forEach(s => { gt.timeSlots[s] = {count: d.reduce((a,r)=>a+r.timeSlots[s].count,0)}; });
+  gt.totalConnectedCalls = d.reduce((a,r)=>a+r.totalConnectedCalls,0);
+  gt.totalRemarks = d.reduce((a,r)=>a+r.totalRemarks,0);
+  const gtRate = gt.totalRemarks ? ((gt.totalConnectedCalls/gt.totalRemarks)*100).toFixed(1)+'%' : '0%';
+
+  const makeRows = rows => rows.map(r => {
+    const isGrand = r.counselorName === 'Grand Total';
+    return `<tr${isGrand?' class="grand-total"':''}>
+      <td class="left">${r.counselorName}</td>
+      ${slots.map(s=>`<td>${r.timeSlots[s].count||'—'}</td>`).join('')}
+      <td>${r.totalRemarks}</td>
+    </tr>`;
+  }).join('');
+
+  const makePerfRows = rows => rows.map(r => {
+    const cls = rateClass(r.totalPercentage||'0');
+    const isGrand = r.counselorName === 'Grand Total';
+    return `<tr${isGrand?' class="grand-total"':''}>
+      <td class="left">${r.counselorName}</td>
+      <td>${r.totalConnectedCalls}</td>
+      <td>${r.totalRemarks}</td>
+      <td><span class="badge ${cls}">${r.totalPercentage}</span></td>
+      ${slots.map(s=>`<td>${r.timeSlots[s].count||'—'}</td>`).join('')}
+    </tr>`;
+  }).join('');
+
+  const allRows   = [...d, gt];
+  const perfRows  = [...d, { counselorName:'Grand Total', totalConnectedCalls:gt.totalConnectedCalls, totalRemarks:gt.totalRemarks, totalPercentage:gtRate, timeSlots:gt.timeSlots }];
+
+  return `<section class="section-card" id="s1">
+    <div class="section-header">
+      <div><div class="section-title">Productivity Report</div><div class="section-sub">Connected calls &amp; hourly remark distribution</div></div>
+      <div class="section-header-right">
+        <span class="date-badge">Yesterday — ${DATA.dates.yesterday}</span>
+        ${chip('counselors', d.length)}
+        ${chip('total remarks', gt.totalRemarks)}
+        ${chip('connected', gt.totalConnectedCalls)}
+      </div>
+    </div>
+    <div class="sub-label">Remarks analysis — hourly</div>
+    <div class="table-wrap"><table>
+      <thead><tr>
+        <th class="left">Counselor</th>
+        ${slots.map(s=>`<th title="${s}">${shortSlot(s)}</th>`).join('')}
+        <th>Total Remarks</th>
+      </tr></thead>
+      <tbody>${makeRows(allRows)}</tbody>
+    </table></div>
+    <div class="sub-label">Connected calls performance</div>
+    <div class="table-wrap"><table>
+      <thead><tr>
+        <th class="left">Counselor</th>
+        <th>Connected</th>
+        <th>Remarks</th>
+        <th>Rate %</th>
+        ${slots.map(s=>`<th title="${s}">${shortSlot(s)}</th>`).join('')}
+      </tr></thead>
+      <tbody>${makePerfRows(perfRows)}</tbody>
+    </table></div>
+  </section>`;
+}
+
+// ---- GENERIC LEAD TABLE (L1 Name rows) ----
+function buildLeadTable(tableData, allStages, nameKey) {
+  const rows  = tableData.filter(r => r[nameKey] !== 'Grand Total');
+  const grand = tableData.find(r => r[nameKey] === 'Grand Total');
+  return `<div class="table-wrap"><table>
+    <thead><tr>
+      <th class="left">Counselor</th>
+      <th>Total</th>
+      ${allStages.map(s=>`<th>${STAGE_RENAME[s]||s}</th>`).join('')}
+    </tr></thead>
+    <tbody>
+    ${rows.map(r=>`<tr>
+      <td class="left">${r[nameKey]}</td>
+      <td>${r.grandTotal}</td>
+      ${allStages.map(s=>`<td>${r[s]??'—'}</td>`).join('')}
+    </tr>`).join('')}
+    ${grand?`<tr class="grand-total">
+      <td class="left">${grand[nameKey]}</td>
+      <td>${grand.grandTotal}</td>
+      ${allStages.map(s=>`<td>${grand[s]??'—'}</td>`).join('')}
+    </tr>`:''}
+    </tbody>
+  </table></div>`;
+}
+
+function buildLeadStatusYesterday() {
+  const {tableData, allStages, summary} = DATA.leadStatusYesterday;
+  return `<section class="section-card" id="s2">
+    <div class="section-header">
+      <div><div class="section-title">Lead Status — Counsellor L1 Wise</div><div class="section-sub">Current status breakdown per counselor for yesterday</div></div>
+      <div class="section-header-right">
+        <span class="date-badge">Yesterday — ${DATA.dates.yesterday}</span>
+        ${chip('total leads', summary.totalLeads)}${chip('counselors', summary.totalL1s)}
+      </div>
+    </div>
+    ${buildLeadTable(tableData, allStages, 'l1Name')}
+  </section>`;
+}
+
+function buildLeadStatusRange() {
+  const {tableData, allStages, summary} = DATA.leadStatusRange;
+  return `<section class="section-card" id="s3">
+    <div class="section-header">
+      <div><div class="section-title">Lead Status — Counsellor L1 Wise</div><div class="section-sub">MTD status breakdown per counselor</div></div>
+      <div class="section-header-right">
+        <span class="date-badge">${DATA.dates.mtdFrom} – ${DATA.dates.yesterday}</span>
+        ${chip('total leads', summary.totalLeads)}${chip('counselors', summary.totalL1s)}
+      </div>
+    </div>
+    ${buildLeadTable(tableData, allStages, 'l1Name')}
+  </section>`;
+}
+
+// ---- FUNNEL TABLE ----
+function buildFunnelTable(tableData, rowKey) {
+  rowKey = rowKey || 'campaign';
+  const rowLabel = rowKey === 'campaign' ? 'Campaign' : 'Date';
+  const cols = [
+    {key: rowKey,          label: rowLabel},
+    {key: 'Leads',         label: 'Leads'},
+    {key: 'ICC',           label: 'ICC'},
+    {key: 'LIS',           label: 'VC Scheduled'},
+    {key: 'LIC',           label: 'VC Conducted'},
+    {key: 'App',           label: 'Pre App'},
+    {key: 'Pre NI',        label: 'Pre NI'},
+    {key: 'ICC %',         label: 'ICC %'},
+    {key: 'ICC 2 LIS %',   label: 'ICC→VC Sch %'},
+    {key: 'LIS 2 LIC %',   label: 'VC Sch→Con %'},
+    {key: 'LIC 2 App %',   label: 'Pre App %'},
+    {key: 'Pre NI %',      label: 'Pre NI %'},
+  ];
+  const isGrandTotal = r => Object.values(r).some(v => v === 'Grand Total');
+  const rows  = tableData.filter(r => !isGrandTotal(r));
+  const grand = tableData.find(r => isGrandTotal(r));
+  const pctKeys = new Set(['ICC %','ICC 2 LIS %','LIS 2 LIC %','LIC 2 App %','Pre NI %']);
+  const numericBadge = (key, val) => {
+    if (!pctKeys.has(key)) return val ?? '—';
+    const n = parseFloat(val);
+    if (isNaN(n)) return val;
+    const cls = n >= 50 ? 'badge-green' : n >= 20 ? 'badge-orange' : n > 0 ? 'badge-blue' : 'badge-red';
+    return `<span class="badge ${cls}">${val}</span>`;
+  };
+  return `<div class="table-wrap"><table>
+    <thead><tr>${cols.map((c,i)=>`<th${i===0?' class="left"':''}>${c.label}</th>`).join('')}</tr></thead>
+    <tbody>
+    ${rows.map(r=>`<tr>${cols.map((c,i)=>`<td${i===0?' class="left"':''}>${numericBadge(c.key,r[c.key])}</td>`).join('')}</tr>`).join('')}
+    ${grand?`<tr class="grand-total">${cols.map((c,i)=>`<td${i===0?' class="left"':''}>${numericBadge(c.key,grand[c.key])}</td>`).join('')}</tr>`:''}
+    </tbody>
+  </table></div>`;
+}
+
+function buildFunnelDateWise() {
+  const {tableData, summary} = DATA.funnelDateWise;
+  const first = tableData && tableData[0];
+  const rowKey = first
+    ? (first['leadCreatedAt (Date & Time)'] !== undefined ? 'leadCreatedAt (Date & Time)'
+      : first['Created Date'] !== undefined ? 'Created Date'
+      : first.createdDate !== undefined ? 'createdDate'
+      : first.date !== undefined ? 'date'
+      : 'campaign')
+    : 'campaign';
+  return `<section class="section-card" id="s4">
+    <div class="section-header">
+      <div><div class="section-title">Lead Funnel — Date Wise</div><div class="section-sub">Funnel breakdown for last 7 days</div></div>
+      <div class="section-header-right">
+        <span class="date-badge">${DATA.dates.last7From} – ${DATA.dates.yesterday}</span>
+        ${chip('total leads', summary.totalLeads)}
+      </div>
+    </div>
+    ${buildFunnelTable(tableData, rowKey)}
+  </section>`;
+}
+
+function buildFunnelRange() {
+  const {tableData, summary} = DATA.funnelRange;
+  return `<section class="section-card" id="s5">
+    <div class="section-header">
+      <div><div class="section-title">Campaign Wise Funnel Report</div><div class="section-sub">Lead-to-application funnel by campaign</div></div>
+      <div class="section-header-right">
+        <span class="date-badge">${DATA.dates.rangeFrom} – ${DATA.dates.yesterday}</span>
+        ${chip('total leads', summary.totalLeads)}${chip('campaigns', summary.totalRecords - 1)}
+      </div>
+    </div>
+    ${buildFunnelTable(tableData)}
+  </section>`;
+}
+
+function buildFunnelMTD() {
+  const {tableData, summary} = DATA.funnelMTD;
+  return `<section class="section-card" id="s6">
+    <div class="section-header">
+      <div><div class="section-title">Campaign Wise Funnel Report</div><div class="section-sub">${DATA.dates.monthName} — Month to Date</div></div>
+      <div class="section-header-right">
+        <span class="date-badge">MTD — ${DATA.dates.monthName} ${DATA.dates.year}</span>
+        ${chip('total leads', summary.totalLeads)}${chip('campaigns', summary.totalRecords - 1)}
+      </div>
+    </div>
+    ${buildFunnelTable(tableData)}
+  </section>`;
+}
+
+// ---- APPOINTMENT ----
+function buildAppointment() {
+  const {tableData, summary} = DATA.appointment;
+
+  const grouped = {};
+  tableData.forEach(r => {
+    if (!grouped[r.supervisor]) grouped[r.supervisor] = [];
+    grouped[r.supervisor].push(r);
+  });
+
+  const completionBadge = (n, total) => {
+    if (!total) return '—';
+    const pct = n / total * 100;
+    const cls = pct >= 70 ? 'badge-green' : pct >= 30 ? 'badge-orange' : 'badge-red';
+    return `<span class="badge ${cls}">${n}</span>`;
+  };
+
+  const counselorRows = tableData.filter(r => r.counselor !== 'Unassigned');
+  let rows = '';
+  counselorRows.forEach(r => {
+    rows += `<tr>
+      <td class="left">${r.counselor}</td>
+      <td>${r.totalAppointments}</td>
+      <td>${completionBadge(r.completed, r.totalAppointments)}</td>
+      <td>${r.missed > 0 ? `<span class="badge badge-red">${r.missed}</span>` : r.missed}</td>
+      <td>${r.upcoming}</td>
+      <td>${r.notAttended > 0 ? `<span class="badge badge-pink">${r.notAttended}</span>` : r.notAttended}</td>
+      <td>${r.totalAppointments ? ((r.completed/r.totalAppointments)*100).toFixed(0)+'%' : '—'}</td>
+    </tr>`;
+  });
+
+  const totals = counselorRows.reduce((acc, r) => {
+    acc.total     += r.totalAppointments;
+    acc.completed += r.completed;
+    acc.missed    += r.missed;
+    acc.upcoming  += r.upcoming;
+    acc.notAttended += r.notAttended;
+    return acc;
+  }, {total:0, completed:0, missed:0, upcoming:0, notAttended:0});
+
+  rows += `<tr class="grand-total">
+    <td class="left">Grand Total</td>
+    <td>${totals.total}</td>
+    <td>${totals.completed}</td>
+    <td>${totals.missed}</td>
+    <td>${totals.upcoming}</td>
+    <td>${totals.notAttended}</td>
+    <td>${totals.total ? ((totals.completed/totals.total)*100).toFixed(0)+'%' : '—'}</td>
+  </tr>`;
+
+  const emptyBody = tableData.length === 0
+    ? `<tr><td colspan="7" style="text-align:center;padding:32px;color:#9ca3af">No appointments for this period</td></tr>`
+    : rows;
+
+  return `<section class="section-card" id="s7">
+    <div class="section-header">
+      <div><div class="section-title">Appointment Status Report — L1 Wise</div><div class="section-sub">MTD appointment funnel breakdown per counselor</div></div>
+      <div class="section-header-right">
+        <span class="date-badge">MTD — ${DATA.dates.monthName} ${DATA.dates.year}</span>
+        ${chip('total appts', summary.totalAppointments)}
+        <span class="meeting-chip">First meetings: <strong>${summary.studentsWithFirstMeetingToday}</strong></span>
+        ${chip('unique students', summary.uniqueStudentsInReport ?? summary.totalRecords)}
+      </div>
+    </div>
+    <div class="table-wrap"><table>
+      <thead><tr>
+        <th class="left">Counselor</th>
+        <th>Total</th>
+        <th>Completed</th>
+        <th>Missed</th>
+        <th>Upcoming</th>
+        <th>Not Attended</th>
+        <th>Completion %</th>
+      </tr></thead>
+      <tbody>${emptyBody}</tbody>
+    </table></div>
+  </section>`;
+}
+
+function emptySection(id, title, msg) {
+  return `<section class="section-card" id="${id}">
+    <div class="section-header"><div><div class="section-title">${title}</div></div></div>
+    <div class="empty-state"><div class="empty-title">${msg}</div></div>
+  </section>`;
+}
+
+// ---- RENDER ----
+function render() {
+  const now = new Date();
+  document.getElementById('today-date').textContent = now.toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric',timeZone:'Asia/Kolkata'});
+  const hh = String(now.getHours()).padStart(2,'0');
+  const mm = String(now.getMinutes()).padStart(2,'0');
+  document.getElementById('gen-time').textContent = `Generated at ${hh}:${mm} IST`;
+  document.getElementById('main-content').innerHTML = [
+    buildProductivity(),
+    buildLeadStatusYesterday(),
+    buildLeadStatusRange(),
+    buildFunnelDateWise(),
+    buildFunnelRange(),
+    buildFunnelMTD(),
+    buildAppointment()
+  ].join('');
+}
+render();
+
+// Sidebar active tracking
+const navItems = document.querySelectorAll('.nav-item');
+const observer = new IntersectionObserver(entries => {
+  entries.forEach(e => {
+    if (e.isIntersecting) {
+      navItems.forEach(n => n.classList.remove('active'));
+      const a = document.querySelector(`.nav-item[href="#${e.target.id}"]`);
+      if (a) a.classList.add('active');
+    }
+  });
+}, { threshold: 0.25 });
+setTimeout(() => { document.querySelectorAll('section.section-card').forEach(s => observer.observe(s)); }, 200);
+</script>
+</body>
+</html>

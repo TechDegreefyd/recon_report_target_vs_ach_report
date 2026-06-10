@@ -1,0 +1,628 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Bhugoal Daily Sales Report</title>
+<style>
+  :root {
+    --sidebar-w: 220px;
+    --accent: #0ea5c8;
+    --accent-light: #e0f7fd;
+    --bg-page: #f5f6fa;
+    --bg-card: #ffffff;
+    --bg-sidebar: #ffffff;
+    --text-primary: #1e1f26;
+    --text-secondary: #6b7280;
+    --text-muted: #9ca3af;
+    --border: #e5e7eb;
+    --border-col: #d1d5db;
+    --row-alt: #f9fafb;
+    --row-grand: #f0f9ff;
+    --row-grand-text: #0c4a6e;
+    --chip-bg: #e0f7fd;
+    --chip-text: #0369a1;
+    --radius: 12px;
+    --shadow: 0 1px 3px rgba(0,0,0,.06), 0 1px 2px rgba(0,0,0,.04);
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    background: var(--bg-page);
+    color: var(--text-primary);
+    font-size: 13px;
+    line-height: 1.5;
+    display: flex;
+    flex-direction: column;
+    min-height: 100vh;
+  }
+
+  /* TOP HEADER */
+  .top-header {
+    position: fixed; top: 0; left: 0; right: 0; height: 52px;
+    background: #fff;
+    border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; padding: 0 24px; gap: 10px;
+    z-index: 100;
+  }
+  .logo-dot {
+    width: 26px; height: 26px;
+    background: var(--accent);
+    border-radius: 6px;
+    display: flex; align-items: center; justify-content: center;
+    color: #fff; font-size: 12px; font-weight: 700; flex-shrink: 0;
+  }
+  .top-header h1 { font-size: 14px; font-weight: 600; letter-spacing: -.2px; }
+  .header-meta { margin-left: auto; display: flex; align-items: center; gap: 10px; }
+  .header-badge {
+    font-size: 11.5px; color: var(--text-secondary);
+    background: var(--bg-page); padding: 3px 10px;
+    border-radius: 20px; border: 1px solid var(--border);
+  }
+
+  /* LAYOUT */
+  .layout { display: flex; margin-top: 52px; flex: 1; }
+
+  /* SIDEBAR */
+  .sidebar {
+    width: var(--sidebar-w); position: fixed;
+    top: 52px; left: 0; bottom: 0;
+    background: var(--bg-sidebar); border-right: 1px solid var(--border);
+    overflow-y: auto; padding: 14px 0; z-index: 50;
+  }
+  .sidebar-label {
+    font-size: 10px; font-weight: 600; text-transform: uppercase;
+    letter-spacing: .08em; color: var(--text-muted); padding: 6px 16px 4px;
+  }
+  .nav-item {
+    display: flex; align-items: flex-start; gap: 8px;
+    padding: 7px 16px; cursor: pointer; color: var(--text-secondary);
+    font-size: 12px; line-height: 1.4; text-decoration: none;
+    border-left: 2px solid transparent; transition: background .1s;
+  }
+  .nav-item:hover { background: var(--bg-page); color: var(--text-primary); }
+  .nav-item.active {
+    background: var(--accent-light); color: #0369a1;
+    border-left-color: var(--accent); font-weight: 500;
+  }
+  .nav-num {
+    width: 17px; height: 17px; background: var(--border); border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 10px; font-weight: 600; color: var(--text-muted); flex-shrink: 0; margin-top: 1px;
+  }
+  .nav-item.active .nav-num { background: var(--accent); color: #fff; }
+
+  /* MAIN */
+  .main { margin-left: var(--sidebar-w); flex: 1; padding: 20px; display: flex; flex-direction: column; gap: 20px; }
+
+  /* SECTION CARD */
+  .section-card {
+    background: var(--bg-card); border-radius: var(--radius);
+    border: 1px solid var(--border); box-shadow: var(--shadow); overflow: hidden;
+  }
+  .section-header {
+    padding: 14px 18px 12px; border-bottom: 1px solid var(--border);
+    display: flex; align-items: flex-start; gap: 10px; flex-wrap: wrap;
+  }
+  .section-title { font-size: 13px; font-weight: 600; letter-spacing: -.15px; }
+  .section-sub { font-size: 11px; color: var(--text-muted); margin-top: 1px; }
+  .section-header-right { margin-left: auto; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+  .date-badge {
+    font-size: 11px; font-weight: 500;
+    background: var(--chip-bg); color: var(--chip-text);
+    padding: 3px 9px; border-radius: 20px; border: 1px solid #bae6fd;
+  }
+  .stat-chip {
+    font-size: 11px; padding: 3px 9px; border-radius: 20px;
+    border: 1px solid var(--border); background: var(--row-alt); color: var(--text-secondary); white-space: nowrap;
+  }
+  .stat-chip strong { color: var(--text-primary); font-weight: 600; }
+
+  /* SUB-SECTION LABEL */
+  .sub-label {
+    font-size: 11px; font-weight: 600; color: var(--text-secondary);
+    text-transform: uppercase; letter-spacing: .06em;
+    padding: 10px 18px 7px; background: #fafafa;
+    border-top: 1px solid var(--border); border-bottom: 1px solid var(--border);
+  }
+  .sub-label:first-child { border-top: none; }
+
+  /* TABLE */
+  .table-wrap { overflow-x: auto; }
+  table {
+    width: 100%; border-collapse: collapse; font-size: 12.5px;
+  }
+  thead tr { background: #1e293b; }
+  th {
+    padding: 9px 10px;
+    text-align: center;
+    font-size: 11px; font-weight: 600; color: #e2e8f0;
+    text-transform: uppercase; letter-spacing: .05em;
+    white-space: nowrap;
+    border-right: 1px solid #334155;
+  }
+  th:last-child { border-right: none; }
+  th.left { text-align: left; padding-left: 18px; }
+
+  td {
+    padding: 8px 10px;
+    text-align: center;
+    border-bottom: 1px solid #f1f5f9;
+    border-right: 1px solid var(--border-col);
+    color: var(--text-primary);
+    white-space: nowrap;
+  }
+  td:last-child { border-right: none; }
+  td.left { text-align: left; padding-left: 18px; font-weight: 500; }
+
+  tr:nth-child(even) td { background: var(--row-alt); }
+  tr:hover td { background: #f0f9ff55; }
+
+  tr.grand-total td {
+    background: var(--row-grand) !important;
+    font-weight: 700; color: var(--row-grand-text);
+    border-top: 1.5px solid #bae6fd; border-bottom: none;
+  }
+
+  /* RATE BADGES */
+  .badge { border-radius: 20px; padding: 2px 8px; font-size: 11.5px; font-weight: 600; display: inline-block; }
+  .badge-green  { background: #d1fae5; color: #065f46; }
+  .badge-orange { background: #fef3c7; color: #92400e; }
+  .badge-red    { background: #fee2e2; color: #991b1b; }
+  .badge-pink   { background: #fce7f3; color: #9d174d; }
+  .badge-blue   { background: #dbeafe; color: #1e40af; }
+
+  /* EMPTY STATE */
+  .empty-state { padding: 48px 20px; text-align: center; color: var(--text-muted); }
+  .empty-title { font-size: 13px; font-weight: 500; margin-bottom: 4px; }
+  .empty-sub { font-size: 11.5px; }
+
+  /* APPOINTMENT SPECIAL */
+  .meeting-chip {
+    font-size: 12px; background: #fef9c3; color: #713f12;
+    border: 1px solid #fde68a; padding: 3px 12px; border-radius: 20px; font-weight: 500;
+  }
+
+  /* TEAM ROW */
+  tr.team-row td {
+    background: #e0f7fd !important;
+    color: #0369a1; font-weight: 600; font-size: 11.5px;
+    text-align: center; letter-spacing: .04em; border-bottom: 1px solid #bae6fd;
+    border-right: none;
+  }
+
+  @media (max-width: 768px) {
+    .sidebar { display: none; }
+    .main { margin-left: 0; padding: 12px; }
+    .header-badge { display: none; }
+  }
+</style>
+</head>
+<body>
+
+<div class="top-header">
+  <div class="logo-dot">B</div>
+  <h1>Bhugoal Daily Sales Report</h1>
+  <div class="header-meta">
+    <span class="header-badge" id="today-date">—</span>
+    <span class="header-badge" id="gen-time">Generated at —</span>
+  </div>
+</div>
+
+<div class="layout">
+  <nav class="sidebar">
+    <div class="sidebar-label">Sections</div>
+    <a class="nav-item active" href="#s1"><span class="nav-num">1</span>Productivity Report</a>
+    <a class="nav-item" href="#s2"><span class="nav-num">2</span>Lead Stage — Yesterday</a>
+    <a class="nav-item" href="#s3"><span class="nav-num">3</span>Lead Stage — 15 May Range</a>
+    <a class="nav-item" href="#s4"><span class="nav-num">4</span>Lead Stage — Last 7 Days</a>
+    <a class="nav-item" href="#s5"><span class="nav-num">5</span>Funnel — 15 May Range</a>
+    <a class="nav-item" href="#s6"><span class="nav-num">6</span>Funnel — MTD</a>
+    <a class="nav-item" href="#s7"><span class="nav-num">7</span>Appointment Status</a>
+  </nav>
+
+  <main class="main" id="main-content"></main>
+</div>
+
+<script>
+const DATA = {
+  productivity: [
+    { counselorName:"Meghana L", totalConnectedCalls:5, totalRemarks:17, totalPercentage:"29.41%",
+      timeSlots:{"09:00 - 10:00":{count:0},"10:00 - 11:00":{count:1},"11:00 - 12:00":{count:0},"12:00 - 13:00":{count:1},"13:00 - 14:00":{count:0},"14:00 - 15:00":{count:0},"15:00 - 16:00":{count:0},"16:00 - 17:00":{count:3},"17:00 - 18:00":{count:0},"18:00 - 19:00":{count:0},"19:00 - 20:00":{count:0}}},
+    { counselorName:"Nagarjuna Rajkumar", totalConnectedCalls:6, totalRemarks:15, totalPercentage:"40%",
+      timeSlots:{"09:00 - 10:00":{count:0},"10:00 - 11:00":{count:0},"11:00 - 12:00":{count:0},"12:00 - 13:00":{count:5},"13:00 - 14:00":{count:0},"14:00 - 15:00":{count:0},"15:00 - 16:00":{count:1},"16:00 - 17:00":{count:0},"17:00 - 18:00":{count:0},"18:00 - 19:00":{count:0},"19:00 - 20:00":{count:0}}},
+    { counselorName:"Nagavamsi G", totalConnectedCalls:0, totalRemarks:17, totalPercentage:"0%",
+      timeSlots:{"09:00 - 10:00":{count:0},"10:00 - 11:00":{count:0},"11:00 - 12:00":{count:0},"12:00 - 13:00":{count:0},"13:00 - 14:00":{count:0},"14:00 - 15:00":{count:0},"15:00 - 16:00":{count:0},"16:00 - 17:00":{count:0},"17:00 - 18:00":{count:0},"18:00 - 19:00":{count:0},"19:00 - 20:00":{count:0}}},
+    { counselorName:"Yashvi Patidar", totalConnectedCalls:30, totalRemarks:69, totalPercentage:"43.48%",
+      timeSlots:{"09:00 - 10:00":{count:0},"10:00 - 11:00":{count:3},"11:00 - 12:00":{count:4},"12:00 - 13:00":{count:6},"13:00 - 14:00":{count:2},"14:00 - 15:00":{count:2},"15:00 - 16:00":{count:4},"16:00 - 17:00":{count:3},"17:00 - 18:00":{count:6},"18:00 - 19:00":{count:0},"19:00 - 20:00":{count:0}}}
+  ],
+  leadStageYesterday: {
+    tableData:[
+      {l1Name:"Nagavamsi G",grandTotal:14,"Counselling Call Completed":1,"Fresh":9,"Not Interested":1,"Registration Completed":3},
+      {l1Name:"Meghana L",grandTotal:12,"Counselling Call Completed":1,"Fresh":3,"Not Interested":1,"Registration Completed":7},
+      {l1Name:"Nagarjuna Rajkumar",grandTotal:14,"Counselling Call Completed":1,"Fresh":11,"Not Interested":0,"Registration Completed":2},
+      {l1Name:"Swathi S",grandTotal:3,"Counselling Call Completed":0,"Fresh":3,"Not Interested":0,"Registration Completed":0},
+      {l1Name:"Yashvi Patidar",grandTotal:21,"Counselling Call Completed":4,"Fresh":5,"Not Interested":10,"Registration Completed":2},
+      {l1Name:"Grand Total",grandTotal:64,"Counselling Call Completed":7,"Fresh":31,"Not Interested":12,"Registration Completed":14}
+    ],
+    allStages:["Counselling Call Completed","Fresh","Not Interested","Registration Completed"],
+    summary:{totalLeads:64,totalL1s:5}
+  },
+  leadStageRange: {
+    tableData:[
+      {l1Name:"Nagavamsi G",grandTotal:186,"Counselling Call Completed":42,"Fresh":51,"Language Interview Conducted":4,"Language Interview Scheduled":7,"Not Interested":71,"Registration Completed":11},
+      {l1Name:"Meghana L",grandTotal:222,"Counselling Call Completed":41,"Fresh":12,"Language Interview Conducted":2,"Language Interview Scheduled":3,"Not Interested":124,"Registration Completed":40},
+      {l1Name:"Nagarjuna Rajkumar",grandTotal:229,"Counselling Call Completed":30,"Fresh":17,"Language Interview Conducted":0,"Language Interview Scheduled":0,"Not Interested":96,"Registration Completed":86},
+      {l1Name:"Swathi S",grandTotal:73,"Counselling Call Completed":4,"Fresh":10,"Language Interview Conducted":0,"Language Interview Scheduled":3,"Not Interested":25,"Registration Completed":31},
+      {l1Name:"Yashvi Patidar",grandTotal:405,"Counselling Call Completed":91,"Fresh":52,"Language Interview Conducted":0,"Language Interview Scheduled":0,"Not Interested":254,"Registration Completed":8},
+      {l1Name:"Grand Total",grandTotal:1115,"Counselling Call Completed":208,"Fresh":142,"Language Interview Conducted":6,"Language Interview Scheduled":13,"Not Interested":570,"Registration Completed":176}
+    ],
+    allStages:["Counselling Call Completed","Fresh","Language Interview Conducted","Language Interview Scheduled","Not Interested","Registration Completed"],
+    summary:{totalLeads:1115,totalL1s:5}
+  },
+  leadStageDate: {
+    tableData:[
+      {createdAt:"9/6/2026",grandTotal:64,"Counselling Call Completed":6,"Fresh":31,"Language Interview Scheduled":0,"Not Interested":13,"Registration Completed":14},
+      {createdAt:"8/6/2026",grandTotal:77,"Counselling Call Completed":7,"Fresh":26,"Language Interview Scheduled":0,"Not Interested":23,"Registration Completed":21},
+      {createdAt:"7/6/2026",grandTotal:70,"Counselling Call Completed":3,"Fresh":37,"Language Interview Scheduled":0,"Not Interested":15,"Registration Completed":15},
+      {createdAt:"6/6/2026",grandTotal:71,"Counselling Call Completed":3,"Fresh":29,"Language Interview Scheduled":0,"Not Interested":23,"Registration Completed":16},
+      {createdAt:"5/6/2026",grandTotal:59,"Counselling Call Completed":8,"Fresh":8,"Language Interview Scheduled":1,"Not Interested":33,"Registration Completed":9},
+      {createdAt:"4/6/2026",grandTotal:32,"Counselling Call Completed":2,"Fresh":4,"Language Interview Scheduled":1,"Not Interested":23,"Registration Completed":2},
+      {createdAt:"3/6/2026",grandTotal:59,"Counselling Call Completed":5,"Fresh":4,"Language Interview Scheduled":0,"Not Interested":39,"Registration Completed":11},
+      {createdAt:"Grand Total",grandTotal:432,"Counselling Call Completed":34,"Fresh":139,"Language Interview Scheduled":2,"Not Interested":169,"Registration Completed":88}
+    ],
+    allStages:["Counselling Call Completed","Fresh","Language Interview Scheduled","Not Interested","Registration Completed"],
+    summary:{totalLeads:432}
+  },
+  funnelRange: {
+    tableData:[
+      {campaign:"Bhugoal_Germany_JD_Multiple",Leads:517,ICC:103,LIS:4,LIC:0,App:0,"Pre NI":273,"ICC %":"19.9%","ICC 2 LIS %":"3.9%","LIS 2 LIC %":"0.0%","LIC 2 App %":"0.0%","Pre NI %":"52.8%"},
+      {campaign:"Bhugoal_Germany_LAL_GHC_South",Leads:110,ICC:14,LIS:0,LIC:0,App:0,"Pre NI":44,"ICC %":"12.7%","ICC 2 LIS %":"0.0%","LIS 2 LIC %":"0.0%","LIC 2 App %":"0.0%","Pre NI %":"40.0%"},
+      {campaign:"Bhugoal_Germany_Nurse_LAL_ALL_IMM_South",Leads:120,ICC:20,LIS:4,LIC:1,App:0,"Pre NI":55,"ICC %":"16.7%","ICC 2 LIS %":"20.0%","LIS 2 LIC %":"25.0%","LIC 2 App %":"0.0%","Pre NI %":"45.8%"},
+      {campaign:"Bhugoal_Germany_Nurse_FS_South",Leads:133,ICC:25,LIS:2,LIC:1,App:0,"Pre NI":71,"ICC %":"18.8%","ICC 2 LIS %":"8.0%","LIS 2 LIC %":"50.0%","LIC 2 App %":"0.0%","Pre NI %":"53.4%"},
+      {campaign:"Bhugoal_Physiotherapist_Germany_Telugu_MH",Leads:43,ICC:6,LIS:0,LIC:0,App:0,"Pre NI":14,"ICC %":"14.0%","ICC 2 LIS %":"0.0%","LIS 2 LIC %":"0.0%","LIC 2 App %":"0.0%","Pre NI %":"32.6%"},
+      {campaign:"WhatsApp Inbound",Leads:73,ICC:13,LIS:0,LIC:0,App:0,"Pre NI":55,"ICC %":"17.8%","ICC 2 LIS %":"0.0%","LIS 2 LIC %":"0.0%","LIC 2 App %":"0.0%","Pre NI %":"75.3%"},
+      {campaign:"Direct",Leads:6,ICC:3,LIS:0,LIC:0,App:0,"Pre NI":3,"ICC %":"50.0%","ICC 2 LIS %":"0.0%","LIS 2 LIC %":"0.0%","LIC 2 App %":"0.0%","Pre NI %":"50.0%"},
+      {campaign:"Other Referral",Leads:1,ICC:1,LIS:0,LIC:0,App:0,"Pre NI":0,"ICC %":"100.0%","ICC 2 LIS %":"0.0%","LIS 2 LIC %":"0.0%","LIC 2 App %":"0.0%","Pre NI %":"0.0%"},
+      {campaign:"919484958356",Leads:8,ICC:1,LIS:0,LIC:0,App:0,"Pre NI":6,"ICC %":"12.5%","ICC 2 LIS %":"0.0%","LIS 2 LIC %":"0.0%","LIC 2 App %":"0.0%","Pre NI %":"75.0%"},
+      {campaign:"Bhugoal_Germany_Nurse_LAL_ALL_IMM_Tamil",Leads:21,ICC:7,LIS:1,LIC:0,App:0,"Pre NI":13,"ICC %":"33.3%","ICC 2 LIS %":"14.3%","LIS 2 LIC %":"0.0%","LIC 2 App %":"0.0%","Pre NI %":"61.9%"},
+      {campaign:"Bhugoal_Germany_Nurse_INT_South_TN_ML",Leads:8,ICC:1,LIS:0,LIC:0,App:0,"Pre NI":2,"ICC %":"12.5%","ICC 2 LIS %":"0.0%","LIS 2 LIC %":"0.0%","LIC 2 App %":"0.0%","Pre NI %":"25.0%"},
+      {campaign:"Bhugoal_Germany_LAL_GHC_South_AP_TS",Leads:38,ICC:18,LIS:4,LIC:3,App:0,"Pre NI":13,"ICC %":"47.4%","ICC 2 LIS %":"22.2%","LIS 2 LIC %":"75.0%","LIC 2 App %":"0.0%","Pre NI %":"34.2%"},
+      {campaign:"Bhugoal_Germany_Nurse_INT_South_AP_TS",Leads:31,ICC:16,LIS:4,LIC:1,App:0,"Pre NI":12,"ICC %":"51.6%","ICC 2 LIS %":"25.0%","LIS 2 LIC %":"25.0%","LIC 2 App %":"0.0%","Pre NI %":"38.7%"},
+      {campaign:"Bhugoal_Germany_Nurse_INT_South_TN",Leads:11,ICC:0,LIS:0,LIC:0,App:0,"Pre NI":9,"ICC %":"0.0%","ICC 2 LIS %":"0.0%","LIS 2 LIC %":"0.0%","LIC 2 App %":"0.0%","Pre NI %":"81.8%"},
+      {campaign:"Grand Total",Leads:1120,ICC:228,LIS:19,LIC:6,App:0,"Pre NI":570,"ICC %":"20.4%","ICC 2 LIS %":"8.3%","LIS 2 LIC %":"31.6%","LIC 2 App %":"0.0%","Pre NI %":"50.9%"}
+    ],
+    summary:{totalLeads:1120,totalRecords:15}
+  },
+  funnelMTD: {
+    tableData:[
+      {campaign:"Bhugoal_Germany_JD_Multiple",Leads:266,ICC:40,LIS:3,LIC:0,App:0,"Pre NI":115,"ICC %":"15.0%","ICC 2 LIS %":"7.5%","LIS 2 LIC %":"0.0%","LIC 2 App %":"0.0%","Pre NI %":"43.2%"},
+      {campaign:"Bhugoal_Germany_LAL_GHC_South",Leads:63,ICC:6,LIS:0,LIC:0,App:0,"Pre NI":19,"ICC %":"9.5%","ICC 2 LIS %":"0.0%","LIS 2 LIC %":"0.0%","LIC 2 App %":"0.0%","Pre NI %":"30.2%"},
+      {campaign:"Bhugoal_Germany_Nurse_LAL_ALL_IMM_South",Leads:70,ICC:11,LIS:2,LIC:0,App:0,"Pre NI":18,"ICC %":"15.7%","ICC 2 LIS %":"18.2%","LIS 2 LIC %":"0.0%","LIC 2 App %":"0.0%","Pre NI %":"25.7%"},
+      {campaign:"Bhugoal_Germany_Nurse_FS_South",Leads:79,ICC:16,LIS:1,LIC:0,App:0,"Pre NI":31,"ICC %":"20.3%","ICC 2 LIS %":"6.3%","LIS 2 LIC %":"0.0%","LIC 2 App %":"0.0%","Pre NI %":"39.2%"},
+      {campaign:"Bhugoal_Physiotherapist_Germany_Telugu_MH",Leads:43,ICC:6,LIS:0,LIC:0,App:0,"Pre NI":14,"ICC %":"14.0%","ICC 2 LIS %":"0.0%","LIS 2 LIC %":"0.0%","LIC 2 App %":"0.0%","Pre NI %":"32.6%"},
+      {campaign:"WhatsApp Inbound",Leads:37,ICC:6,LIS:0,LIC:0,App:0,"Pre NI":27,"ICC %":"16.2%","ICC 2 LIS %":"0.0%","LIS 2 LIC %":"0.0%","LIC 2 App %":"0.0%","Pre NI %":"73.0%"},
+      {campaign:"Direct",Leads:3,ICC:1,LIS:0,LIC:0,App:0,"Pre NI":2,"ICC %":"33.3%","ICC 2 LIS %":"0.0%","LIS 2 LIC %":"0.0%","LIC 2 App %":"0.0%","Pre NI %":"66.7%"},
+      {campaign:"Other Referral",Leads:1,ICC:1,LIS:0,LIC:0,App:0,"Pre NI":0,"ICC %":"100.0%","ICC 2 LIS %":"0.0%","LIS 2 LIC %":"0.0%","LIC 2 App %":"0.0%","Pre NI %":"0.0%"},
+      {campaign:"Grand Total",Leads:562,ICC:87,LIS:6,LIC:0,App:0,"Pre NI":226,"ICC %":"15.5%","ICC 2 LIS %":"6.9%","LIS 2 LIC %":"0.0%","LIC 2 App %":"0.0%","Pre NI %":"40.2%"}
+    ],
+    summary:{totalLeads:562,totalRecords:9}
+  },
+  appointment: {
+    tableData:[
+      {supervisor:"Sharath",counselor:"Swathi S",totalAppointments:3,completed:0,missed:3,upcoming:0,notAttended:0},
+      {supervisor:"Sharath",counselor:"Meghana L",totalAppointments:3,completed:2,missed:0,upcoming:0,notAttended:1},
+      {supervisor:"Sharath",counselor:"Nagavamsi G",totalAppointments:3,completed:0,missed:3,upcoming:0,notAttended:0}
+    ],
+    summary:{totalAppointments:9,studentsWithFirstMeetingToday:9,uniqueStudentsInReport:9}
+  }
+};
+
+// ---- HELPERS ----
+function rateClass(pct) {
+  const n = parseFloat(pct);
+  if (n >= 40) return 'badge-green';
+  if (n >= 20) return 'badge-orange';
+  return 'badge-red';
+}
+function shortSlot(s) { return s.replace(':00 - ','\u2013').replace(/:00/g,''); }
+function chip(label, val) { return `<span class="stat-chip"><strong>${val}</strong> ${label}</span>`; }
+
+// ---- SECTION 1: Productivity ----
+function buildProductivity() {
+  const d = DATA.productivity;
+  const slots = Object.keys(d[0].timeSlots);
+  const gt = { counselorName:'Grand Total', totalConnectedCalls:0, totalRemarks:0, timeSlots:{} };
+  slots.forEach(s => { gt.timeSlots[s] = {count: d.reduce((a,r)=>a+r.timeSlots[s].count,0)}; });
+  gt.totalConnectedCalls = d.reduce((a,r)=>a+r.totalConnectedCalls,0);
+  gt.totalRemarks = d.reduce((a,r)=>a+r.totalRemarks,0);
+  const gtRate = gt.totalRemarks ? ((gt.totalConnectedCalls/gt.totalRemarks)*100).toFixed(1)+'%' : '0%';
+
+  const makeRows = (rows, isGT) => rows.map(r => {
+    const cls = rateClass ? rateClass(r.totalPercentage||'0') : '';
+    const isGrand = r.counselorName === 'Grand Total';
+    return `<tr${isGrand?' class="grand-total"':''}>
+      <td class="left">${r.counselorName}</td>
+      ${slots.map(s=>`<td>${r.timeSlots[s].count||'—'}</td>`).join('')}
+      <td>${r.totalRemarks}</td>
+    </tr>`;
+  }).join('');
+
+  const makePerfRows = rows => rows.map(r => {
+    const cls = rateClass(r.totalPercentage||'0');
+    const isGrand = r.counselorName === 'Grand Total';
+    return `<tr${isGrand?' class="grand-total"':''}>
+      <td class="left">${r.counselorName}</td>
+      <td>${r.totalConnectedCalls}</td>
+      <td>${r.totalRemarks}</td>
+      <td><span class="badge ${cls}">${r.totalPercentage}</span></td>
+      ${slots.map(s=>`<td>${r.timeSlots[s].count||'—'}</td>`).join('')}
+    </tr>`;
+  }).join('');
+
+  const allRows1 = [...d, gt];
+  const allRowsP = [...d, { counselorName:'Grand Total', totalConnectedCalls:gt.totalConnectedCalls, totalRemarks:gt.totalRemarks, totalPercentage:gtRate, timeSlots:gt.timeSlots }];
+
+  return `<section class="section-card" id="s1">
+    <div class="section-header">
+      <div><div class="section-title">Productivity Report</div><div class="section-sub">Connected calls &amp; hourly remark distribution</div></div>
+      <div class="section-header-right">
+        <span class="date-badge">Yesterday — 9 Jun 2026</span>
+        ${chip('counselors', d.length)}
+        ${chip('total remarks', gt.totalRemarks)}
+        ${chip('connected', gt.totalConnectedCalls)}
+      </div>
+    </div>
+    <div class="sub-label">Remarks analysis — hourly</div>
+    <div class="table-wrap"><table>
+      <thead><tr>
+        <th class="left">Counselor</th>
+        ${slots.map(s=>`<th title="${s}">${shortSlot(s)}</th>`).join('')}
+        <th>Total Remarks</th>
+      </tr></thead>
+      <tbody>${makeRows(allRows1)}</tbody>
+    </table></div>
+    <div class="sub-label">Connected calls performance</div>
+    <div class="table-wrap"><table>
+      <thead><tr>
+        <th class="left">Counselor</th>
+        <th>Connected</th>
+        <th>Remarks</th>
+        <th>Rate %</th>
+        ${slots.map(s=>`<th title="${s}">${shortSlot(s)}</th>`).join('')}
+      </tr></thead>
+      <tbody>${makePerfRows(allRowsP)}</tbody>
+    </table></div>
+  </section>`;
+}
+
+// ---- GENERIC LEAD STAGE TABLE ----
+function buildLeadTable(tableData, allStages, nameKey) {
+  const rows = tableData.filter(r => r[nameKey] !== 'Grand Total');
+  const grand = tableData.find(r => r[nameKey] === 'Grand Total');
+  return `<div class="table-wrap"><table>
+    <thead><tr>
+      <th class="left">${nameKey==='l1Name'?'Counselor':'Date'}</th>
+      <th>Total</th>
+      ${allStages.map(s=>`<th>${s}</th>`).join('')}
+    </tr></thead>
+    <tbody>
+    ${rows.map(r=>`<tr>
+      <td class="left">${r[nameKey]}</td>
+      <td>${r.grandTotal}</td>
+      ${allStages.map(s=>`<td>${r[s]??'—'}</td>`).join('')}
+    </tr>`).join('')}
+    ${grand?`<tr class="grand-total">
+      <td class="left">${grand[nameKey]}</td>
+      <td>${grand.grandTotal}</td>
+      ${allStages.map(s=>`<td>${grand[s]??'—'}</td>`).join('')}
+    </tr>`:''}
+    </tbody>
+  </table></div>`;
+}
+
+function buildLeadStageYesterday() {
+  const {tableData,allStages,summary} = DATA.leadStageYesterday;
+  return `<section class="section-card" id="s2">
+    <div class="section-header">
+      <div><div class="section-title">Lead Stage — Counsellor L1 Wise</div><div class="section-sub">Stage breakdown per counselor for yesterday</div></div>
+      <div class="section-header-right">
+        <span class="date-badge">Yesterday — 9 Jun 2026</span>
+        ${chip('total leads',summary.totalLeads)}${chip('counselors',summary.totalL1s)}
+      </div>
+    </div>
+    ${buildLeadTable(tableData,allStages,'l1Name')}
+  </section>`;
+}
+
+function buildLeadStageRange() {
+  const {tableData,allStages,summary} = DATA.leadStageRange;
+  return `<section class="section-card" id="s3">
+    <div class="section-header">
+      <div><div class="section-title">Lead Stage — Counsellor L1 Wise</div><div class="section-sub">Extended range breakdown per counselor</div></div>
+      <div class="section-header-right">
+        <span class="date-badge">15 May – 9 Jun 2026</span>
+        ${chip('total leads',summary.totalLeads)}${chip('counselors',summary.totalL1s)}
+      </div>
+    </div>
+    ${buildLeadTable(tableData,allStages,'l1Name')}
+  </section>`;
+}
+
+function buildLeadStageDate() {
+  const {tableData,allStages,summary} = DATA.leadStageDate;
+  return `<section class="section-card" id="s4">
+    <div class="section-header">
+      <div><div class="section-title">Lead Stage — Date Wise</div><div class="section-sub">Daily stage breakdown for last 7 days</div></div>
+      <div class="section-header-right">
+        <span class="date-badge">3 Jun – 9 Jun 2026</span>
+        ${chip('total leads',summary.totalLeads)}
+      </div>
+    </div>
+    ${buildLeadTable(tableData,allStages,'createdAt')}
+  </section>`;
+}
+
+// ---- FUNNEL TABLE ----
+function buildFunnelTable(tableData) {
+  const cols = ['campaign','Leads','ICC','LIS','LIC','App','Pre NI','ICC %','ICC 2 LIS %','LIS 2 LIC %','LIC 2 App %','Pre NI %'];
+  const rows = tableData.filter(r=>r.campaign!=='Grand Total');
+  const grand = tableData.find(r=>r.campaign==='Grand Total');
+  const pctCols = new Set(['ICC %','ICC 2 LIS %','LIS 2 LIC %','LIC 2 App %','Pre NI %']);
+  const numericBadge = (col, val) => {
+    if (!pctCols.has(col)) return val??'—';
+    const n = parseFloat(val);
+    if (isNaN(n)) return val;
+    const cls = n >= 50 ? 'badge-green' : n >= 20 ? 'badge-orange' : n > 0 ? 'badge-blue' : 'badge-red';
+    return `<span class="badge ${cls}">${val}</span>`;
+  };
+  return `<div class="table-wrap"><table>
+    <thead><tr>${cols.map((c,i)=>`<th${i===0?' class="left"':''}>${c}</th>`).join('')}</tr></thead>
+    <tbody>
+    ${rows.map(r=>`<tr>${cols.map((c,i)=>`<td${i===0?' class="left"':''}>${numericBadge(c,r[c])}</td>`).join('')}</tr>`).join('')}
+    ${grand?`<tr class="grand-total">${cols.map((c,i)=>`<td${i===0?' class="left"':''}>${numericBadge(c,grand[c])}</td>`).join('')}</tr>`:''}
+    </tbody>
+  </table></div>`;
+}
+
+function buildFunnelRange() {
+  const {tableData,summary} = DATA.funnelRange;
+  return `<section class="section-card" id="s5">
+    <div class="section-header">
+      <div><div class="section-title">Campaign Wise Funnel Report</div><div class="section-sub">Lead-to-application funnel by campaign</div></div>
+      <div class="section-header-right">
+        <span class="date-badge">15 May – 9 Jun 2026</span>
+        ${chip('total leads',summary.totalLeads)}${chip('campaigns',summary.totalRecords-1)}
+      </div>
+    </div>
+    ${buildFunnelTable(tableData)}
+  </section>`;
+}
+
+function buildFunnelMTD() {
+  const {tableData,summary} = DATA.funnelMTD;
+  return `<section class="section-card" id="s6">
+    <div class="section-header">
+      <div><div class="section-title">Campaign Wise Funnel Report</div><div class="section-sub">June — Month to Date</div></div>
+      <div class="section-header-right">
+        <span class="date-badge">MTD — Jun 2026</span>
+        ${chip('total leads',summary.totalLeads)}${chip('campaigns',summary.totalRecords-1)}
+      </div>
+    </div>
+    ${buildFunnelTable(tableData)}
+  </section>`;
+}
+
+// ---- APPOINTMENT ----
+function buildAppointment() {
+  const {tableData,summary} = DATA.appointment;
+
+  // group by supervisor
+  const grouped = {};
+  tableData.forEach(r => {
+    if (!grouped[r.supervisor]) grouped[r.supervisor] = [];
+    grouped[r.supervisor].push(r);
+  });
+
+  const completionBadge = (n, total) => {
+    if (!total) return '—';
+    const pct = (n/total*100);
+    const cls = pct >= 70 ? 'badge-green' : pct >= 30 ? 'badge-orange' : 'badge-red';
+    return `<span class="badge ${cls}">${n}</span>`;
+  };
+
+  let rows = '';
+  Object.entries(grouped).forEach(([sup, counselors]) => {
+    rows += `<tr class="team-row"><td colspan="7">👤 ${sup.toUpperCase()} TEAM</td></tr>`;
+    counselors.forEach(r => {
+      rows += `<tr>
+        <td class="left">${r.counselor}</td>
+        <td>${r.totalAppointments}</td>
+        <td>${completionBadge(r.completed, r.totalAppointments)}</td>
+        <td>${r.missed > 0 ? `<span class="badge badge-red">${r.missed}</span>` : r.missed}</td>
+        <td>${r.upcoming}</td>
+        <td>${r.notAttended > 0 ? `<span class="badge badge-pink">${r.notAttended}</span>` : r.notAttended}</td>
+        <td>${r.totalAppointments ? ((r.completed/r.totalAppointments)*100).toFixed(0)+'%' : '—'}</td>
+      </tr>`;
+    });
+  });
+
+  // grand total row
+  const totals = tableData.reduce((acc,r) => {
+    acc.total += r.totalAppointments;
+    acc.completed += r.completed;
+    acc.missed += r.missed;
+    acc.upcoming += r.upcoming;
+    acc.notAttended += r.notAttended;
+    return acc;
+  }, {total:0,completed:0,missed:0,upcoming:0,notAttended:0});
+
+  rows += `<tr class="grand-total">
+    <td class="left">Grand Total</td>
+    <td>${totals.total}</td>
+    <td>${totals.completed}</td>
+    <td>${totals.missed}</td>
+    <td>${totals.upcoming}</td>
+    <td>${totals.notAttended}</td>
+    <td>${totals.total ? ((totals.completed/totals.total)*100).toFixed(0)+'%' : '—'}</td>
+  </tr>`;
+
+  return `<section class="section-card" id="s7">
+    <div class="section-header">
+      <div><div class="section-title">Appointment Status Report — L1 Wise</div><div class="section-sub">MTD appointment funnel breakdown per counselor</div></div>
+      <div class="section-header-right">
+        <span class="date-badge">MTD — Jun 2026</span>
+        ${chip('total appts', summary.totalAppointments)}
+        <span class="meeting-chip">First meetings today: <strong>${summary.studentsWithFirstMeetingToday}</strong></span>
+        ${chip('unique students', summary.uniqueStudentsInReport)}
+      </div>
+    </div>
+    <div class="table-wrap"><table>
+      <thead><tr>
+        <th class="left">Counselor</th>
+        <th>Total</th>
+        <th>Completed</th>
+        <th>Missed</th>
+        <th>Upcoming</th>
+        <th>Not Attended</th>
+        <th>Completion %</th>
+      </tr></thead>
+      <tbody>${rows}</tbody>
+    </table></div>
+  </section>`;
+}
+
+// ---- RENDER ----
+function render() {
+  const now = new Date();
+  document.getElementById('today-date').textContent = now.toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric',timeZone:'Asia/Kolkata'});
+  const hh = String(now.getHours()).padStart(2,'0');
+  const mm = String(now.getMinutes()).padStart(2,'0');
+  document.getElementById('gen-time').textContent = `Generated at ${hh}:${mm} IST`;
+  document.getElementById('main-content').innerHTML = [
+    buildProductivity(),
+    buildLeadStageYesterday(),
+    buildLeadStageRange(),
+    buildLeadStageDate(),
+    buildFunnelRange(),
+    buildFunnelMTD(),
+    buildAppointment()
+  ].join('');
+}
+render();
+
+// Sidebar active tracking
+const navItems = document.querySelectorAll('.nav-item');
+const observer = new IntersectionObserver(entries => {
+  entries.forEach(e => {
+    if (e.isIntersecting) {
+      navItems.forEach(n => n.classList.remove('active'));
+      const a = document.querySelector(`.nav-item[href="#${e.target.id}"]`);
+      if (a) a.classList.add('active');
+    }
+  });
+}, { threshold: 0.25 });
+setTimeout(()=>{ document.querySelectorAll('section.section-card').forEach(s=>observer.observe(s)); }, 200);
+</script>
+</body>
+</html>

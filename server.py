@@ -77,13 +77,14 @@ def _lms_yesterday():
 
 
 SCHEDULE = [
-    (4,  30, "generate_all_recon_reports.py", "Recon — Yesterday (full day)",               _yesterday_full),
-    (4,  35, "generate_all_recon_reports.py", "Recon — Today (midnight → 10 AM)",           _today_cutoff_10am),
-    (4,  30, "generate_all_lms_reports.py",   "LMS Reports — Morning (yesterday IST)",      _lms_yesterday),
-    (6,  30, "generate_all_recon_reports.py", "Recon — Today (midnight → 12 PM)",           _today_cutoff_12pm),
-    (10, 30, "generate_all_recon_reports.py", "Recon — Today (midnight → 4 PM cumulative)", _today_midnight_to_4pm),
-    (13, 30, "generate_all_recon_reports.py", "Recon — Today (midnight → 7 PM cumulative)", _today_midnight_to_7pm),
-    (15, 0,  "generate_all_lms_reports.py",   "LMS Reports (Online + Regular)",             None),
+    (4,  30, "generate_all_recon_reports.py",  "Recon — Yesterday (full day)",               _yesterday_full),
+    (4,  35, "generate_all_recon_reports.py",  "Recon — Today (midnight → 10 AM)",           _today_cutoff_10am),
+    (4,  30, "generate_all_lms_reports.py",    "LMS Reports — Morning (yesterday IST)",      _lms_yesterday),
+    (4,  30, "bhugoal_generate_report.py",     "Bhugoal Daily Report — 10 AM IST",           None),
+    (6,  30, "generate_all_recon_reports.py",  "Recon — Today (midnight → 12 PM)",           _today_cutoff_12pm),
+    (10, 30, "generate_all_recon_reports.py",  "Recon — Today (midnight → 4 PM cumulative)", _today_midnight_to_4pm),
+    (13, 30, "generate_all_recon_reports.py",  "Recon — Today (midnight → 7 PM cumulative)", _today_midnight_to_7pm),
+    (15, 0,  "generate_all_lms_reports.py",    "LMS Reports (Online + Regular)",             None),
 ]
 
 
@@ -184,12 +185,14 @@ def main():
         "WHATSAPP_GROUP_REGULAR_LMS":   _SMOKE_GROUP,
         "WHATSAPP_GROUP_DAILY_UPDATES": _SMOKE_GROUP,
         "WHATSAPP_GROUP":               _SMOKE_GROUP,
+        "WHATSAPP_GROUP_BHUGOAL":       _SMOKE_GROUP,
     }
     print("=" * 70, flush=True)
     print(f"  🔍 DEPLOY SMOKE TEST — Sending reports to admin group only ({_SMOKE_GROUP})...", flush=True)
     print("=" * 70, flush=True)
-    run_script("generate_all_lms_reports.py",    "SMOKE TEST — LMS Reports (admin group only)",         None,              extra_env=_smoke_env)
-    run_script("generate_all_recon_reports.py",  "SMOKE TEST — Recon Report (yesterday full day)",      _yesterday_full,   extra_env=_smoke_env)
+    run_script("generate_all_lms_reports.py",    "SMOKE TEST — LMS Reports (admin group only)",          None,            extra_env=_smoke_env)
+    run_script("generate_all_recon_reports.py",  "SMOKE TEST — Recon Report (yesterday full day)",       _yesterday_full, extra_env=_smoke_env)
+    run_script("bhugoal_generate_report.py",     "SMOKE TEST — Bhugoal Daily Report (admin group only)", None,            extra_env=_smoke_env)
     print("=" * 70, flush=True)
     print("  SMOKE TEST COMPLETE — Admin group notified. Scheduler is live.\n", flush=True)
 
