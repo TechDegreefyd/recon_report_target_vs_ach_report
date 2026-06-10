@@ -58,13 +58,37 @@ os.makedirs(LOCAL_FALLBACK_DIR, exist_ok=True)
 
 # ─── WHAPI ──────────────────────────────────────────────────────────────────────
 WHAPI_TOKEN = os.getenv('WHAPI_TOKEN')
-# Group mapping:
-#   WHATSAPP_GROUP_ONLINE   → Online LMS reports (Overview + Colleges)
-#   WHATSAPP_GROUP_REGULAR  → Regular LMS reports (Admissions + Forms)
-#   WHATSAPP_GROUP_DAILY    → Amity YoY reports (Forms YoY + Adm YoY)
-WHATSAPP_GROUP_ONLINE  = [g.strip() for g in os.getenv('WHATSAPP_GROUP_ONLINE_LMS',     os.getenv('WHATSAPP_GROUP', '120363426619711887@g.us')).split(',') if g.strip()]
-WHATSAPP_GROUP_REGULAR = [g.strip() for g in os.getenv('WHATSAPP_GROUP_REGULAR_LMS',    os.getenv('WHATSAPP_GROUP', '120363426619711887@g.us')).split(',') if g.strip()]
-WHATSAPP_GROUP_DAILY   = [g.strip() for g in os.getenv('WHATSAPP_GROUP_DAILY_UPDATES',  os.getenv('WHATSAPP_GROUP', '120363426619711887@g.us')).split(',') if g.strip()]
+
+# ── Named groups — IDs are read from .env (comma-separated = multiple groups, auto-picked up)
+_fallback = os.getenv('WHATSAPP_GROUP', '120363426619711887@g.us')
+def _gids(env_key): return [g.strip() for g in os.getenv(env_key, _fallback).split(',') if g.strip()]
+
+GROUPS = {
+    # Add/remove IDs in .env under the matching key — no code change needed
+    'Online LOB Reports':    ['120363424062745706@g.us'],       # Online LOB Reports only (MoM etc.)
+    'Online Admission Team': _gids('WHATSAPP_GROUP_ONLINE_LMS'),# Online LOB Reports + Online Admission Team
+    'Leadership_Regular':    _gids('WHATSAPP_GROUP_REGULAR_LMS'),
+    'Daily Updates':         _gids('WHATSAPP_GROUP_DAILY_UPDATES'),
+    # All Reports — receives every report regardless of caption mapping below
+    # Set WHATSAPP_GROUP_ALL_REPORTS in .env to enable; leave unset to skip
+    'All Reports':           _gids('WHATSAPP_GROUP_ALL_REPORTS') if os.getenv('WHATSAPP_GROUP_ALL_REPORTS') else [],
+}
+
+# ── Caption → Group name — edit here to control which group each report goes to
+# Every report also goes to 'All Reports' group automatically (if configured above)
+CAPTION_GROUP_MAP = {
+    'Owner wise Achievement Report - Online Business':       'Online LOB Reports',
+    'Target VS Ach':                                         'Online Admission Team',
+    'Online LOB - University wise Forms & Adm':              'Online LOB Reports',
+    'Counsellor Targets vs Achievements — Fee & Admissions': 'Online Admission Team',
+    'Admission and Application Ageing Report':               ['Online Admission Team', 'Online LOB Reports'],
+    'Till Date Supervisor Month on Month':                   'Online LOB Reports',
+    'Till Date University Month on Month':                   'Online LOB Reports',
+    'Admission Target vs Achieved':                          'Leadership_Regular',
+    'Form Target vs Achieved':                               'Leadership_Regular',
+    'Amity Total Forms - Campus YoY':                        'Daily Updates',
+    'Amity Admissions - Campus YoY':                         'Daily Updates',
+}
 
 # ─── DATE LOGIC (IST, before 6AM = previous day) ────────────────────────────────
 # Override with REPORT_DATE=YYYY-MM-DD env var to run for a specific date
@@ -2293,6 +2317,7 @@ async def main():
 
     # ── STEP 3: Send Screenshots via WhatsApp ─────────────────────────────
     print("─── STEP 3/3: Sending Screenshots to WhatsApp + Logging ────────────")
+    # Caption for each report file — edit CAPTION_GROUP_MAP (top of file) to change routing
     _tab_labels = {
         'Online_LMS_Overview':         'Owner wise Achievement Report - Online Business',
         'Online_LMS_Fee_Collected':    'Target VS Ach',
@@ -2306,20 +2331,23 @@ async def main():
         'Regular_LMS_Amity_Forms': 'Amity Total Forms - Campus YoY',
         'Regular_LMS_Amity_Adm':   'Amity Admissions - Campus YoY',
     }
-    # Route each report key to its target WhatsApp group
-    _group_map = {
-        'Online_LMS_Overview':         WHATSAPP_GROUP_ONLINE,
-        'Online_LMS_Fee_Collected':    WHATSAPP_GROUP_ONLINE,
-        'Online_LMS_Colleges':         WHATSAPP_GROUP_ONLINE,
-        'Online_LMS_Counsellor_TVA':   WHATSAPP_GROUP_ONLINE,
-        'Online_LMS_Last_Activity':    WHATSAPP_GROUP_ONLINE,
-        'Online_LMS_Supervisor_MoM':   ['120363424062745706@g.us'],
-        'Online_LMS_University_MoM':   ['120363424062745706@g.us'],
-        'Regular_LMS_Admissions':  WHATSAPP_GROUP_REGULAR,
-        'Regular_LMS_Forms':       WHATSAPP_GROUP_REGULAR,
-        'Regular_LMS_Amity_Forms': WHATSAPP_GROUP_DAILY,
-        'Regular_LMS_Amity_Adm':   WHATSAPP_GROUP_DAILY,
-    }
+
+    def _resolve_groups(caption):
+        """Return deduped list of group IDs: specific group(s) + All Reports (if configured).
+        CAPTION_GROUP_MAP value can be a single group name (str) or a list of group names.
+        """
+        for prefix, group_val in CAPTION_GROUP_MAP.items():
+            if caption.startswith(prefix):
+                names = group_val if isinstance(group_val, list) else [group_val]
+                specific = []
+                for name in names:
+                    specific += GROUPS.get(name, [])
+                break
+        else:
+            specific = GROUPS['Online Admission Team']
+        all_reports = GROUPS.get('All Reports', [])
+        return list(dict.fromkeys(specific + all_reports))  # dedup, preserve order
+
     all_pngs = online_pngs + regular_pngs
     whapi_results = {}
     if LOCAL_MODE:
@@ -2332,7 +2360,7 @@ async def main():
             base = os.path.basename(png_path)
             key = '_'.join(base.replace('.png', '').split('_')[:-2])
             cap = _tab_labels.get(key, base)
-            group_ids = _group_map.get(key, WHATSAPP_GROUP_ONLINE)
+            group_ids = _resolve_groups(cap)
             sent = all(send_via_whapi(png_path, f"{cap} — {FTD_DATE}", group_id=gid) for gid in group_ids)
             whapi_results[key] = sent
 
