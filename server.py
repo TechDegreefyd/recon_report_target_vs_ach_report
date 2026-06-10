@@ -181,6 +181,7 @@ def main():
     _SMOKE_GROUP = "120363426619711887@g.us"
     _smoke_env = {
         **os.environ,
+        "WHATSAPP_GROUP_ONLINE_LOB":     _SMOKE_GROUP,
         "WHATSAPP_GROUP_ONLINE_LMS":    _SMOKE_GROUP,
         "WHATSAPP_GROUP_REGULAR_LMS":   _SMOKE_GROUP,
         "WHATSAPP_GROUP_DAILY_UPDATES": _SMOKE_GROUP,

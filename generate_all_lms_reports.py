@@ -65,7 +65,7 @@ def _gids(env_key): return [g.strip() for g in os.getenv(env_key, _fallback).spl
 
 GROUPS = {
     # Add/remove IDs in .env under the matching key — no code change needed
-    'Online LOB Reports':    ['120363424062745706@g.us'],       # Online LOB Reports only (MoM etc.)
+    'Online LOB Reports':    _gids('WHATSAPP_GROUP_ONLINE_LOB'),  # Online LOB Reports only (MoM etc.)
     'Online Admission Team': _gids('WHATSAPP_GROUP_ONLINE_LMS'),# Online LOB Reports + Online Admission Team
     'Leadership_Regular':    _gids('WHATSAPP_GROUP_REGULAR_LMS'),
     'Daily Updates':         _gids('WHATSAPP_GROUP_DAILY_UPDATES'),
