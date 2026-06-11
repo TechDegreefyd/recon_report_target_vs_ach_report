@@ -195,14 +195,22 @@ async def online_get_data():
                    if couns_data_all else pd.DataFrame(columns=['supervisor_name', 'counsellor_name'])
 
     # Supplement with counsellors that have a target in the sheet but are missing from DB
-    db_couns_set = set(df_couns['counsellor_name'].tolist())
+    db_couns_set     = set(df_couns['counsellor_name'].tolist())
+    db_couns_all_set = set(df_couns_all['counsellor_name'].tolist())
     extra = []
+    extra_all = []
     for couns, sup in ONLINE_COUNSELLOR_SUP_MAP.items():
         sup = _SUP_ALIAS.get(sup, sup)
-        if couns not in db_couns_set and sup in tracked_supervisors and couns in has_target:
+        if sup not in tracked_supervisors:
+            continue
+        if couns not in db_couns_set and couns in has_target:
             extra.append({'supervisor_name': sup, 'counsellor_name': couns})
+        if couns not in db_couns_all_set:
+            extra_all.append({'supervisor_name': sup, 'counsellor_name': couns})
     if extra:
         df_couns = pd.concat([df_couns, pd.DataFrame(extra)], ignore_index=True)
+    if extra_all:
+        df_couns_all = pd.concat([df_couns_all, pd.DataFrame(extra_all)], ignore_index=True)
 
     YTD_START  = '2025-01-01'
     MTD_START_ = MTD_START
