@@ -16,6 +16,7 @@ import os
 import sys
 import shutil
 import requests
+import pandas as pd
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from dotenv import load_dotenv
@@ -63,6 +64,33 @@ _APPOINTMENT          = os.getenv('BHUGOAL_API_APPOINTMENT_FUNNEL_REPORT')
 WHAPI_TOKEN    = os.getenv('WHAPI_TOKEN')
 BHUGOAL_GROUP  = os.getenv('WHATSAPP_GROUP_BHUGOAL')
 
+# ─── FRESH LEADS AGING CONFIG ────────────────────────────────────────────────
+# Column that is blank for uncontacted / fresh leads
+_AGING_STATUS_COL   = 'Lead Status'
+_AGING_COUNSELOR    = 'L1 Counsellor Name'
+_AGING_CREATED_COL  = 'Registration Date'
+_AGING_DOWNLOAD_URL = (
+    'https://api-v2-sales.bhugoal.ai/api/bhugoalUser/auth/download-users'
+    '?tab=dashboard&type=total'
+)
+
+# ─── ACTIVE COUNSELLOR REMARKS CONFIG ────────────────────────────────────────
+_ACTIVE_STATUSES = {
+    'Counselling yet to be done',
+    'Initial Counseling Completed',
+    'Loan Processing',
+    'Meeting Attended',
+    'Meeting Not Attended',
+    'Meeting Scheduled',
+}
+_REMARKS_COL     = 'Total Remarks'   # column holding remark count per lead
+_REMARKS_BUCKETS = [
+    ('1-2',  1,  2),
+    ('3-5',  3,  5),
+    ('6-7',  6,  7),
+    ('7+',   8,  None),
+]
+
 # ─── OUTPUT PATHS ────────────────────────────────────────────────────────────
 OUTPUT_DIR      = _SCRIPT_DIR / 'Automation Cron Job' / 'Target Report'
 SCREENSHOT_DIR  = OUTPUT_DIR / 'bhugoal_screenshots'
@@ -99,6 +127,248 @@ def _paged(sub_tab, from_date, to_date):
         "startDate": from_date, "endDate": to_date,
     }
 
+# ─── FRESH LEADS AGING ───────────────────────────────────────────────────────
+_AGING_EMPTY = {"counselors": [], "rows": [], "totalFresh": 0, "asOf": ""}
+
+def _parse_download_response(r):
+    """Try to parse an API response as Excel, then CSV, then JSON. Returns a DataFrame."""
+    import io
+    ct = r.headers.get('Content-Type', '')
+
+    # ── Excel (binary) ───────────────────────────────────────────────────────
+    if 'spreadsheet' in ct or 'excel' in ct or 'octet-stream' in ct or r.content[:4] == b'PK\x03\x04':
+        print(f"  [Aging API] Detected Excel binary ({ct})")
+        return pd.read_excel(io.BytesIO(r.content))
+
+    # ── CSV ──────────────────────────────────────────────────────────────────
+    text = r.text.strip()
+    if 'csv' in ct or (text and ',' in text.splitlines()[0] and not text.startswith('{')):
+        print(f"  [Aging API] Detected CSV ({ct})")
+        return pd.read_csv(io.StringIO(text))
+
+    # ── JSON ─────────────────────────────────────────────────────────────────
+    payload = r.json()
+    if isinstance(payload, list):
+        return pd.DataFrame(payload)
+    for key in ('data', 'users', 'leads', 'result'):
+        if key in payload and isinstance(payload[key], list):
+            return pd.DataFrame(payload[key])
+    raise ValueError(f"Unknown JSON shape — keys: {list(payload.keys()) if isinstance(payload, dict) else type(payload)}")
+
+
+def fetch_fresh_leads_aging(token):
+    """Download all leads and return a pivot of fresh-lead ages × counselors."""
+    headers = {'Authorization': f'Bearer {token}'}
+    r = requests.get(_AGING_DOWNLOAD_URL, headers=headers, timeout=60)
+
+    print(f"  [Aging API] status={r.status_code}  content-type={r.headers.get('Content-Type','?')}  size={len(r.content)} bytes")
+
+    if not r.ok:
+        print(f"  [Aging API] HTTP error: {r.text[:300]}")
+        return _AGING_EMPTY
+
+    try:
+        df = _parse_download_response(r)
+    except Exception as e:
+        print(f"  [Aging API] Could not parse response: {e}")
+        return _AGING_EMPTY
+
+    print(f"  [Aging API] {len(df)} rows loaded. Columns: {list(df.columns)}")
+
+    if df.empty:
+        print("  [Aging API] Empty dataframe — skipping.")
+        return _AGING_EMPTY
+
+    if _AGING_STATUS_COL not in df.columns:
+        print(f"  [WARN] Column '{_AGING_STATUS_COL}' not found. Available: {list(df.columns)}")
+        return _AGING_EMPTY
+
+    # Fresh leads = Lead Status is blank
+    fresh = df[df[_AGING_STATUS_COL].isna() | (df[_AGING_STATUS_COL].astype(str).str.strip() == '')].copy()
+
+    # Date format from API: "11/06/2026, 04:41 PM"  (DD/MM/YYYY, HH:MM AM/PM)
+    fresh[_AGING_CREATED_COL] = pd.to_datetime(
+        fresh[_AGING_CREATED_COL], format='%d/%m/%Y, %I:%M %p', errors='coerce'
+    )
+    cutoff = pd.to_datetime(RANGE_FROM)
+    fresh = fresh[fresh[_AGING_CREATED_COL] >= cutoff]
+
+    print(f"  Fresh leads : {len(fresh)}  (blank Lead Status, registered >= {RANGE_FROM})")
+
+    if fresh.empty:
+        print("  [Aging] No fresh leads found.")
+        return _AGING_EMPTY
+
+    if _AGING_CREATED_COL not in fresh.columns:
+        print(f"  [WARN] Created-date column '{_AGING_CREATED_COL}' not found. Available: {list(fresh.columns)}")
+        return _AGING_EMPTY
+
+    now_naive = _now.replace(tzinfo=None)
+    def _age(val):
+        if pd.isna(val):
+            return None
+        try:
+            dt = val if isinstance(val, pd.Timestamp) else pd.to_datetime(val)
+            return max(0, (now_naive - dt.replace(tzinfo=None)).days)
+        except Exception:
+            return None
+
+    fresh['_age'] = fresh[_AGING_CREATED_COL].apply(_age)
+    fresh = fresh[fresh['_age'].notna()]
+    fresh['_age'] = fresh['_age'].astype(int)
+
+    if _AGING_COUNSELOR not in fresh.columns:
+        fresh['_counselor'] = 'Unassigned'
+    else:
+        fresh['_counselor'] = fresh[_AGING_COUNSELOR].fillna('Unassigned').astype(str).str.strip()
+
+    pivot = fresh.pivot_table(
+        index='_age', columns='_counselor',
+        values=_AGING_CREATED_COL, aggfunc='count', fill_value=0,
+    )
+    pivot = pivot.sort_index(ascending=False)
+    pivot['Grand Total'] = pivot.sum(axis=1)
+    counselors = [c for c in pivot.columns if c != 'Grand Total']
+
+    rows = []
+    for age_days, row in pivot.iterrows():
+        label = f'{age_days} Day' if age_days == 0 else f'{age_days} Days'
+        entry = {'age': label}
+        for c in counselors:
+            entry[c] = int(row.get(c, 0))
+        entry['Grand Total'] = int(row['Grand Total'])
+        rows.append(entry)
+
+    # totals row
+    totals = {'age': 'Total'}
+    for c in counselors:
+        totals[c] = int(pivot[c].sum())
+    totals['Grand Total'] = int(pivot['Grand Total'].sum())
+    rows.append(totals)
+
+    return {
+        "counselors": counselors,
+        "rows": rows,
+        "totalFresh": int(totals['Grand Total']),
+        "asOf": _now.strftime('%d %b %Y, %I:%M %p IST'),
+    }
+
+# ─── ACTIVE COUNSELLOR REMARKS ───────────────────────────────────────────────
+_ACTIVE_EMPTY = {"buckets": [], "rows": [], "totalActive": 0, "asOf": ""}
+
+def fetch_active_counsellor_remarks(token, df_cache=None):
+    """Pivot of counselor × remarks bucket (active leads) + Fresh Leads + Not Interested + Grand Total."""
+    if df_cache is None:
+        headers = {'Authorization': f'Bearer {token}'}
+        r = requests.get(_AGING_DOWNLOAD_URL, headers=headers, timeout=60)
+        print(f"  [Active API] status={r.status_code}  content-type={r.headers.get('Content-Type','?')}  size={len(r.content)} bytes")
+        if not r.ok:
+            print(f"  [Active API] HTTP error: {r.text[:300]}")
+            return _ACTIVE_EMPTY
+        try:
+            df = _parse_download_response(r)
+        except Exception as e:
+            print(f"  [Active API] Could not parse response: {e}")
+            return _ACTIVE_EMPTY
+    else:
+        df = df_cache
+
+    print(f"  [Active API] {len(df)} rows.")
+
+    if _AGING_STATUS_COL not in df.columns:
+        print(f"  [WARN] '{_AGING_STATUS_COL}' not found.")
+        return _ACTIVE_EMPTY
+
+    # Filter by registration date >= RANGE_FROM (same cutoff as fresh leads aging)
+    df[_AGING_CREATED_COL] = pd.to_datetime(
+        df[_AGING_CREATED_COL], format='%d/%m/%Y, %I:%M %p', errors='coerce'
+    )
+    cutoff = pd.to_datetime(RANGE_FROM)
+    df = df[df[_AGING_CREATED_COL] >= cutoff].copy()
+    print(f"  [Active API] {len(df)} rows after >= {RANGE_FROM} filter.")
+
+    status_col = df[_AGING_STATUS_COL].astype(str).str.strip()
+
+    # Segment the full dataset by counselor
+    if _AGING_COUNSELOR not in df.columns:
+        df['_counselor'] = 'Unassigned'
+    else:
+        df['_counselor'] = df[_AGING_COUNSELOR].fillna('Unassigned').astype(str).str.strip()
+
+    # Fresh leads = blank Lead Status
+    fresh_mask = df[_AGING_STATUS_COL].isna() | (status_col == '') | (status_col == 'nan')
+    fresh_counts = df[fresh_mask].groupby('_counselor').size().rename('Fresh Leads')
+
+    # Not Interested
+    ni_counts = df[status_col == 'Not Interested'].groupby('_counselor').size().rename('Not Interested')
+
+    # Active = Lead Status in the active set
+    active = df[status_col.isin(_ACTIVE_STATUSES)].copy()
+    print(f"  Active leads: {len(active)}  |  Fresh: {fresh_mask.sum()}  |  Not Interested: {(status_col == 'Not Interested').sum()}")
+
+    if active.empty:
+        return _ACTIVE_EMPTY
+
+    if _REMARKS_COL not in active.columns:
+        print(f"  [WARN] Remarks column '{_REMARKS_COL}' not found. Available: {list(active.columns)}")
+        return _ACTIVE_EMPTY
+
+    active['_remarks'] = pd.to_numeric(active[_REMARKS_COL], errors='coerce').fillna(0).astype(int)
+
+    def _bucket(n):
+        for label, lo, hi in _REMARKS_BUCKETS:
+            if hi is None:
+                if n >= lo:
+                    return label
+            elif lo <= n <= hi:
+                return label
+        return '1-2'
+
+    active['_bucket'] = active['_remarks'].apply(_bucket)
+
+    bucket_labels = [b[0] for b in _REMARKS_BUCKETS]
+
+    pivot = (
+        active.groupby(['_counselor', '_bucket'])
+        .size()
+        .unstack(fill_value=0)
+        .reindex(columns=bucket_labels, fill_value=0)
+    )
+    pivot['Active Total'] = pivot.sum(axis=1)
+
+    # Merge fresh + not-interested counts into the pivot
+    pivot = pivot.join(fresh_counts, how='outer').join(ni_counts, how='outer').fillna(0)
+    for col in bucket_labels + ['Active Total', 'Fresh Leads', 'Not Interested']:
+        pivot[col] = pivot[col].astype(int)
+
+    pivot['Grand Total'] = pivot['Active Total'] + pivot['Fresh Leads'] + pivot['Not Interested']
+    pivot = pivot.sort_index()
+
+    rows = []
+    all_cols = bucket_labels + ['Active Total', 'Fresh Leads', 'Not Interested', 'Grand Total']
+    for counselor, row in pivot.iterrows():
+        entry = {'counselor': counselor}
+        for col in all_cols:
+            entry[col] = int(row.get(col, 0))
+        rows.append(entry)
+
+    # Grand Total row
+    totals = {'counselor': 'Grand Total'}
+    for col in all_cols:
+        totals[col] = int(pivot[col].sum())
+    rows.append(totals)
+
+    return {
+        "buckets": bucket_labels,
+        "rows": rows,
+        "totalActive": int(pivot['Active Total'].sum()),
+        "totalFresh": int(pivot['Fresh Leads'].sum()),
+        "totalNI": int(pivot['Not Interested'].sum()),
+        "grandTotal": int(pivot['Grand Total'].sum()),
+        "asOf": _now.strftime('%d %b %Y, %I:%M %p IST'),
+    }
+
+
 # ─── FETCH ALL ───────────────────────────────────────────────────────────────
 def fetch_all_data():
     print("  Logging in to get auth token...")
@@ -128,6 +398,20 @@ def fetch_all_data():
 
     print("  Fetching Appointment Status — MTD...")
     appointment = _fetch(_APPOINTMENT, _paged("appointment_status", MTD_FROM, YESTERDAY))
+
+    print("  Fetching Fresh Leads Aging Report...")
+    try:
+        fresh_leads_aging = fetch_fresh_leads_aging(token)
+    except Exception as e:
+        print(f"  [WARN] Fresh leads aging failed: {e}")
+        fresh_leads_aging = _AGING_EMPTY
+
+    print("  Fetching Active Counsellor Remarks Report...")
+    try:
+        active_counsellor_remarks = fetch_active_counsellor_remarks(token)
+    except Exception as e:
+        print(f"  [WARN] Active counsellor remarks failed: {e}")
+        active_counsellor_remarks = _ACTIVE_EMPTY
 
     return {
         "dates": DATES,
@@ -164,6 +448,8 @@ def fetch_all_data():
             "tableData": appointment["data"]["tableData"],
             "summary":   appointment["summary"],
         },
+        "freshLeadsAging": fresh_leads_aging,
+        "activeCounsellorRemarks": active_counsellor_remarks,
     }
 
 # ─── GENERATE HTML ───────────────────────────────────────────────────────────
@@ -183,6 +469,8 @@ SECTION_LABELS = [
     ("s5", "YTD Campaign Wise Lead Funnel"),
     ("s6", "MTD Campaign Wise Lead Funnel"),
     ("s7", "MTD - Appointment Current Status Report"),
+    ("s8", "Fresh Leads Aging Report"),
+    ("s9", "Active Counsellor Remarks Report"),
 ]
 
 def screenshot_sections(html_path):

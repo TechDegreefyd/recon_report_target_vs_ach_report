@@ -214,6 +214,8 @@
     <a class="nav-item" href="#s5"><span class="nav-num">5</span>Funnel — 15 May Range</a>
     <a class="nav-item" href="#s6"><span class="nav-num">6</span>Funnel — MTD</a>
     <a class="nav-item" href="#s7"><span class="nav-num">7</span>Appointment Status</a>
+    <a class="nav-item" href="#s8"><span class="nav-num">8</span>Fresh Leads Aging</a>
+    <a class="nav-item" href="#s9"><span class="nav-num">9</span>Active Counsellor Remarks</a>
   </nav>
 
   <main class="main" id="main-content"></main>
@@ -538,6 +540,92 @@ function buildAppointment() {
   </section>`;
 }
 
+// ---- FRESH LEADS AGING ----
+function buildFreshLeadsAging() {
+  const d = DATA.freshLeadsAging;
+  if (!d || !d.rows || !d.rows.length) return emptySection('s8', 'Fresh Leads Aging Report', 'No fresh leads data');
+
+  const counselors = d.counselors || [];
+  const allCols = [...counselors, 'Grand Total'];
+
+  const headerCells = allCols.map(c => `<th>${c}</th>`).join('');
+
+  const bodyRows = d.rows.map(r => {
+    const isTotal = r.age === 'Total';
+    const cells = allCols.map(c => {
+      const v = r[c] ?? 0;
+      if (v === 0 && !isTotal) return `<td style="color:#d1d5db">—</td>`;
+      return `<td>${v}</td>`;
+    }).join('');
+    return `<tr${isTotal ? ' class="grand-total"' : ''}><td class="left">${r.age}</td>${cells}</tr>`;
+  }).join('');
+
+  return `<section class="section-card" id="s8">
+    <div class="section-header">
+      <div>
+        <div class="section-title">Fresh Leads Aging Report</div>
+        <div class="section-sub">Blank Lead Status — breakdown by age &amp; counselor (since 15 May)</div>
+      </div>
+      <div class="section-header-right">
+        <span class="date-badge">As of ${d.asOf}</span>
+        ${chip('fresh leads', d.totalFresh)}
+        ${chip('counselors', counselors.length)}
+      </div>
+    </div>
+    <div class="table-wrap"><table>
+      <thead><tr><th class="left">Lead Age</th>${headerCells}</tr></thead>
+      <tbody>${bodyRows}</tbody>
+    </table></div>
+  </section>`;
+}
+
+function buildActiveCounsellorRemarks() {
+  const d = DATA.activeCounsellorRemarks;
+  if (!d || !d.rows || !d.rows.length) return emptySection('s9', 'Active Counsellor Remarks Report', 'No active leads data');
+
+  const buckets = d.buckets || [];
+  const allCols = [...buckets, 'Active Total', 'Fresh Leads', 'Not Interested', 'Grand Total'];
+
+  const headerCells = allCols.map(c => `<th>${c}</th>`).join('');
+
+  const bodyRows = d.rows.map(r => {
+    const isTotal = r.counselor === 'Grand Total';
+    const cells = allCols.map(c => {
+      const v = r[c] ?? 0;
+      if (v === 0 && !isTotal) return `<td style="color:#d1d5db">—</td>`;
+      return `<td>${v}</td>`;
+    }).join('');
+    return `<tr${isTotal ? ' class="grand-total"' : ''}><td class="left">${r.counselor}</td>${cells}</tr>`;
+  }).join('');
+
+  return `<section class="section-card" id="s9">
+    <div class="section-header">
+      <div>
+        <div class="section-title">Active Counsellor Remarks Report</div>
+        <div class="section-sub">Active leads by remarks bucket + Fresh Leads + Not Interested — since 15 May</div>
+      </div>
+      <div class="section-header-right">
+        <span class="date-badge">As of ${d.asOf}</span>
+        ${chip('active', d.totalActive)}
+        ${chip('fresh', d.totalFresh)}
+        ${chip('not interested', d.totalNI)}
+        ${chip('grand total', d.grandTotal)}
+      </div>
+    </div>
+    <div class="table-wrap"><table>
+      <thead>
+        <tr>
+          <th class="left">Counsellor</th>
+          <th colspan="${buckets.length}" style="text-align:center">Active — Remarks Bucket</th>
+          <th></th><th></th><th></th><th></th>
+        </tr>
+        <tr><th class="left">Name</th>${headerCells}</tr>
+      </thead>
+      <tbody>${bodyRows}</tbody>
+    </table></div>
+  </section>`;
+}
+
 function emptySection(id, title, msg) {
   return `<section class="section-card" id="${id}">
     <div class="section-header"><div><div class="section-title">${title}</div></div></div>
@@ -559,7 +647,9 @@ function render() {
     buildFunnelDateWise(),
     buildFunnelRange(),
     buildFunnelMTD(),
-    buildAppointment()
+    buildAppointment(),
+    buildFreshLeadsAging(),
+    buildActiveCounsellorRemarks()
   ].join('');
 }
 render();
