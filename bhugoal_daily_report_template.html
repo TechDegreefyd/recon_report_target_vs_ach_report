@@ -242,23 +242,36 @@ function chip(label, val) { return `<span class="stat-chip"><strong>${val}</stro
 
 // ---- SECTION 1: Productivity ----
 function buildProductivity() {
-  const d = DATA.productivity;
-  if (!d || !d.length) return emptySection('s1', 'Productivity Report', 'No data');
-  const slots = Object.keys(d[0].timeSlots);
-  const gt = { counselorName:'Grand Total', totalConnectedCalls:0, totalRemarks:0, timeSlots:{} };
-  slots.forEach(s => { gt.timeSlots[s] = {count: d.reduce((a,r)=>a+r.timeSlots[s].count,0)}; });
-  gt.totalConnectedCalls = d.reduce((a,r)=>a+r.totalConnectedCalls,0);
-  gt.totalRemarks = d.reduce((a,r)=>a+r.totalRemarks,0);
-  const gtRate = gt.totalRemarks ? ((gt.totalConnectedCalls/gt.totalRemarks)*100).toFixed(1)+'%' : '0%';
+  const hb = DATA.hourlyBreakdown;
+  const pd = DATA.productivity;
+  if (!hb || !hb.tableData || !hb.tableData.length) return emptySection('s1', 'Productivity Report', 'No data');
 
-  const makeRows = rows => rows.map(r => {
-    const isGrand = r.counselorName === 'Grand Total';
-    return `<tr${isGrand?' class="grand-total"':''}>
-      <td class="left">${r.counselorName}</td>
-      ${slots.map(s=>`<td>${r.timeSlots[s].count||'—'}</td>`).join('')}
-      <td>${r.totalRemarks}</td>
+  const counselors = hb.counselors || [];
+  const rows = hb.tableData;
+  const gt = hb.grandTotals || {};
+
+  // Hourly remarks table (from studentremarks API)
+  const makeHourlyRows = () => rows.map(r => `<tr>
+      <td class="left">${r.hourRange}</td>
+      ${counselors.map(c=>`<td>${r[c]||'—'}</td>`).join('')}
+      <td><strong>${r.total||0}</strong></td>
+    </tr>`).join('') +
+    `<tr class="grand-total">
+      <td class="left">Grand Total</td>
+      ${counselors.map(c=>`<td>${gt[c]||0}</td>`).join('')}
+      <td><strong>${gt.total||0}</strong></td>
     </tr>`;
-  }).join('');
+
+  // Connected calls performance table (from productivity API)
+  const slots = pd && pd.length ? Object.keys(pd[0].timeSlots) : [];
+  const gtP = { totalConnectedCalls:0, totalRemarks:0, timeSlots:{} };
+  if (pd && pd.length) {
+    slots.forEach(s => { gtP.timeSlots[s] = {count: pd.reduce((a,r)=>a+r.timeSlots[s].count,0)}; });
+    gtP.totalConnectedCalls = pd.reduce((a,r)=>a+r.totalConnectedCalls,0);
+    gtP.totalRemarks = pd.reduce((a,r)=>a+r.totalRemarks,0);
+  }
+  const gtRate = gtP.totalRemarks ? ((gtP.totalConnectedCalls/gtP.totalRemarks)*100).toFixed(1)+'%' : '0%';
+  const perfRows = pd ? [...pd, { counselorName:'Grand Total', totalConnectedCalls:gtP.totalConnectedCalls, totalRemarks:gtP.totalRemarks, totalPercentage:gtRate, timeSlots:gtP.timeSlots }] : [];
 
   const makePerfRows = rows => rows.map(r => {
     const cls = rateClass(r.totalPercentage||'0');
@@ -272,27 +285,24 @@ function buildProductivity() {
     </tr>`;
   }).join('');
 
-  const allRows   = [...d, gt];
-  const perfRows  = [...d, { counselorName:'Grand Total', totalConnectedCalls:gt.totalConnectedCalls, totalRemarks:gt.totalRemarks, totalPercentage:gtRate, timeSlots:gt.timeSlots }];
-
   return `<section class="section-card" id="s1">
     <div class="section-header">
-      <div><div class="section-title">Productivity Report</div><div class="section-sub">Connected calls &amp; hourly remark distribution</div></div>
+      <div><div class="section-title">Productivity Report</div><div class="section-sub">Hourly remarks &amp; connected calls performance</div></div>
       <div class="section-header-right">
         <span class="date-badge">Yesterday — ${DATA.dates.yesterday}</span>
-        ${chip('counselors', d.length)}
-        ${chip('total remarks', gt.totalRemarks)}
-        ${chip('connected', gt.totalConnectedCalls)}
+        ${chip('counselors', counselors.length)}
+        ${chip('total remarks', gt.total||0)}
+        ${chip('connected', gtP.totalConnectedCalls)}
       </div>
     </div>
     <div class="sub-label">Remarks analysis — hourly</div>
     <div class="table-wrap"><table>
       <thead><tr>
-        <th class="left">Counselor</th>
-        ${slots.map(s=>`<th title="${s}">${shortSlot(s)}</th>`).join('')}
-        <th>Total Remarks</th>
+        <th class="left">Hour</th>
+        ${counselors.map(c=>`<th>${c}</th>`).join('')}
+        <th>Total</th>
       </tr></thead>
-      <tbody>${makeRows(allRows)}</tbody>
+      <tbody>${makeHourlyRows()}</tbody>
     </table></div>
     <div class="sub-label">Connected calls performance</div>
     <div class="table-wrap"><table>

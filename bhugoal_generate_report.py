@@ -51,10 +51,14 @@ DATES = {
 }
 
 # ─── ENDPOINTS ───────────────────────────────────────────────────────────────
-_PRODUCTIVITY = os.getenv('BHUGOAL_API_PRODUCTIVITY_REPORT')
-_LEAD_STATUS  = os.getenv('BHUGOAL_API_LEAD_STATUS_REPORT')
-_LEAD_FUNNEL  = os.getenv('BHUGOAL_API_LEAD_FUNNEL_REPORT')
-_APPOINTMENT  = os.getenv('BHUGOAL_API_APPOINTMENT_FUNNEL_REPORT')
+_PRODUCTIVITY         = os.getenv('BHUGOAL_API_PRODUCTIVITY_REPORT')
+_STUDENTREMARKS       = os.getenv('BHUGOAL_API_STUDENTREMARKS_REPORT')
+_LOGIN_EMAIL          = os.getenv('BHUGOAL_LOGIN_EMAIL')
+_LOGIN_PASSWORD       = os.getenv('BHUGOAL_LOGIN_PASSWORD')
+_LOGIN_ROLE           = os.getenv('BHUGOAL_LOGIN_ROLE', 'admin')
+_LEAD_STATUS          = os.getenv('BHUGOAL_API_LEAD_STATUS_REPORT')
+_LEAD_FUNNEL          = os.getenv('BHUGOAL_API_LEAD_FUNNEL_REPORT')
+_APPOINTMENT          = os.getenv('BHUGOAL_API_APPOINTMENT_FUNNEL_REPORT')
 
 WHAPI_TOKEN    = os.getenv('WHAPI_TOKEN')
 BHUGOAL_GROUP  = os.getenv('WHATSAPP_GROUP_BHUGOAL')
@@ -69,8 +73,21 @@ OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 SCREENSHOT_DIR.mkdir(parents=True, exist_ok=True)
 
 # ─── API HELPERS ─────────────────────────────────────────────────────────────
-def _fetch(url, params):
-    r = requests.get(url, params=params, timeout=15)
+def get_auth_token():
+    r = requests.post(
+        "https://api-v2-sales.bhugoal.ai/api/bhugoalLmsUser/auth/login",
+        json={"email": _LOGIN_EMAIL, "password": _LOGIN_PASSWORD, "role": _LOGIN_ROLE},
+        timeout=15,
+    )
+    r.raise_for_status()
+    token = r.json().get("token")
+    if not token:
+        raise RuntimeError(f"Login failed: {r.text[:200]}")
+    return token
+
+def _fetch(url, params, token=None):
+    headers = {"Authorization": f"Bearer {token}"} if token else {}
+    r = requests.get(url, params=params, headers=headers, timeout=15)
     r.raise_for_status()
     return r.json()
 
@@ -84,8 +101,15 @@ def _paged(sub_tab, from_date, to_date):
 
 # ─── FETCH ALL ───────────────────────────────────────────────────────────────
 def fetch_all_data():
+    print("  Logging in to get auth token...")
+    token = get_auth_token()
+    print("  Auth token refreshed.\n")
+
     print("  Fetching Productivity Report...")
     productivity = _fetch(_PRODUCTIVITY, {"fromDate": YESTERDAY, "toDate": YESTERDAY})
+
+    print("  Fetching Hourly Remarks Breakdown...")
+    hourly_raw = _fetch(_STUDENTREMARKS, _paged("hourly-breakdown", YESTERDAY, YESTERDAY), token=token)
 
     print("  Fetching Lead Status — Yesterday...")
     ls_yday = _fetch(_LEAD_STATUS, _paged("l1_current_status_l1", YESTERDAY, YESTERDAY))
@@ -108,6 +132,12 @@ def fetch_all_data():
     return {
         "dates": DATES,
         "productivity": productivity.get("data", []),
+        "hourlyBreakdown": {
+            "tableData":   hourly_raw["data"]["tableData"],
+            "counselors":  hourly_raw["data"].get("counselors", []),
+            "grandTotals": hourly_raw["data"].get("grandTotals", {}),
+            "summary":     hourly_raw["summary"],
+        },
         "leadStatusYesterday": {
             "tableData": ls_yday["data"]["tableData"],
             "allStages": ls_yday["data"].get("allStatuses", []),
