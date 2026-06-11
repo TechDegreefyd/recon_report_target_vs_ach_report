@@ -78,7 +78,6 @@ GROUPS = {
 # Every report also goes to 'All Reports' group automatically (if configured above)
 CAPTION_GROUP_MAP = {
     'Owner wise Achievement Report - Online Business':       'Online LOB Reports',
-    'Target VS Ach':                                         'Online Admission Team',
     'Online LOB - University wise Forms & Adm':              'Online LOB Reports',
     'Counsellor Targets vs Achievements — Fee & Admissions': 'Online Admission Team',
     'Admission and Application Ageing Report':               ['Online Admission Team', 'Online LOB Reports'],
@@ -2245,8 +2244,8 @@ async def main():
             _online_tab_ids   = ['t6']
             _online_tab_names = ['Last_Activity']
         else:
-            _online_tab_ids   = ['t1',        't2',            't4',       't5',                't6',           't7',              't8']
-            _online_tab_names = ['Overview', 'Fee_Collected', 'Colleges', 'Counsellor_TVA', 'Last_Activity', 'Supervisor_MoM', 'University_MoM']
+            _online_tab_ids   = ['t1',        't4',       't5',                't6',           't7',              't8']
+            _online_tab_names = ['Overview', 'Colleges', 'Counsellor_TVA', 'Last_Activity', 'Supervisor_MoM', 'University_MoM']
         online_pngs = [
             os.path.join(OUTPUT_DIR, f'Online_LMS_{name}_{RUN_STAMP}.png')
             for name in _online_tab_names
@@ -2320,7 +2319,6 @@ async def main():
     # Caption for each report file — edit CAPTION_GROUP_MAP (top of file) to change routing
     _tab_labels = {
         'Online_LMS_Overview':         'Owner wise Achievement Report - Online Business',
-        'Online_LMS_Fee_Collected':    'Target VS Ach',
         'Online_LMS_Colleges':         'Online LOB - University wise Forms & Adm',
         'Online_LMS_Counsellor_TVA':   'Counsellor Targets vs Achievements — Fee & Admissions',
         'Online_LMS_Last_Activity':    'Admission and Application Ageing Report',

@@ -16,7 +16,7 @@ import os
 import sys
 import shutil
 import requests
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from dotenv import load_dotenv
 
@@ -29,7 +29,8 @@ if sys.stdout.encoding != 'utf-8':
 LOCAL_MODE = '--local' in sys.argv
 
 # ─── DATES ───────────────────────────────────────────────────────────────────
-_now        = datetime.now()
+_IST        = timezone(timedelta(hours=5, minutes=30))
+_now        = datetime.now(_IST)
 YESTERDAY   = (_now - timedelta(days=1)).strftime('%Y-%m-%d')
 LAST_7_FROM = (_now - timedelta(days=7)).strftime('%Y-%m-%d')
 MTD_FROM    = _now.replace(day=1).strftime('%Y-%m-%d')
