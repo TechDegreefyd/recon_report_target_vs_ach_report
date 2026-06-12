@@ -85,6 +85,10 @@ CAPTION_GROUP_MAP = {
     'Till Date University Month on Month':                   'Online LOB Reports',
     'Admission Target vs Achieved':                          'Leadership_Regular',
     'Form Target vs Achieved':                               'Leadership_Regular',
+    'College Wise Monthly Comparison':                       'Leadership_Regular',
+    'College 12-Day Comparison':                            'Leadership_Regular',
+    'UTM Campaign MoM':                                     'Leadership_Regular',
+    'Counsellor (L2) MoM':                                  'Leadership_Regular',
     'Amity Total Forms - Campus YoY':                        'Daily Updates',
     'Amity Admissions - Campus YoY':                         'Daily Updates',
 }
@@ -114,6 +118,14 @@ _lm_same_day    = _lm_first.replace(day=report_date.day)
 LAST_MTD_START  = _lm_first.strftime('%Y-%m-%d')
 LAST_MTD_END    = _lm_same_day.strftime('%Y-%m-%d')
 LAST_MONTH_LABEL = _lm_first.strftime('%B %Y')
+
+# First 12 days of current month vs last 12 days of previous month
+_prev_last    = report_date.replace(day=1) - timedelta(days=1)
+LAST12_START  = (_prev_last - timedelta(days=11)).strftime('%Y-%m-%d')
+LAST12_END    = _prev_last.strftime('%Y-%m-%d')
+FIRST12_START = report_date.replace(day=1).strftime('%Y-%m-%d')
+FIRST12_END   = report_date.replace(day=min(12, report_date.day)).strftime('%Y-%m-%d')
+PREV_MONTH_LABEL = _prev_last.strftime('%B %Y')
 
 # Timestamp of this run (IST) — appended to all output filenames
 _run_ist = datetime.now(UTC) + timedelta(hours=5, minutes=30)
@@ -1364,23 +1376,55 @@ REGULAR_DB_CONFIGS = [
 # Base admission SQL — optional college exclusion and YTD start injected per DB
 _REG_ADM_SQL = """SELECT DISTINCT ON (s.student_id, uc.course_id)
     s.student_id, uc.university_name AS college_name,
-    csj.created_at AT TIME ZONE 'Asia/Kolkata' AS created_at
+    csj.created_at AT TIME ZONE 'Asia/Kolkata' AS created_at,
+    c.counsellor_name,
+    sla.utm_campaign
 FROM students s
 JOIN course_status_journeys csj ON s.student_id = csj.student_id
 JOIN university_courses uc ON csj.course_id = uc.course_id
+LEFT JOIN counsellors c ON c.counsellor_id = s.assigned_counsellor_id AND c.role = 'l2'
+LEFT JOIN LATERAL (
+    SELECT utm_campaign FROM student_lead_activities
+    WHERE student_id = s.student_id ORDER BY created_at ASC LIMIT 1
+) sla ON true
 WHERE csj.course_status = 'Admission'
   AND COALESCE(csj.fee_type, '') NOT ILIKE '%partial%'
   AND csj.created_at >= '{ytd_start}'::date
+  AND csj.created_at <  '{ytd_end}'::date
+  {exclude_clause}
+ORDER BY s.student_id, uc.course_id, csj.created_at ASC;"""
+
+# Fallback admission SQL (no utm_campaign) for DBs without student_lead_activities
+_REG_ADM_SQL_NOUTM = """SELECT DISTINCT ON (s.student_id, uc.course_id)
+    s.student_id, uc.university_name AS college_name,
+    csj.created_at AT TIME ZONE 'Asia/Kolkata' AS created_at,
+    c.counsellor_name,
+    NULL::text AS utm_campaign
+FROM students s
+JOIN course_status_journeys csj ON s.student_id = csj.student_id
+JOIN university_courses uc ON csj.course_id = uc.course_id
+LEFT JOIN counsellors c ON c.counsellor_id = s.assigned_counsellor_id AND c.role = 'l2'
+WHERE csj.course_status = 'Admission'
+  AND COALESCE(csj.fee_type, '') NOT ILIKE '%partial%'
+  AND csj.created_at >= '{ytd_start}'::date
+  AND csj.created_at <  '{ytd_end}'::date
   {exclude_clause}
 ORDER BY s.student_id, uc.course_id, csj.created_at ASC;"""
 
 # Base forms SQL — 'Walkin Marked' added, optional college exclusion and YTD start injected per DB
 _REG_FORM_SQL = """SELECT DISTINCT ON (s.student_id, csj.course_id)
     s.student_id, uc.university_name AS college_name,
-    csj.created_at AT TIME ZONE 'Asia/Kolkata' AS created_at
+    csj.created_at AT TIME ZONE 'Asia/Kolkata' AS created_at,
+    c.counsellor_name,
+    sla.utm_campaign
 FROM students s
 JOIN course_status_journeys csj ON s.student_id = csj.student_id
 JOIN university_courses uc ON csj.course_id = uc.course_id
+LEFT JOIN counsellors c ON c.counsellor_id = s.assigned_counsellor_id AND c.role = 'l2'
+LEFT JOIN LATERAL (
+    SELECT utm_campaign FROM student_lead_activities
+    WHERE student_id = s.student_id ORDER BY created_at ASC LIMIT 1
+) sla ON true
 WHERE LOWER(csj.course_status) IN (
     'form submitted – portal pending', 'form submitted – completed',
     'walkin completed', 'walkin marked',
@@ -1389,6 +1433,29 @@ WHERE LOWER(csj.course_status) IN (
     'ready for admission'
 )
   AND csj.created_at >= '{ytd_start}'::date
+  AND csj.created_at <  '{ytd_end}'::date
+  {exclude_clause}
+ORDER BY s.student_id, csj.course_id, csj.created_at ASC;"""
+
+# Fallback forms SQL (no utm_campaign)
+_REG_FORM_SQL_NOUTM = """SELECT DISTINCT ON (s.student_id, csj.course_id)
+    s.student_id, uc.university_name AS college_name,
+    csj.created_at AT TIME ZONE 'Asia/Kolkata' AS created_at,
+    c.counsellor_name,
+    NULL::text AS utm_campaign
+FROM students s
+JOIN course_status_journeys csj ON s.student_id = csj.student_id
+JOIN university_courses uc ON csj.course_id = uc.course_id
+LEFT JOIN counsellors c ON c.counsellor_id = s.assigned_counsellor_id AND c.role = 'l2'
+WHERE LOWER(csj.course_status) IN (
+    'form submitted – portal pending', 'form submitted – completed',
+    'walkin completed', 'walkin marked',
+    'exam/interview scheduled',
+    'offer letter/results pending', 'offer letter/results released',
+    'ready for admission'
+)
+  AND csj.created_at >= '{ytd_start}'::date
+  AND csj.created_at <  '{ytd_end}'::date
   {exclude_clause}
 ORDER BY s.student_id, csj.course_id, csj.created_at ASC;"""
 
@@ -1406,10 +1473,31 @@ _NO_EXCLUDE = ""
 # Amity admissions include partial payments (no fee_type filter)
 _AMITY_REG_ADM_SQL = """SELECT DISTINCT ON (s.student_id, uc.course_id)
     s.student_id, uc.university_name AS college_name,
-    csj.created_at AT TIME ZONE 'Asia/Kolkata' AS created_at
+    csj.created_at AT TIME ZONE 'Asia/Kolkata' AS created_at,
+    c.counsellor_name,
+    sla.utm_campaign
 FROM students s
 JOIN course_status_journeys csj ON s.student_id = csj.student_id
 JOIN university_courses uc ON csj.course_id = uc.course_id
+LEFT JOIN counsellors c ON c.counsellor_id = s.assigned_counsellor_id AND c.role = 'l2'
+LEFT JOIN LATERAL (
+    SELECT utm_campaign FROM student_lead_activities
+    WHERE student_id = s.student_id ORDER BY created_at ASC LIMIT 1
+) sla ON true
+WHERE csj.course_status = 'Admission'
+  AND csj.created_at >= '{ytd_start}'::date
+  AND csj.created_at < '{ytd_end}'::date
+ORDER BY s.student_id, uc.course_id, csj.created_at ASC;"""
+
+_AMITY_REG_ADM_SQL_NOUTM = """SELECT DISTINCT ON (s.student_id, uc.course_id)
+    s.student_id, uc.university_name AS college_name,
+    csj.created_at AT TIME ZONE 'Asia/Kolkata' AS created_at,
+    c.counsellor_name,
+    NULL::text AS utm_campaign
+FROM students s
+JOIN course_status_journeys csj ON s.student_id = csj.student_id
+JOIN university_courses uc ON csj.course_id = uc.course_id
+LEFT JOIN counsellors c ON c.counsellor_id = s.assigned_counsellor_id AND c.role = 'l2'
 WHERE csj.course_status = 'Admission'
   AND csj.created_at >= '{ytd_start}'::date
   AND csj.created_at < '{ytd_end}'::date
@@ -1425,18 +1513,39 @@ async def regular_get_data():
         "CGC":     _NO_EXCLUDE,
         "AMITY":   _NO_EXCLUDE,
     }
+
+    async def _fetch(conn, sql):
+        try:
+            return pd.DataFrame([dict(r) for r in await conn.fetch(sql)])
+        except Exception as e:
+            if 'student_lead_activities' in str(e) or 'does not exist' in str(e).lower():
+                return None
+            raise
+
     for db in REGULAR_DB_CONFIGS:
         excl = db_excludes.get(db['name'], _NO_EXCLUDE)
-        # Amity includes partial payments; other DBs exclude them
-        if db['name'] == 'AMITY':
-            adm_sql = _AMITY_REG_ADM_SQL.format(ytd_start=ytd_start, ytd_end=ytd_end)
-        else:
-            adm_sql = _REG_ADM_SQL.format(exclude_clause=excl, ytd_start=ytd_start)
-        form_sql = _REG_FORM_SQL.format(exclude_clause=excl, ytd_start=ytd_start)
         conn = await asyncpg.connect(host=db['host'], port=db['port'], database=db['database'],
                                      user=db['user'], password=db['password'])
-        all_adm.append(pd.DataFrame([dict(r) for r in await conn.fetch(adm_sql)]))
-        all_form.append(pd.DataFrame([dict(r) for r in await conn.fetch(form_sql)]))
+        if db['name'] == 'AMITY':
+            adm_sql      = _AMITY_REG_ADM_SQL.format(ytd_start=ytd_start, ytd_end=ytd_end)
+            adm_sql_fb   = _AMITY_REG_ADM_SQL_NOUTM.format(ytd_start=ytd_start, ytd_end=ytd_end)
+        else:
+            adm_sql      = _REG_ADM_SQL.format(exclude_clause=excl, ytd_start=ytd_start, ytd_end=ytd_end)
+            adm_sql_fb   = _REG_ADM_SQL_NOUTM.format(exclude_clause=excl, ytd_start=ytd_start, ytd_end=ytd_end)
+        form_sql     = _REG_FORM_SQL.format(exclude_clause=excl, ytd_start=ytd_start, ytd_end=ytd_end)
+        form_sql_fb  = _REG_FORM_SQL_NOUTM.format(exclude_clause=excl, ytd_start=ytd_start, ytd_end=ytd_end)
+
+        df_a = await _fetch(conn, adm_sql)
+        if df_a is None:
+            print(f"  ℹ️  {db['name']} DB: student_lead_activities not found — utm_campaign will be null")
+            df_a = pd.DataFrame([dict(r) for r in await conn.fetch(adm_sql_fb)])
+
+        df_f = await _fetch(conn, form_sql)
+        if df_f is None:
+            df_f = pd.DataFrame([dict(r) for r in await conn.fetch(form_sql_fb)])
+
+        all_adm.append(df_a)
+        all_form.append(df_f)
         await conn.close()
 
     def norm(name):
@@ -1859,8 +1968,384 @@ def regular_prepare_data(df_adm, df_form):
                      totals[5], totals[6], regular_pct(totals[6], totals[5])])
         sheets[mode] = pd.DataFrame(rows, columns=cols)
 
+    # ── College Month-over-Month Comparison ──────────────────────────────────
+    # df_adm and df_form both have 'date' set by the loop above
+    def _chg_pct(chg, last):
+        if last: return f"{(chg / last * 100):+.1f}%"
+        return "+100%" if chg > 0 else "N/A"
+
+    mom_rows = []
+    for col in COLLEGE_TARGETS.keys():
+        last_adm  = _count(df_adm,  col, start=LAST_MTD_START, end=LAST_MTD_END)
+        this_adm  = _count(df_adm,  col, start=MTD_START,      end=MTD_END)
+        last_form = _count(df_form, col, start=LAST_MTD_START, end=LAST_MTD_END)
+        this_form = _count(df_form, col, start=MTD_START,      end=MTD_END)
+        chg_adm   = this_adm  - last_adm
+        chg_form  = this_form - last_form
+        mom_rows.append([col, last_adm, this_adm, chg_adm,
+                         last_form, this_form, chg_form])
+
+    gt_la = sum(r[1] for r in mom_rows); gt_ta = sum(r[2] for r in mom_rows)
+    gt_lf = sum(r[4] for r in mom_rows); gt_tf = sum(r[5] for r in mom_rows)
+    gt_ca = gt_ta - gt_la;               gt_cf = gt_tf - gt_lf
+    mom_rows.append(['Total', gt_la, gt_ta, gt_ca, gt_lf, gt_tf, gt_cf])
+    sheets['College_MoM'] = pd.DataFrame(mom_rows, columns=[
+        'College',
+        f'Adm {LAST_MONTH_LABEL}', f'Adm {MONTH_LABEL}', 'Adm Δ',
+        f'Form {LAST_MONTH_LABEL}', f'Form {MONTH_LABEL}', 'Form Δ',
+    ])
+
+    # ── UTM Campaign MOM ─────────────────────────────────────────────────────
+    def _count_dim(df, dim_col, dim_val, start=None, end=None):
+        mask = df[dim_col] == dim_val
+        if start:
+            mask &= df['date'].between(start, end)
+        return int(mask.sum())
+
+    campaigns = sorted(
+        (set(df_adm['utm_campaign'].dropna().unique()) | set(df_form['utm_campaign'].dropna().unique()))
+        - {''}
+    )
+    utm_rows = []
+    for camp in campaigns:
+        la = _count_dim(df_adm,  'utm_campaign', camp, LAST_MTD_START, LAST_MTD_END)
+        ta = _count_dim(df_adm,  'utm_campaign', camp, MTD_START,      MTD_END)
+        lf = _count_dim(df_form, 'utm_campaign', camp, LAST_MTD_START, LAST_MTD_END)
+        tf = _count_dim(df_form, 'utm_campaign', camp, MTD_START,      MTD_END)
+        if la == 0 and ta == 0 and lf == 0 and tf == 0:
+            continue
+        utm_rows.append([camp or '(none)', la, ta, ta - la, lf, tf, tf - lf])
+    utm_rows.sort(key=lambda x: -x[2])
+    gt_la = sum(r[1] for r in utm_rows); gt_ta = sum(r[2] for r in utm_rows)
+    gt_lf = sum(r[4] for r in utm_rows); gt_tf = sum(r[5] for r in utm_rows)
+    utm_rows.append(['Total', gt_la, gt_ta, gt_ta - gt_la, gt_lf, gt_tf, gt_tf - gt_lf])
+    sheets['UTM_MoM'] = pd.DataFrame(utm_rows, columns=[
+        'UTM Campaign',
+        f'Adm {LAST_MONTH_LABEL}', f'Adm {MONTH_LABEL}', 'Adm Δ',
+        f'Form {LAST_MONTH_LABEL}', f'Form {MONTH_LABEL}', 'Form Δ',
+    ])
+
+    # ── Counsellor (L2) MOM ──────────────────────────────────────────────────
+    counsellors = sorted(
+        (set(df_adm['counsellor_name'].dropna().unique()) | set(df_form['counsellor_name'].dropna().unique()))
+        - {''}
+    )
+    couns_rows = []
+    for couns in counsellors:
+        la = _count_dim(df_adm,  'counsellor_name', couns, LAST_MTD_START, LAST_MTD_END)
+        ta = _count_dim(df_adm,  'counsellor_name', couns, MTD_START,      MTD_END)
+        lf = _count_dim(df_form, 'counsellor_name', couns, LAST_MTD_START, LAST_MTD_END)
+        tf = _count_dim(df_form, 'counsellor_name', couns, MTD_START,      MTD_END)
+        if la == 0 and ta == 0 and lf == 0 and tf == 0:
+            continue
+        couns_rows.append([couns, la, ta, ta - la, lf, tf, tf - lf])
+    couns_rows.sort(key=lambda x: -x[2])
+    gt_la = sum(r[1] for r in couns_rows); gt_ta = sum(r[2] for r in couns_rows)
+    gt_lf = sum(r[4] for r in couns_rows); gt_tf = sum(r[5] for r in couns_rows)
+    couns_rows.append(['Total', gt_la, gt_ta, gt_ta - gt_la, gt_lf, gt_tf, gt_tf - gt_lf])
+    sheets['Counsellor_MoM'] = pd.DataFrame(couns_rows, columns=[
+        'Counsellor',
+        f'Adm {LAST_MONTH_LABEL}', f'Adm {MONTH_LABEL}', 'Adm Δ',
+        f'Form {LAST_MONTH_LABEL}', f'Form {MONTH_LABEL}', 'Form Δ',
+    ])
+
+    # ── College First-12 vs Last-12 Comparison ───────────────────────────────
+    # Last 12 days of previous month vs first 12 days of current month
+    day12_rows = []
+    for col in COLLEGE_TARGETS.keys():
+        prev12_adm  = _count(df_adm,  col, start=LAST12_START,  end=LAST12_END)
+        curr12_adm  = _count(df_adm,  col, start=FIRST12_START, end=FIRST12_END)
+        prev12_form = _count(df_form, col, start=LAST12_START,  end=LAST12_END)
+        curr12_form = _count(df_form, col, start=FIRST12_START, end=FIRST12_END)
+        chg_adm  = curr12_adm  - prev12_adm
+        chg_form = curr12_form - prev12_form
+        day12_rows.append([col, prev12_adm, curr12_adm, chg_adm, prev12_form, curr12_form, chg_form])
+
+    gt_p12a = sum(r[1] for r in day12_rows); gt_c12a = sum(r[2] for r in day12_rows)
+    gt_p12f = sum(r[4] for r in day12_rows); gt_c12f = sum(r[5] for r in day12_rows)
+    day12_rows.append(['Total', gt_p12a, gt_c12a, gt_c12a - gt_p12a, gt_p12f, gt_c12f, gt_c12f - gt_p12f])
+    sheets['College_12Day'] = pd.DataFrame(day12_rows, columns=[
+        'College',
+        f'Adm Last 12 ({PREV_MONTH_LABEL})', f'Adm First 12 ({MONTH_LABEL})', 'Adm Δ',
+        f'Form Last 12 ({PREV_MONTH_LABEL})', f'Form First 12 ({MONTH_LABEL})', 'Form Δ',
+    ])
+
+    # ── UTM Campaign 12-Day Comparison ───────────────────────────────────────
+    _12day_cols = [
+        'UTM Campaign',
+        f'Adm Last 12 ({PREV_MONTH_LABEL})', f'Adm First 12 ({MONTH_LABEL})', 'Adm Δ',
+        f'Form Last 12 ({PREV_MONTH_LABEL})', f'Form First 12 ({MONTH_LABEL})', 'Form Δ',
+    ]
+    utm_12rows = []
+    for camp in campaigns:
+        pa = _count_dim(df_adm,  'utm_campaign', camp, LAST12_START,  LAST12_END)
+        ca = _count_dim(df_adm,  'utm_campaign', camp, FIRST12_START, FIRST12_END)
+        pf = _count_dim(df_form, 'utm_campaign', camp, LAST12_START,  LAST12_END)
+        cf = _count_dim(df_form, 'utm_campaign', camp, FIRST12_START, FIRST12_END)
+        if pa == 0 and ca == 0 and pf == 0 and cf == 0:
+            continue
+        utm_12rows.append([camp or '(none)', pa, ca, ca - pa, pf, cf, cf - pf])
+    utm_12rows.sort(key=lambda x: -x[2])
+    gt_pa = sum(r[1] for r in utm_12rows); gt_ca_ = sum(r[2] for r in utm_12rows)
+    gt_pf = sum(r[4] for r in utm_12rows); gt_cf_ = sum(r[5] for r in utm_12rows)
+    utm_12rows.append(['Total', gt_pa, gt_ca_, gt_ca_ - gt_pa, gt_pf, gt_cf_, gt_cf_ - gt_pf])
+    sheets['UTM_12Day'] = pd.DataFrame(utm_12rows, columns=_12day_cols)
+
+    # ── Counsellor (L2) 12-Day Comparison ────────────────────────────────────
+    couns_12day_cols = [
+        'Counsellor',
+        f'Adm Last 12 ({PREV_MONTH_LABEL})', f'Adm First 12 ({MONTH_LABEL})', 'Adm Δ',
+        f'Form Last 12 ({PREV_MONTH_LABEL})', f'Form First 12 ({MONTH_LABEL})', 'Form Δ',
+    ]
+    couns_12rows = []
+    for couns in counsellors:
+        pa = _count_dim(df_adm,  'counsellor_name', couns, LAST12_START,  LAST12_END)
+        ca = _count_dim(df_adm,  'counsellor_name', couns, FIRST12_START, FIRST12_END)
+        pf = _count_dim(df_form, 'counsellor_name', couns, LAST12_START,  LAST12_END)
+        cf = _count_dim(df_form, 'counsellor_name', couns, FIRST12_START, FIRST12_END)
+        if pa == 0 and ca == 0 and pf == 0 and cf == 0:
+            continue
+        couns_12rows.append([couns, pa, ca, ca - pa, pf, cf, cf - pf])
+    couns_12rows.sort(key=lambda x: -x[2])
+    gt_pa = sum(r[1] for r in couns_12rows); gt_ca_ = sum(r[2] for r in couns_12rows)
+    gt_pf = sum(r[4] for r in couns_12rows); gt_cf_ = sum(r[5] for r in couns_12rows)
+    couns_12rows.append(['Total', gt_pa, gt_ca_, gt_ca_ - gt_pa, gt_pf, gt_cf_, gt_cf_ - gt_pf])
+    sheets['Counsellor_12Day'] = pd.DataFrame(couns_12rows, columns=couns_12day_cols)
+
     print("✅ Regular LMS data prepared")
     return sheets
+
+
+def _reg_col_mom_html_section(df):
+    """Render College Wise Monthly Comparison table for the Regular report."""
+    if df is None or df.empty:
+        return '<p style="color:#888">No data available.</p>'
+
+    name_map = {
+        'Chandigarh University, Mohali':             'CU Mohali',
+        'Lovely Professional University':            'LPU',
+        'Chandigarh University, Lucknow':            'CU Lucknow',
+        'Chandigarh Group of Colleges, Landran (CGC)': 'Landran',
+        'Amity University (All Campuses)':           'Amity',
+    }
+
+    cols = list(df.columns)   # College, Adm LM, Adm TM, Adm Δ, Form LM, Form TM, Form Δ
+    adm_lm_col  = cols[1]; adm_tm_col  = cols[2]
+    form_lm_col = cols[4]; form_tm_col = cols[5]
+
+    def chg_cls(val):
+        try:
+            v = int(val)
+            return 'green' if v > 0 else ('red' if v < 0 else '')
+        except:
+            return ''
+
+    header = (
+        f'<th>{html.escape(adm_lm_col)}</th>'
+        f'<th>{html.escape(adm_tm_col)}</th>'
+        f'<th>Adm Δ</th>'
+        f'<th>{html.escape(form_lm_col)}</th>'
+        f'<th>{html.escape(form_tm_col)}</th>'
+        f'<th>Form Δ</th>'
+    )
+    tbody = ''
+    for _, row in df.iterrows():
+        college  = str(row['College'])
+        is_total = college.lower() == 'total'
+        name     = '⭟ Total' if is_total else name_map.get(college, college)
+        cls      = 'total-row' if is_total else ''
+        sep      = 'border-top:2px solid #1a1a18;' if is_total else ''
+        adm_chg_cls  = chg_cls(row.iloc[3])
+        form_chg_cls = chg_cls(row.iloc[6])
+        tbody += (
+            f'<tr class="{cls}" style="{sep}">'
+            f'<td class="college-name {"bold" if is_total else ""}">{html.escape(name)}</td>'
+            f'<td class="num">{row.iloc[1]}</td>'
+            f'<td class="num">{row.iloc[2]}</td>'
+            f'<td class="num {adm_chg_cls}">{row.iloc[3]:+d}</td>'
+            f'<td class="num">{row.iloc[4]}</td>'
+            f'<td class="num">{row.iloc[5]}</td>'
+            f'<td class="num {form_chg_cls}">{row.iloc[6]:+d}</td>'
+            f'</tr>\n'
+        )
+
+    lm_label = adm_lm_col.replace('Adm ', '')
+    tm_label = adm_tm_col.replace('Adm ', '')
+    date_range = f'{LAST_MTD_START[8:]} – {LAST_MTD_END[8:]} {lm_label} vs {MTD_START[8:]} – {MTD_END[8:]} {tm_label}'
+    return f'''
+<div class="section-label"><span>College Wise Monthly Comparison &middot; {date_range}</span></div>
+<div class="table-wrap">
+<table>
+<thead>
+  <tr>
+    <th rowspan="2" style="width:22%;vertical-align:middle;text-align:left;border-right:1px solid rgba(255,255,255,.12)">College</th>
+    <th colspan="3" class="th-group">Admissions</th>
+    <th colspan="3" class="th-group">Forms</th>
+  </tr>
+  <tr>{header}</tr>
+</thead>
+<tbody>{tbody}</tbody>
+</table>
+</div>'''
+
+
+def _reg_col_12day_html_section(df):
+    """Render College 12-Day Comparison table: last 12 days of prev month vs first 12 of current."""
+    if df is None or df.empty:
+        return '<p style="color:#888">No data available.</p>'
+
+    name_map = {
+        'Chandigarh University, Mohali':             'CU Mohali',
+        'Lovely Professional University':            'LPU',
+        'Chandigarh University, Lucknow':            'CU Lucknow',
+        'Chandigarh Group of Colleges, Landran (CGC)': 'Landran',
+        'Amity University (All Campuses)':           'Amity',
+    }
+
+    cols = list(df.columns)
+    adm_lm_col  = cols[1]; adm_tm_col  = cols[2]
+    form_lm_col = cols[4]; form_tm_col = cols[5]
+
+    def chg_cls(val):
+        try:
+            v = int(val)
+            return 'green' if v > 0 else ('red' if v < 0 else '')
+        except:
+            return ''
+
+    header = (
+        f'<th>{html.escape(adm_lm_col)}</th>'
+        f'<th>{html.escape(adm_tm_col)}</th>'
+        f'<th>Adm Δ</th>'
+        f'<th>{html.escape(form_lm_col)}</th>'
+        f'<th>{html.escape(form_tm_col)}</th>'
+        f'<th>Form Δ</th>'
+    )
+    tbody = ''
+    for _, row in df.iterrows():
+        college  = str(row['College'])
+        is_total = college.lower() == 'total'
+        name     = '⭟ Total' if is_total else name_map.get(college, college)
+        cls      = 'total-row' if is_total else ''
+        sep      = 'border-top:2px solid #1a1a18;' if is_total else ''
+        adm_chg_cls  = chg_cls(row.iloc[3])
+        form_chg_cls = chg_cls(row.iloc[6])
+        tbody += (
+            f'<tr class="{cls}" style="{sep}">'
+            f'<td class="college-name {"bold" if is_total else ""}">{html.escape(name)}</td>'
+            f'<td class="num">{row.iloc[1]}</td>'
+            f'<td class="num">{row.iloc[2]}</td>'
+            f'<td class="num {adm_chg_cls}">{row.iloc[3]:+d}</td>'
+            f'<td class="num">{row.iloc[4]}</td>'
+            f'<td class="num">{row.iloc[5]}</td>'
+            f'<td class="num {form_chg_cls}">{row.iloc[6]:+d}</td>'
+            f'</tr>\n'
+        )
+
+    date_range = (
+        f'{LAST12_START[8:]} – {LAST12_END[8:]} {PREV_MONTH_LABEL}'
+        f' vs {FIRST12_START[8:]} – {FIRST12_END[8:]} {MONTH_LABEL}'
+    )
+    return f'''
+<div class="section-label"><span>College 12-Day Comparison &middot; {date_range}</span></div>
+<div class="table-wrap">
+<table>
+<thead>
+  <tr>
+    <th rowspan="2" style="width:22%;vertical-align:middle;text-align:left;border-right:1px solid rgba(255,255,255,.12)">College</th>
+    <th colspan="3" class="th-group">Admissions</th>
+    <th colspan="3" class="th-group">Forms</th>
+  </tr>
+  <tr>{header}</tr>
+</thead>
+<tbody>{tbody}</tbody>
+</table>
+</div>'''
+
+
+def _reg_mom_breakdown_html_section(df_mom, dim_label, section_title, df_12day=None):
+    """Render MOM + optional 12-day breakdown tables (UTM Campaign or Counsellor)."""
+
+    def chg_cls(val):
+        try:
+            v = int(val)
+            return 'green' if v > 0 else ('red' if v < 0 else '')
+        except:
+            return ''
+
+    def _render_table(df, note_html, label_col):
+        if df is None or df.empty:
+            return ''
+        cols = list(df.columns)
+        header = (
+            f'<th>{html.escape(cols[1])}</th>'
+            f'<th>{html.escape(cols[2])}</th>'
+            f'<th>Adm Δ</th>'
+            f'<th>{html.escape(cols[4])}</th>'
+            f'<th>{html.escape(cols[5])}</th>'
+            f'<th>Form Δ</th>'
+        )
+        tbody = ''
+        for _, row in df.iterrows():
+            name     = str(row[cols[0]])
+            is_total = name.lower() == 'total'
+            cls      = 'total-row' if is_total else ''
+            sep      = 'border-top:2px solid #1a1a18;' if is_total else ''
+            adm_chg  = row.iloc[3]; form_chg = row.iloc[6]
+            adm_c    = chg_cls(adm_chg); form_c = chg_cls(form_chg)
+            adm_sign  = '+' if isinstance(adm_chg, (int, float)) and adm_chg > 0 else ''
+            form_sign = '+' if isinstance(form_chg, (int, float)) and form_chg > 0 else ''
+            tbody += (
+                f'<tr class="{cls}" style="{sep}">'
+                f'<td class="college-name {"bold" if is_total else ""}">{html.escape(name)}</td>'
+                f'<td class="num">{int(row.iloc[1])}</td>'
+                f'<td class="num">{int(row.iloc[2])}</td>'
+                f'<td class="num" style="color:var(--{adm_c if adm_c else "ink"},inherit);font-weight:{"700" if adm_c else "400"}">'
+                f'{adm_sign}{int(adm_chg)}</td>'
+                f'<td class="num">{int(row.iloc[4])}</td>'
+                f'<td class="num">{int(row.iloc[5])}</td>'
+                f'<td class="num" style="color:var(--{form_c if form_c else "ink"},inherit);font-weight:{"700" if form_c else "400"}">'
+                f'{form_sign}{int(form_chg)}</td>'
+                f'</tr>\n'
+            )
+        return f'''{note_html}
+<div class="table-wrap">
+<table>
+<thead>
+  <tr>
+    <th rowspan="2" style="width:26%;vertical-align:middle;text-align:left;border-right:1px solid rgba(255,255,255,.12)">{html.escape(label_col)}</th>
+    <th colspan="3" class="th-group">Admissions</th>
+    <th colspan="3" class="th-group">Forms</th>
+  </tr>
+  <tr>{header}</tr>
+</thead>
+<tbody>{tbody}</tbody>
+</table>
+</div>'''
+
+    lm_range = f'{_lm_first.day} {_lm_first.strftime("%b")} – {_lm_same_day.day} {_lm_same_day.strftime("%b %Y")}'
+    tm_range = f'{report_date.replace(day=1).day} {report_date.strftime("%b")} – {report_date.day} {report_date.strftime("%b %Y")}'
+    _prev_last_day = report_date.replace(day=1) - timedelta(days=1)
+    last12_start_dt = _prev_last_day - timedelta(days=11)
+    l12_range = f'{last12_start_dt.day} – {_prev_last_day.day} {_prev_last_day.strftime("%b %Y")}'
+    f12_end_day = min(12, report_date.day)
+    f12_range = f'01 – {f12_end_day:02d} {report_date.strftime("%b %Y")}'
+
+    def _note(text):
+        return (f'<div style="font-size:11px;color:#8896a8;margin-bottom:14px;padding:6px 10px;'
+                f'background:#eef2f7;border-left:3px solid #0097a7;border-radius:3px">{text}</div>')
+
+    mom_note  = _note(f'Same day window &nbsp;·&nbsp; <strong>{lm_range}</strong> &nbsp;vs&nbsp; <strong>{tm_range}</strong>')
+    d12_note  = _note(f'Last 12 days vs First 12 days &nbsp;·&nbsp; <strong>{l12_range}</strong> &nbsp;vs&nbsp; <strong>{f12_range}</strong>')
+
+    out = f'<div class="section-label"><span>{html.escape(section_title)} — MTD Comparison</span></div>\n'
+    out += _render_table(df_mom, mom_note, dim_label)
+
+    if df_12day is not None and not df_12day.empty:
+        out += f'\n<div class="section-label" style="margin-top:24px"><span>{html.escape(section_title)} — 12-Day Comparison</span></div>\n'
+        out += _render_table(df_12day, d12_note, dim_label)
+
+    return out
 
 
 def regular_generate_html(sheets, amity_yoy_df=None, amity_adm_df=None):
@@ -1869,6 +2354,12 @@ def regular_generate_html(sheets, amity_yoy_df=None, amity_adm_df=None):
 
     adm = sheets['Admissions Data']
     forms = sheets['Forms Data']
+    col_mom = sheets.get('College_MoM', pd.DataFrame())
+    col_12day = sheets.get('College_12Day', pd.DataFrame())
+    utm_mom = sheets.get('UTM_MoM', pd.DataFrame())
+    utm_12day = sheets.get('UTM_12Day', pd.DataFrame())
+    counsellor_mom = sheets.get('Counsellor_MoM', pd.DataFrame())
+    counsellor_12day = sheets.get('Counsellor_12Day', pd.DataFrame())
 
     def esc(v):
         return html.escape(str(v))
@@ -1932,7 +2423,7 @@ def regular_generate_html(sheets, amity_yoy_df=None, amity_adm_df=None):
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 :root{--white:#fff;--off:#f0ede8;--border:#d8d2c8;--border-dark:#b0a898;--ink:#111110;--ink-mid:#444440;--ink-light:#7a7570;--gold:#c8a84b;--gold-light:#f0e4c0;--green:#1e6b3c;--green-bg:#d4eddf;--amber:#a05e10;--amber-bg:#faecd4;--red:#b02020;--red-bg:#fad4d4;--blue:#1a4a8a;--blue-bg:#e8eef7;--radius:3px}
 body{background:#f4f2ee;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;color:var(--ink);min-height:100vh}
-#tab-admissions,#tab-forms,#tab-amity-yoy{display:none}
+#tab-admissions,#tab-forms,#tab-amity-yoy,#tab-college-mom,#tab-college-12day,#tab-utm-mom,#tab-counsellor-mom{display:none}
 .shell{max-width:1400px;margin:0 auto;padding:0 28px 40px}
 .header{padding:28px 0 20px;border-bottom:3px solid var(--ink);margin-bottom:24px}
 .header-top{display:flex;align-items:flex-end;justify-content:space-between;flex-wrap:wrap;gap:8px}
@@ -1944,9 +2435,9 @@ body{background:#f4f2ee;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',
 .tabs{display:flex;gap:0;margin-bottom:24px;border:2px solid var(--border-dark);border-radius:var(--radius);overflow:hidden;position:sticky;top:0;z-index:100;background:#f4f2ee}
 .tab-label{flex:1;display:flex;align-items:center;justify-content:center;gap:8px;padding:12px 16px;cursor:pointer;font-size:13px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-mid);background:var(--off);user-select:none;font-weight:600}
 .tab-label:not(:last-child){border-right:1.5px solid var(--border-dark)}
-#tab-admissions:checked~.shell .tab-label[for=tab-admissions],#tab-forms:checked~.shell .tab-label[for=tab-forms],#tab-amity-forms:checked~.shell .tab-label[for=tab-amity-forms],#tab-amity-adm:checked~.shell .tab-label[for=tab-amity-adm]{background:var(--ink);color:var(--white)}
+#tab-admissions:checked~.shell .tab-label[for=tab-admissions],#tab-forms:checked~.shell .tab-label[for=tab-forms],#tab-amity-forms:checked~.shell .tab-label[for=tab-amity-forms],#tab-amity-adm:checked~.shell .tab-label[for=tab-amity-adm],#tab-college-mom:checked~.shell .tab-label[for=tab-college-mom],#tab-college-12day:checked~.shell .tab-label[for=tab-college-12day],#tab-utm-mom:checked~.shell .tab-label[for=tab-utm-mom],#tab-counsellor-mom:checked~.shell .tab-label[for=tab-counsellor-mom]{background:var(--ink);color:var(--white)}
 .panel{display:none}
-#tab-admissions:checked~.shell #panel-admissions,#tab-forms:checked~.shell #panel-forms,#tab-amity-forms:checked~.shell #panel-amity-forms,#tab-amity-adm:checked~.shell #panel-amity-adm{display:block}
+#tab-admissions:checked~.shell #panel-admissions,#tab-forms:checked~.shell #panel-forms,#tab-amity-forms:checked~.shell #panel-amity-forms,#tab-amity-adm:checked~.shell #panel-amity-adm,#tab-college-mom:checked~.shell #panel-college-mom,#tab-college-12day:checked~.shell #panel-college-12day,#tab-utm-mom:checked~.shell #panel-utm-mom,#tab-counsellor-mom:checked~.shell #panel-counsellor-mom{display:block}
 .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:14px;margin-bottom:28px}
 .kpi{background:var(--white);border:1px solid var(--border);border-left:4px solid var(--ink);border-radius:var(--radius);padding:12px 14px}
 .kpi-label{font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--ink-light);margin-bottom:3px}
@@ -1994,7 +2485,7 @@ tbody tr:hover td{background:#eef0f8}
   --blue:#1d4ed8;--blue-bg:#eff6ff;
   --radius:5px}
 body{background:var(--surface);font-family:'Segoe UI',-apple-system,BlinkMacSystemFont,Helvetica,Arial,sans-serif;color:var(--ink);min-height:100vh}
-#tab-admissions,#tab-forms,#tab-amity-yoy{display:none}
+#tab-admissions,#tab-forms,#tab-amity-yoy,#tab-college-mom,#tab-college-12day,#tab-utm-mom,#tab-counsellor-mom{display:none}
 .shell{max-width:1400px;margin:0 auto;padding:0 28px 44px}
 .header{background:var(--navy);padding:26px 28px 22px;border-radius:8px;margin-bottom:20px;border-left:5px solid var(--teal)}
 .header-top{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px}
@@ -2009,8 +2500,12 @@ body{background:var(--surface);font-family:'Segoe UI',-apple-system,BlinkMacSyst
 #tab-forms:checked~.shell .tab-label[for=tab-forms]{background:var(--teal);color:#fff;border-color:var(--teal)}
 #tab-amity-forms:checked~.shell .tab-label[for=tab-amity-forms]{background:var(--green);color:#fff;border-color:var(--green)}
 #tab-amity-adm:checked~.shell .tab-label[for=tab-amity-adm]{background:var(--amber);color:#fff;border-color:var(--amber)}
+#tab-college-mom:checked~.shell .tab-label[for=tab-college-mom]{background:var(--blue);color:#fff;border-color:var(--blue)}
+#tab-college-12day:checked~.shell .tab-label[for=tab-college-12day]{background:#6d28d9;color:#fff;border-color:#6d28d9}
+#tab-utm-mom:checked~.shell .tab-label[for=tab-utm-mom]{background:#0e7490;color:#fff;border-color:#0e7490}
+#tab-counsellor-mom:checked~.shell .tab-label[for=tab-counsellor-mom]{background:#be185d;color:#fff;border-color:#be185d}
 .panel{display:none}
-#tab-admissions:checked~.shell #panel-admissions,#tab-forms:checked~.shell #panel-forms,#tab-amity-forms:checked~.shell #panel-amity-forms,#tab-amity-adm:checked~.shell #panel-amity-adm{display:block}
+#tab-admissions:checked~.shell #panel-admissions,#tab-forms:checked~.shell #panel-forms,#tab-amity-forms:checked~.shell #panel-amity-forms,#tab-amity-adm:checked~.shell #panel-amity-adm,#tab-college-mom:checked~.shell #panel-college-mom,#tab-college-12day:checked~.shell #panel-college-12day,#tab-utm-mom:checked~.shell #panel-utm-mom,#tab-counsellor-mom:checked~.shell #panel-counsellor-mom{display:block}
 .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:14px;margin-bottom:26px}
 .kpi{background:var(--white);border:1px solid var(--border);border-radius:var(--radius);padding:16px 18px;border-top:3px solid var(--teal)}
 .kpi:nth-child(2){border-top-color:var(--green)}.kpi:nth-child(3){border-top-color:var(--amber)}
@@ -2046,8 +2541,8 @@ tbody tr:hover td{background:#eef4ff}
     _CSS_SIDEBAR_REGULAR = '.layout{display:flex;gap:16px;align-items:flex-start}.sidebar{width:155px;flex-shrink:0;position:sticky;top:10px;display:flex;flex-direction:column;gap:6px}.sidebar .tab-label{justify-content:flex-start;padding:10px 12px;white-space:normal;text-align:left}.content{flex:1;min-width:0}'
     CSS = (_CSS_COLORFUL_REGULAR if COLORFUL_MODE else _CSS_BASE_REGULAR) + (_CSS_SIDEBAR_REGULAR if SIDEBAR_NAV else '')
 
-    _reg_tabs_horizontal = '<div class="tabs"><label class="tab-label" for="tab-admissions">&#x1f393; Admissions</label><label class="tab-label" for="tab-forms">&#x1f4cb; Forms</label><label class="tab-label" for="tab-amity-forms">&#x1f4ca; Amity Forms YoY</label><label class="tab-label" for="tab-amity-adm">&#x1f4ca; Amity Adm YoY</label></div>'
-    _reg_tabs_sidebar    = '<div class="layout"><nav class="sidebar"><label class="tab-label" for="tab-admissions">&#x1f393; Admissions</label><label class="tab-label" for="tab-forms">&#x1f4cb; Forms</label><label class="tab-label" for="tab-amity-forms">&#x1f4ca; Amity Forms YoY</label><label class="tab-label" for="tab-amity-adm">&#x1f4ca; Amity Adm YoY</label></nav><div class="content">'
+    _reg_tabs_horizontal = '<div class="tabs"><label class="tab-label" for="tab-admissions">&#x1f393; Admissions</label><label class="tab-label" for="tab-forms">&#x1f4cb; Forms</label><label class="tab-label" for="tab-amity-forms">&#x1f4ca; Amity Forms YoY</label><label class="tab-label" for="tab-amity-adm">&#x1f4ca; Amity Adm YoY</label><label class="tab-label" for="tab-college-mom">&#x1f4c5; College MoM</label><label class="tab-label" for="tab-college-12day">&#x1f4c6; 12-Day Compare</label><label class="tab-label" for="tab-utm-mom">&#x1f4f1; UTM MoM</label><label class="tab-label" for="tab-counsellor-mom">&#x1f9d1; Counsellor MoM</label></div>'
+    _reg_tabs_sidebar    = '<div class="layout"><nav class="sidebar"><label class="tab-label" for="tab-admissions">&#x1f393; Admissions</label><label class="tab-label" for="tab-forms">&#x1f4cb; Forms</label><label class="tab-label" for="tab-amity-forms">&#x1f4ca; Amity Forms YoY</label><label class="tab-label" for="tab-amity-adm">&#x1f4ca; Amity Adm YoY</label><label class="tab-label" for="tab-college-mom">&#x1f4c5; College MoM</label><label class="tab-label" for="tab-college-12day">&#x1f4c6; 12-Day Compare</label><label class="tab-label" for="tab-utm-mom">&#x1f4f1; UTM MoM</label><label class="tab-label" for="tab-counsellor-mom">&#x1f9d1; Counsellor MoM</label></nav><div class="content">'
     _reg_tabs_block = _reg_tabs_sidebar if SIDEBAR_NAV else _reg_tabs_horizontal
     _reg_close = '</div></div></div>' if SIDEBAR_NAV else '</div>'   # .content + .layout + .shell  OR just .shell
 
@@ -2056,6 +2551,10 @@ tbody tr:hover td{background:#eef4ff}
 <input type="radio" name="view" id="tab-forms">
 <input type="radio" name="view" id="tab-amity-forms">
 <input type="radio" name="view" id="tab-amity-adm">
+<input type="radio" name="view" id="tab-college-mom">
+<input type="radio" name="view" id="tab-college-12day">
+<input type="radio" name="view" id="tab-utm-mom">
+<input type="radio" name="view" id="tab-counsellor-mom">
 <div class="shell">
 <header class="header"><div class="header-top"><div><div class="brand">Performance Intelligence &middot; Regular</div><h1 class="title">Regular Admissions &amp; Forms Tracker</h1></div><div class="header-meta"><div class="badge">Live Report</div><div class="date">{MONTH_LABEL} &middot; FTD {report_date.strftime('%d %b')}</div></div></div></header>
 {_reg_tabs_block}
@@ -2086,6 +2585,22 @@ tbody tr:hover td{background:#eef4ff}
 
 <section class="panel" id="panel-amity-adm">
 {_amity_adm_yoy_html_section(amity_adm_df)}
+</section>
+
+<section class="panel" id="panel-college-mom">
+{_reg_col_mom_html_section(col_mom)}
+</section>
+
+<section class="panel" id="panel-college-12day">
+{_reg_col_12day_html_section(col_12day)}
+</section>
+
+<section class="panel" id="panel-utm-mom">
+{_reg_mom_breakdown_html_section(utm_mom, 'UTM Campaign', f'UTM Campaign — {LAST_MONTH_LABEL} vs {MONTH_LABEL}', df_12day=utm_12day)}
+</section>
+
+<section class="panel" id="panel-counsellor-mom">
+{_reg_mom_breakdown_html_section(counsellor_mom, 'Counsellor (L2)', f'Counsellor L2 — {LAST_MONTH_LABEL} vs {MONTH_LABEL}', df_12day=counsellor_12day)}
 </section>
 
 {_reg_close}</body></html>'''
@@ -2313,8 +2828,8 @@ async def main():
         regular_pngs = []
         if regular_html:
             print("  [2d] Taking screenshots of Regular LMS tabs...")
-            _reg_tab_ids   = ['tab-admissions', 'tab-forms', 'tab-amity-forms', 'tab-amity-adm']
-            _reg_tab_names = ['Admissions',     'Forms',     'Amity_Forms',      'Amity_Adm']
+            _reg_tab_ids   = ['tab-admissions', 'tab-forms', 'tab-amity-forms', 'tab-amity-adm', 'tab-college-mom', 'tab-college-12day', 'tab-utm-mom', 'tab-counsellor-mom']
+            _reg_tab_names = ['Admissions',     'Forms',     'Amity_Forms',      'Amity_Adm',     'College_MoM',     'College_12Day',     'UTM_MoM',     'Counsellor_MoM']
             regular_pngs = [
                 os.path.join(OUTPUT_DIR, f'Regular_LMS_{name}_{RUN_STAMP}.png')
                 for name in _reg_tab_names
@@ -2332,10 +2847,14 @@ async def main():
         'Online_LMS_Last_Activity':    'Admission and Application Ageing Report',
         'Online_LMS_Supervisor_MoM':   f'Till Date Supervisor Month on Month — {LAST_MONTH_LABEL} vs {MONTH_LABEL}',
         'Online_LMS_University_MoM':   f'Till Date University Month on Month — {LAST_MONTH_LABEL} vs {MONTH_LABEL}',
-        'Regular_LMS_Admissions':  'Admission Target vs Achieved',
-        'Regular_LMS_Forms':       'Form Target vs Achieved',
-        'Regular_LMS_Amity_Forms': 'Amity Total Forms - Campus YoY',
-        'Regular_LMS_Amity_Adm':   'Amity Admissions - Campus YoY',
+        'Regular_LMS_Admissions':   'Admission Target vs Achieved',
+        'Regular_LMS_Forms':        'Form Target vs Achieved',
+        'Regular_LMS_Amity_Forms':  'Amity Total Forms - Campus YoY',
+        'Regular_LMS_Amity_Adm':    'Amity Admissions - Campus YoY',
+        'Regular_LMS_College_MoM':   f'College Wise Monthly Comparison — {LAST_MONTH_LABEL} vs {MONTH_LABEL}',
+        'Regular_LMS_College_12Day': f'College 12-Day Comparison — Last 12 {PREV_MONTH_LABEL} vs First 12 {MONTH_LABEL}',
+        'Regular_LMS_UTM_MoM':       f'UTM Campaign MoM — {LAST_MONTH_LABEL} vs {MONTH_LABEL}',
+        'Regular_LMS_Counsellor_MoM': f'Counsellor (L2) MoM — {LAST_MONTH_LABEL} vs {MONTH_LABEL}',
     }
 
     def _resolve_groups(caption):
@@ -2419,7 +2938,7 @@ async def main():
     print("=" * 60)
     print(f"   FTD: {FTD_DATE}")
     print(f"   Online screenshots:  {'✅' if online_pngs else '❌'} ({len(online_pngs)}/7)")
-    print(f"   Regular screenshots: {'✅' if regular_pngs else '❌'} ({len(regular_pngs)}/4)")
+    print(f"   Regular screenshots: {'✅' if regular_pngs else '❌'} ({len(regular_pngs)}/6)")
     print(f"   WHAPI sends: {'skipped (--local mode)' if LOCAL_MODE else ('attempted' if WHAPI_TOKEN else 'skipped (no token)')}")
     print("=" * 60)
 

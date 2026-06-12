@@ -61,7 +61,7 @@ _LEAD_STATUS          = os.getenv('BHUGOAL_API_LEAD_STATUS_REPORT')
 _LEAD_FUNNEL          = os.getenv('BHUGOAL_API_LEAD_FUNNEL_REPORT')
 _APPOINTMENT          = os.getenv('BHUGOAL_API_APPOINTMENT_FUNNEL_REPORT')
 
-WHAPI_TOKEN    = os.getenv('WHAPI_TOKEN')
+WHAPI_TOKEN    = os.getenv('WHAPI_TOKEN_BHUGOAL') or os.getenv('WHAPI_TOKEN')
 BHUGOAL_GROUP  = os.getenv('WHATSAPP_GROUP_BHUGOAL')
 
 # ─── FRESH LEADS AGING CONFIG ────────────────────────────────────────────────
