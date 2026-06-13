@@ -13,10 +13,17 @@ import re
 import csv
 import io
 import argparse
+import time
 from datetime import datetime, timedelta, UTC
 from dotenv import load_dotenv
 from playwright.async_api import async_playwright
 import requests
+
+_START = time.perf_counter()
+
+def log(msg: str):
+    elapsed = time.perf_counter() - _START
+    print(f'[{elapsed:6.1f}s] {msg}', flush=True)
 
 if sys.stdout.encoding != 'utf-8':
     sys.stdout.reconfigure(encoding='utf-8')
@@ -97,43 +104,53 @@ DOWNLOAD_DIR_CI  = os.path.join(_DIR, 'callinsight_downloads')
 
 
 async def download_csv_playwright() -> str:
-    """Login to CallInsight and download the call logs CSV. Returns CSV text."""
+    if not CI_EMAIL or not CI_PASSWORD:
+        raise RuntimeError('CALLINSIGHT_EMAIL or CALLINSIGHT_PASSWORD env var is not set')
     os.makedirs(DOWNLOAD_DIR_CI, exist_ok=True)
+
+    log('Launching headless browser ...')
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
         context = await browser.new_context(accept_downloads=True)
-        page = await context.new_page()
+        page    = await context.new_page()
+        log('Browser ready')
 
-        print(f'Logging in to CallInsight as {CI_EMAIL!r} (password len={len(CI_PASSWORD)})...')
-        if not CI_EMAIL or not CI_PASSWORD:
-            raise RuntimeError('CALLINSIGHT_EMAIL or CALLINSIGHT_PASSWORD env var is not set')
-        await page.goto(CALLINSIGHT_URL, timeout=90000, wait_until='domcontentloaded')
+        log('Loading CallInsight login page ...')
+        await page.goto(CALLINSIGHT_URL, timeout=120_000, wait_until='domcontentloaded')
         await page.wait_for_timeout(2000)
-        print(f'  Page URL after load: {page.url}')
-        await page.fill('input[name="email"]', CI_EMAIL)
+        log(f'Login page loaded — URL: {page.url}')
+
+        log(f'Filling credentials for {CI_EMAIL!r} ...')
+        await page.fill('input[name="email"]',    CI_EMAIL)
         await page.fill('input[type="password"]', CI_PASSWORD)
         await page.click('button[type="submit"]')
+        log('Submitted login form — waiting for redirect ...')
+
         try:
-            await page.wait_for_url(lambda url: 'login' not in url, timeout=90000)
+            await page.wait_for_url(lambda url: 'login' not in url, timeout=120_000)
         except Exception:
             body_text = (await page.inner_text('body'))[:500].replace('\n', ' ')
-            print(f'  LOGIN FAILED — still on: {page.url}')
-            print(f'  Page body snippet: {body_text}')
+            log(f'LOGIN FAILED — still on: {page.url}')
+            log(f'Page body snippet: {body_text}')
             raise
         await page.wait_for_load_state('domcontentloaded')
+        log(f'Logged in — URL: {page.url}')
 
-        print('Navigating to call logs...')
-        await page.goto(CALL_LOGS_URL, timeout=90000, wait_until='domcontentloaded')
+        log('Navigating to /call-logs ...')
+        await page.goto(CALL_LOGS_URL, timeout=120_000, wait_until='domcontentloaded')
         await page.wait_for_timeout(4000)
+        log(f'Call logs page ready — URL: {page.url}')
 
-        print('Downloading CSV...')
-        async with page.expect_download(timeout=90000) as dl_info:
+        log('Clicking Download CSV button ...')
+        async with page.expect_download(timeout=120_000) as dl_info:
             await page.click('button:has-text("Download CSV")')
         dl = await dl_info.value
         save_path = os.path.join(DOWNLOAD_DIR_CI, dl.suggested_filename or 'call_logs.csv')
         await dl.save_as(save_path)
-        print(f'Saved: {save_path}')
+        log(f'CSV saved → {save_path}')
+
         await browser.close()
+        log('Browser closed')
 
         with open(save_path, encoding='utf-8-sig', errors='replace') as f:
             return f.read()
@@ -494,29 +511,34 @@ def build_html(stats: dict, date_label: str, csv_source: str = '', time_window: 
 
 async def take_screenshots(html_path: str, base_path: str):
     """Take 2 screenshots: top section (supervisor table + KPIs) and bottom (team cards)."""
+    log('Screenshot browser launching ...')
     async with async_playwright() as p:
         browser  = await p.chromium.launch(headless=True)
         page     = await browser.new_page(viewport={'width': 1400, 'height': 900}, device_scale_factor=2)
         file_url = 'file:///' + html_path.replace('\\', '/')
+        log(f'Loading HTML for screenshot: {file_url}')
         await page.goto(file_url)
         await page.wait_for_load_state('networkidle')
         await page.wait_for_timeout(1500)
 
         full_height = await page.evaluate('document.body.scrollHeight')
+        log(f'Page height: {full_height}px — resizing viewport ...')
         await page.set_viewport_size({'width': 1400, 'height': full_height})
         await page.wait_for_timeout(300)
 
         layout_box  = await page.locator('.layout').bounding_box()
         split_y     = int(layout_box['y'])
+        log(f'Split point at y={split_y}px')
 
         png1 = base_path.replace('.png', '_1.png')
         png2 = base_path.replace('.png', '_2.png')
 
         await page.screenshot(path=png1, clip={'x': 0, 'y': 0,       'width': 1400, 'height': split_y})
+        log(f'Screenshot 1 saved → {png1}')
         await page.screenshot(path=png2, clip={'x': 0, 'y': split_y, 'width': 1400, 'height': full_height - split_y})
+        log(f'Screenshot 2 saved → {png2}')
 
         await browser.close()
-    print(f'Screenshots saved: {png1}, {png2}')
     return png1, png2
 
 
@@ -555,14 +577,19 @@ def send_whatsapp_html(html_path: str, caption: str, group_id: str, token: str):
 # ─── Main ─────────────────────────────────────────────────────────────────────
 
 async def main():
+    log('=== Outbound Report — START ===')
+
     # Load CSV — from file or via download
     if args.csv:
         csv_path = os.path.abspath(args.csv)
-        print(f'Reading CSV: {csv_path}')
+        log(f'Reading CSV from file: {csv_path}')
         with open(csv_path, encoding='utf-8-sig', errors='replace') as f:
             csv_text = f.read()
+        log(f'CSV loaded ({len(csv_text):,} chars)')
     else:
+        log('No --csv supplied — downloading from CallInsight ...')
         csv_text = await download_csv_playwright()
+        log(f'Download complete ({len(csv_text):,} chars)')
 
     # Auto-detect date from CSV if --date not given
     effective_date_str = report_date_str
@@ -574,50 +601,50 @@ async def main():
                 effective_date_str = d
                 effective_dt = datetime.strptime(d, '%d/%m/%Y')
                 break
-        print(f'Auto-detected date from CSV: {effective_date_str}')
+        log(f'Auto-detected date from CSV: {effective_date_str}')
     else:
-        effective_date_str = report_date_str
-        effective_dt       = report_dt
+        log(f'Using --date override: {effective_date_str}')
 
-    eff_label    = effective_dt.strftime('%#d %B %Y') if sys.platform == 'win32' else effective_dt.strftime('%-d %B %Y')
-    eff_stamp    = effective_dt.strftime('%d%m%Y_%H%M')
-
-    print(f'Report date: {effective_date_str}  ({eff_label})')
+    eff_label = effective_dt.strftime('%#d %B %Y') if sys.platform == 'win32' else effective_dt.strftime('%-d %B %Y')
+    eff_stamp = effective_dt.strftime('%d%m%Y_%H%M')
+    log(f'Report date: {effective_date_str}  ({eff_label})')
 
     # Time window
-    from_time = args.from_time  # e.g. '09:30'
-    to_time   = args.to_time    # e.g. '11:00'
+    from_time = args.from_time
+    to_time   = args.to_time
     if from_time or to_time:
         ft = from_time or '00:00'
         tt = to_time   or 'now'
         time_window = f'{ft} – {tt}'
-        print(f'Time window: {time_window}')
+        log(f'Time window filter: {time_window}')
     else:
         time_window = ''
 
     # Process
+    log('Parsing CSV rows ...')
     stats       = process_csv(csv_text, effective_date_str, from_time=from_time, to_time=to_time)
     active      = sum(1 for s in stats.values() if s['total'] > 0)
     total_calls = sum(s['total']    for s in stats.values())
     total_ans   = sum(s['answered'] for s in stats.values())
-    print(f'Parsed: {total_calls} outbound calls, {total_ans} connected, {active} active counsellors')
+    log(f'Parsed: {total_calls} outbound calls, {total_ans} connected, {active} active counsellors')
 
     # Build HTML
+    log('Building HTML report ...')
     html_content  = build_html(stats, eff_label, csv_source=args.csv or 'CallInsight', time_window=time_window)
     slug          = f'_{from_time.replace(":", "")}-{to_time.replace(":", "")}' if from_time or to_time else ''
     html_filename = f'Outbound_Report_{eff_stamp}{slug}.html'
     html_path     = os.path.join(OUTPUT_DIR, html_filename)
     with open(html_path, 'w', encoding='utf-8') as f:
         f.write(html_content)
-    print(f'HTML saved: {html_path}')
+    log(f'HTML saved → {html_path}')
 
     if LOCAL_MODE:
-        print('--local mode: taking screenshots (no WhatsApp send)')
+        log('--local mode: taking screenshots (no WhatsApp send)')
         png_base = html_path.replace('.html', '.png')
         await take_screenshots(html_path, png_base)
+        log('=== Done (local mode) ===')
         return
 
-    # Determine target group
     target_group = args.group or os.getenv('WHATSAPP_GROUP_CALL_REPORTS', WHATSAPP_GROUP)
     report_type  = 'Cumulative' if (not from_time or from_time == '09:30') else 'Last Hour'
     caption1 = (
@@ -634,11 +661,15 @@ async def main():
         + f'\n2/2 — Team Breakdown'
     )
 
+    log('Taking screenshots ...')
     png_base = html_path.replace('.html', '.png')
     png1, png2 = await take_screenshots(html_path, png_base)
+
+    log(f'Sending image 1/2 to WhatsApp group {target_group} ...')
     send_whatsapp_image(png1, caption1, target_group, WHAPI_TOKEN)
+    log(f'Sending image 2/2 to WhatsApp group {target_group} ...')
     send_whatsapp_image(png2, caption2, target_group, WHAPI_TOKEN)
-    print('Done.')
+    log('=== Done ===')
 
 
 if __name__ == '__main__':
