@@ -61,17 +61,38 @@ def get_service():
         return _service
 
     creds = None
-    if os.path.exists(_TOKEN_PATH):
-        creds = Credentials.from_authorized_user_file(_TOKEN_PATH, SCOPES)
+
+    # Prefer env-var credentials (CI / deployed) over local files
+    token_env = os.environ.get('GOOGLE_TOKEN_JSON')
+    client_secret_env = os.environ.get('GOOGLE_CLIENT_SECRET_JSON')
+
+    if token_env:
+        creds = Credentials.from_authorized_user_info(json.loads(token_env), SCOPES)
 
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
             creds.refresh(Request())
+            # Persist refreshed token back to env-var path or file
+            if token_env:
+                # Write refreshed token to file so next run picks it up
+                with open(_TOKEN_PATH, 'w') as fh:
+                    fh.write(creds.to_json())
         else:
-            flow = InstalledAppFlow.from_client_secrets_file(_CLIENT_SECRET, SCOPES)
-            creds = flow.run_local_server(port=0)
-        with open(_TOKEN_PATH, 'w') as fh:
-            fh.write(creds.to_json())
+            # Fall back to file-based flow
+            if os.path.exists(_TOKEN_PATH):
+                creds = Credentials.from_authorized_user_file(_TOKEN_PATH, SCOPES)
+                if creds and creds.expired and creds.refresh_token:
+                    creds.refresh(Request())
+                    with open(_TOKEN_PATH, 'w') as fh:
+                        fh.write(creds.to_json())
+            else:
+                if not os.path.exists(_CLIENT_SECRET) and client_secret_env:
+                    with open(_CLIENT_SECRET, 'w') as fh:
+                        fh.write(client_secret_env)
+                flow = InstalledAppFlow.from_client_secrets_file(_CLIENT_SECRET, SCOPES)
+                creds = flow.run_local_server(port=0)
+                with open(_TOKEN_PATH, 'w') as fh:
+                    fh.write(creds.to_json())
 
     _service = build('sheets', 'v4', credentials=creds)
     return _service

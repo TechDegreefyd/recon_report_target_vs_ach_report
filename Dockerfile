@@ -30,11 +30,16 @@ COPY bhugoal_generate_report.py .
 COPY bhugoal_daily_report_template.html .
 COPY sheets_config.py .
 COPY server.py .
+COPY generate_outbound_report.py .
+COPY generate_inbound_report.py .
 
 # Create required directories
 RUN mkdir -p \
     "Automation Cron Job/Target Report/local_fallback" \
-    "Automation Cron Job/Recon Data"
+    "Automation Cron Job/Recon Data" \
+    "Automation Cron Job/Outbound Report" \
+    "Automation Cron Job/Inbound Report" \
+    "callinsight_downloads"
 
 EXPOSE 8000
 

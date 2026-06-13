@@ -2,6 +2,20 @@ python "c:\Users\mohit\OneDrive\Desktop\FRESH START\Reports AutoMation\generate_
 
 python generate_all_recon_reports.py 2026-05-26 && set REPORT_DATE=2026-05-26 && python generate_all_lms_reports.py
 
+
+
+  # Outbound cumulative  python generate_outbound_report.py --csv call_13_june.csv
+
+  # Outbound last hour
+  python generate_outbound_report.py --csv call_13_june.csv --from-time 10:00 --to-time 11:00
+
+  # Inbound cumulative
+  python generate_inbound_report.py --csv call_13_june.csv
+
+  # Inbound last hour
+  python generate_inbound_report.py --csv call_13_june.csv --from-time 10:00 --to-time 11:00
+
+
 Reports Automation — System Context
 
   What This System Does

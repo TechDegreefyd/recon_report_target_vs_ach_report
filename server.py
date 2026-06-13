@@ -76,6 +76,39 @@ def _lms_yesterday():
     return ['--yesterday', '--last-activity-only']
 
 
+# ─── Call Report helpers ──────────────────────────────────────────────────────
+_CALL_GROUP = os.getenv('WHATSAPP_GROUP_ONLINE_LOB', '120363424062745706@g.us')
+
+def _call_cumulative_ob():
+    """Outbound: shift start (9:30 AM) → now."""
+    now_ist = datetime.now(IST)
+    return ['--from-time', '09:30', '--to-time', now_ist.strftime('%H:%M'),
+            '--group', _CALL_GROUP]
+
+def _call_last_hour_ob():
+    """Outbound: last 1-hour window."""
+    now_ist  = datetime.now(IST)
+    from_dt  = now_ist - timedelta(hours=1)
+    return ['--from-time', from_dt.strftime('%H:%M'), '--to-time', now_ist.strftime('%H:%M'),
+            '--group', _CALL_GROUP]
+
+def _call_cumulative_ib():
+    """Inbound: shift start (9:30 AM) → now."""
+    now_ist = datetime.now(IST)
+    return ['--from-time', '09:30', '--to-time', now_ist.strftime('%H:%M'),
+            '--group', _CALL_GROUP]
+
+def _call_last_hour_ib():
+    """Inbound: last 1-hour window."""
+    now_ist  = datetime.now(IST)
+    from_dt  = now_ist - timedelta(hours=1)
+    return ['--from-time', from_dt.strftime('%H:%M'), '--to-time', now_ist.strftime('%H:%M'),
+            '--group', _CALL_GROUP]
+
+
+# IST 10 AM – 9 PM = UTC 04:30 – 15:30  →  UTC hours 4–15, minute 30
+_CALL_HOURS_UTC = list(range(4, 16))   # 4,5,...,15
+
 SCHEDULE = [
     (4,  30, "generate_all_recon_reports.py",  "Recon — Yesterday (full day)",               _yesterday_full),
     (4,  35, "generate_all_recon_reports.py",  "Recon — Today (midnight → 10 AM)",           _today_cutoff_10am),
@@ -84,12 +117,58 @@ SCHEDULE = [
     (6,  30, "generate_all_recon_reports.py",  "Recon — Today (midnight → 12 PM)",           _today_cutoff_12pm),
     (10, 30, "generate_all_recon_reports.py",  "Recon — Today (midnight → 4 PM cumulative)", _today_midnight_to_4pm),
     (13, 30, "generate_all_recon_reports.py",  "Recon — Today (midnight → 7 PM cumulative)", _today_midnight_to_7pm),
-    (15, 0,  "generate_all_lms_reports.py",    "LMS Reports (Online + Regular)",             None),
+    (15, 0,  "generate_all_lms_reports.py",    "LMS Reports (Online + Regular)",             lambda: ['--skip-last-activity']),
 ]
+
+# ─── Call Report schedule (10 AM – 9 PM IST, every hour) ─────────────────────
+# Each slot: (a) cumulative outbound, (b) last-hour outbound,
+#            (c) cumulative inbound,  (d) last-hour inbound
+# UTC hour 4 = IST 9:30 AM → first slot 10 AM IST = UTC 04:30
+CALL_SCHEDULE = []
+for _utc_h in _CALL_HOURS_UTC:
+    _ist_h = (_utc_h + 5) % 24
+    _ist_m = 30
+    _is_first_slot = (_utc_h == 4)   # UTC 04:30 = IST 10:00 AM — cumulative only
+
+    CALL_SCHEDULE += [
+        (_utc_h, 30, "generate_outbound_report.py",
+         f"Outbound Cumulative — {_ist_h:02d}:{_ist_m:02d} IST", _call_cumulative_ob),
+        (_utc_h, 34, "generate_inbound_report.py",
+         f"Inbound Cumulative  — {_ist_h:02d}:{_ist_m:02d} IST", _call_cumulative_ib),
+    ]
+    if not _is_first_slot:
+        CALL_SCHEDULE += [
+            (_utc_h, 32, "generate_outbound_report.py",
+             f"Outbound Last Hour  — {_ist_h:02d}:{_ist_m:02d} IST", _call_last_hour_ob),
+            (_utc_h, 36, "generate_inbound_report.py",
+             f"Inbound Last Hour   — {_ist_h:02d}:{_ist_m:02d} IST", _call_last_hour_ib),
+        ]
 
 
 def ist_now():
     return datetime.now(IST)
+
+
+def cleanup_old_reports(max_age_days=2):
+    dirs = [
+        os.path.join(BASE_DIR, 'Automation Cron Job', 'Outbound Report'),
+        os.path.join(BASE_DIR, 'Automation Cron Job', 'Inbound Report'),
+        os.path.join(BASE_DIR, 'callinsight_downloads'),
+    ]
+    cutoff = datetime.now().timestamp() - max_age_days * 86400
+    deleted = 0
+    for d in dirs:
+        if not os.path.isdir(d):
+            continue
+        for fname in os.listdir(d):
+            if not fname.endswith(('.html', '.png', '.csv')):
+                continue
+            fpath = os.path.join(d, fname)
+            if os.path.getmtime(fpath) < cutoff:
+                os.remove(fpath)
+                deleted += 1
+    if deleted:
+        print(f'[cleanup] Deleted {deleted} old report file(s) (>{max_age_days}d)', flush=True)
 
 
 def run_script(script, label, args_fn=None, extra_env=None):
@@ -156,6 +235,20 @@ def main():
             id=label,
         )
 
+    for hour, minute, script, label, args_fn in CALL_SCHEDULE:
+        scheduler.add_job(
+            run_script,
+            trigger=CronTrigger(hour=hour, minute=minute),
+            args=[script, label, args_fn],
+            id=label,
+        )
+
+    scheduler.add_job(
+        cleanup_old_reports,
+        trigger=CronTrigger(hour=18, minute=30),  # midnight IST
+        id='cleanup_old_reports',
+    )
+
     print("=" * 70, flush=True)
     print("  REPORT CRON SERVER — APScheduler (UTC)", flush=True)
     print("=" * 70, flush=True)
@@ -163,7 +256,7 @@ def main():
     print(f"  Server time (IST): {datetime.now(IST).strftime('%Y-%m-%d %H:%M:%S %Z')}\n", flush=True)
 
     print("  SCHEDULE:", flush=True)
-    for h, m, _, label, _ in SCHEDULE:
+    for h, m, _, label, _ in SCHEDULE + CALL_SCHEDULE:
         ist_h = (h + 5) % 24
         ist_m = m + 30
         if ist_m >= 60:
@@ -175,27 +268,29 @@ def main():
     print("  Scheduler started. Waiting for jobs...\n", flush=True)
 
     # ── DEPLOYMENT SMOKE TEST ───────────────────────────────────────────
-    # Runs immediately on startup — sends reports ONLY to the admin group
-    # (120363426619711887@g.us) so the team knows the server is up.
-    # All three group env vars are overridden to point at that single group.
-    _SMOKE_GROUP = "120363426619711887@g.us"
-    _smoke_env = {
-        **os.environ,
-        "WHATSAPP_GROUP_ONLINE_LOB":     _SMOKE_GROUP,
-        "WHATSAPP_GROUP_ONLINE_LMS":    _SMOKE_GROUP,
-        "WHATSAPP_GROUP_REGULAR_LMS":   _SMOKE_GROUP,
-        "WHATSAPP_GROUP_DAILY_UPDATES": _SMOKE_GROUP,
-        "WHATSAPP_GROUP":               _SMOKE_GROUP,
-        "WHATSAPP_GROUP_BHUGOAL":       _SMOKE_GROUP,
-    }
-    print("=" * 70, flush=True)
-    print(f"  🔍 DEPLOY SMOKE TEST — Sending reports to admin group only ({_SMOKE_GROUP})...", flush=True)
-    print("=" * 70, flush=True)
-    run_script("generate_all_lms_reports.py",    "SMOKE TEST — LMS Reports (admin group only)",          None,            extra_env=_smoke_env)
-    run_script("generate_all_recon_reports.py",  "SMOKE TEST — Recon Report (yesterday full day)",       _yesterday_full, extra_env=_smoke_env)
-    run_script("bhugoal_generate_report.py",     "SMOKE TEST — Bhugoal Daily Report (admin group only)", None,            extra_env=_smoke_env)
-    print("=" * 70, flush=True)
-    print("  SMOKE TEST COMPLETE — Admin group notified. Scheduler is live.\n", flush=True)
+    # Only runs when SMOKE_TEST=1 is set in the environment.
+    # Set it once at deploy time; unset for normal restarts.
+    if os.getenv('SMOKE_TEST') == '1':
+        _SMOKE_GROUP = "120363426619711887@g.us"
+        _smoke_env = {
+            **os.environ,
+            "WHATSAPP_GROUP_ONLINE_LOB":     _SMOKE_GROUP,
+            "WHATSAPP_GROUP_ONLINE_LMS":    _SMOKE_GROUP,
+            "WHATSAPP_GROUP_REGULAR_LMS":   _SMOKE_GROUP,
+            "WHATSAPP_GROUP_DAILY_UPDATES": _SMOKE_GROUP,
+            "WHATSAPP_GROUP":               _SMOKE_GROUP,
+            "WHATSAPP_GROUP_BHUGOAL":       _SMOKE_GROUP,
+        }
+        print("=" * 70, flush=True)
+        print(f"  🔍 DEPLOY SMOKE TEST — Sending reports to admin group only ({_SMOKE_GROUP})...", flush=True)
+        print("=" * 70, flush=True)
+        run_script("generate_all_lms_reports.py",    "SMOKE TEST — LMS Reports (admin group only)",          None,            extra_env=_smoke_env)
+        run_script("generate_all_recon_reports.py",  "SMOKE TEST — Recon Report (yesterday full day)",       _yesterday_full, extra_env=_smoke_env)
+        run_script("bhugoal_generate_report.py",     "SMOKE TEST — Bhugoal Daily Report (admin group only)", None,            extra_env=_smoke_env)
+        print("=" * 70, flush=True)
+        print("  SMOKE TEST COMPLETE — Admin group notified. Scheduler is live.\n", flush=True)
+    else:
+        print("  ℹ️  Smoke test skipped (set SMOKE_TEST=1 to enable on deploy).\n", flush=True)
 
     try:
         scheduler.start()
