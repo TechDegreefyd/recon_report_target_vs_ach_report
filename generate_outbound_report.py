@@ -91,8 +91,8 @@ TEAM_COLORS = {
 # ─── CallInsight download ─────────────────────────────────────────────────────
 CALLINSIGHT_URL  = 'https://app.callinsight.io'
 CALL_LOGS_URL    = 'https://app.callinsight.io/call-logs'
-CI_EMAIL         = os.getenv('CALLINSIGHT_EMAIL')
-CI_PASSWORD      = os.getenv('CALLINSIGHT_PASSWORD')
+CI_EMAIL         = (os.getenv('CALLINSIGHT_EMAIL') or '').strip()
+CI_PASSWORD      = (os.getenv('CALLINSIGHT_PASSWORD') or '').strip()
 DOWNLOAD_DIR_CI  = os.path.join(_DIR, 'callinsight_downloads')
 
 
@@ -104,21 +104,30 @@ async def download_csv_playwright() -> str:
         context = await browser.new_context(accept_downloads=True)
         page = await context.new_page()
 
-        print('Logging in to CallInsight...')
-        await page.goto(CALLINSIGHT_URL, timeout=60000, wait_until='domcontentloaded')
+        print(f'Logging in to CallInsight as {CI_EMAIL!r} (password len={len(CI_PASSWORD)})...')
+        if not CI_EMAIL or not CI_PASSWORD:
+            raise RuntimeError('CALLINSIGHT_EMAIL or CALLINSIGHT_PASSWORD env var is not set')
+        await page.goto(CALLINSIGHT_URL, timeout=90000, wait_until='domcontentloaded')
         await page.wait_for_timeout(2000)
+        print(f'  Page URL after load: {page.url}')
         await page.fill('input[name="email"]', CI_EMAIL)
         await page.fill('input[type="password"]', CI_PASSWORD)
         await page.click('button[type="submit"]')
-        await page.wait_for_url(lambda url: 'login' not in url, timeout=30000)
+        try:
+            await page.wait_for_url(lambda url: 'login' not in url, timeout=90000)
+        except Exception:
+            body_text = (await page.inner_text('body'))[:500].replace('\n', ' ')
+            print(f'  LOGIN FAILED — still on: {page.url}')
+            print(f'  Page body snippet: {body_text}')
+            raise
         await page.wait_for_load_state('domcontentloaded')
 
         print('Navigating to call logs...')
-        await page.goto(CALL_LOGS_URL, timeout=60000, wait_until='domcontentloaded')
+        await page.goto(CALL_LOGS_URL, timeout=90000, wait_until='domcontentloaded')
         await page.wait_for_timeout(4000)
 
         print('Downloading CSV...')
-        async with page.expect_download(timeout=30000) as dl_info:
+        async with page.expect_download(timeout=90000) as dl_info:
             await page.click('button:has-text("Download CSV")')
         dl = await dl_info.value
         save_path = os.path.join(DOWNLOAD_DIR_CI, dl.suggested_filename or 'call_logs.csv')

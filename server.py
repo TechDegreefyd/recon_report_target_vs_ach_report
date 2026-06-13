@@ -281,12 +281,20 @@ def main():
             "WHATSAPP_GROUP":               _SMOKE_GROUP,
             "WHATSAPP_GROUP_BHUGOAL":       _SMOKE_GROUP,
         }
+        _now_ist = datetime.now(IST)
+        _smoke_from = "09:30"
+        _smoke_to   = _now_ist.strftime('%H:%M')
         print("=" * 70, flush=True)
-        print(f"  🔍 DEPLOY SMOKE TEST — Sending reports to admin group only ({_SMOKE_GROUP})...", flush=True)
+        print(f"  DEPLOY SMOKE TEST — Sending reports to admin group only ({_SMOKE_GROUP})...", flush=True)
+        print(f"  CallInsight creds: email={os.getenv('CALLINSIGHT_EMAIL', 'NOT SET')!r}  password_len={len((os.getenv('CALLINSIGHT_PASSWORD') or '').strip())}", flush=True)
         print("=" * 70, flush=True)
         run_script("generate_all_lms_reports.py",    "SMOKE TEST — LMS Reports (admin group only)",          None,            extra_env=_smoke_env)
         run_script("generate_all_recon_reports.py",  "SMOKE TEST — Recon Report (yesterday full day)",       _yesterday_full, extra_env=_smoke_env)
         run_script("bhugoal_generate_report.py",     "SMOKE TEST — Bhugoal Daily Report (admin group only)", None,            extra_env=_smoke_env)
+        run_script("generate_outbound_report.py",    "SMOKE TEST — Outbound Cumulative (admin group only)",
+                   lambda: ['--from-time', _smoke_from, '--to-time', _smoke_to, '--group', _SMOKE_GROUP], extra_env=_smoke_env)
+        run_script("generate_inbound_report.py",     "SMOKE TEST — Inbound Cumulative  (admin group only)",
+                   lambda: ['--from-time', _smoke_from, '--to-time', _smoke_to, '--group', _SMOKE_GROUP], extra_env=_smoke_env)
         print("=" * 70, flush=True)
         print("  SMOKE TEST COMPLETE — Admin group notified. Scheduler is live.\n", flush=True)
     else:
