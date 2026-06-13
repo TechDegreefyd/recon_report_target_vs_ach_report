@@ -1,0 +1,97 @@
+2026-06-13T11:43:18.298Z ═══ END STDOUT ═══
+2026-06-13T11:43:18.298Z ═══ STDERR (2082B) ═══
+2026-06-13T11:43:18.298Z Traceback (most recent call last):
+2026-06-13T11:43:18.298Z File "/app/generate_outbound_report.py", line 676, in <module>
+2026-06-13T11:43:18.298Z asyncio.run(main())
+2026-06-13T11:43:18.298Z File "/usr/local/lib/python3.12/asyncio/runners.py", line 195, in run
+2026-06-13T11:43:18.298Z return runner.run(main)
+2026-06-13T11:43:18.298Z ^^^^^^^^^^^^^^^^
+2026-06-13T11:43:18.298Z File "/usr/local/lib/python3.12/asyncio/runners.py", line 118, in run
+2026-06-13T11:43:18.298Z return self._loop.run_until_complete(task)
+2026-06-13T11:43:18.298Z ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2026-06-13T11:43:18.298Z File "/usr/local/lib/python3.12/asyncio/base_events.py", line 691, in run_until_complete
+2026-06-13T11:43:18.298Z return future.result()
+2026-06-13T11:43:18.298Z ^^^^^^^^^^^^^^^
+2026-06-13T11:43:18.298Z File "/app/generate_outbound_report.py", line 591, in main
+2026-06-13T11:43:18.298Z csv_text = await download_csv_playwright()
+2026-06-13T11:43:18.298Z ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2026-06-13T11:43:18.298Z File "/app/generate_outbound_report.py", line 130, in download_csv_playwright
+2026-06-13T11:43:18.298Z await page.wait_for_url(lambda url: 'login' not in url, timeout=120_000)
+2026-06-13T11:43:18.298Z File "/usr/local/lib/python3.12/site-packages/playwright/async_api/_generated.py", line 9759, in wait_for_url
+2026-06-13T11:43:18.298Z await self._impl_obj.wait_for_url(
+2026-06-13T11:43:18.298Z File "/usr/local/lib/python3.12/site-packages/playwright/_impl/_page.py", line 585, in wait_for_url
+2026-06-13T11:43:18.298Z return await self._main_frame.wait_for_url(**locals_to_params(locals()))
+2026-06-13T11:43:18.298Z ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2026-06-13T11:43:18.298Z File "/usr/local/lib/python3.12/site-packages/playwright/_impl/_frame.py", line 266, in wait_for_url
+2026-06-13T11:43:18.298Z async with self.expect_navigation(
+2026-06-13T11:43:18.298Z ^^^^^^^^^^^^^^^^^^^^^^^
+2026-06-13T11:43:18.298Z File "/usr/local/lib/python3.12/site-packages/playwright/_impl/_event_context_manager.py", line 33, in __aexit__
+2026-06-13T11:43:18.298Z await self._future
+2026-06-13T11:43:18.298Z File "/usr/local/lib/python3.12/site-packages/playwright/_impl/_frame.py", line 242, in continuation
+2026-06-13T11:43:18.298Z event = await waiter.result()
+2026-06-13T11:43:18.298Z ^^^^^^^^^^^^^^^^^^^^^
+2026-06-13T11:43:18.298Z playwright._impl._errors.TimeoutError: Timeout 120000ms exceeded.
+2026-06-13T11:43:18.298Z =========================== logs ===========================
+2026-06-13T11:43:18.298Z waiting for navigation to "<function ImplToApiMapping.wrap_handler.<locals>.wrapper_func at 0x775469cae7a0>" until 'load'
+2026-06-13T11:43:18.298Z ============================================================
+2026-06-13T11:43:18.298Z ═══ END STDERR ═══
+2026-06-13T11:43:18.298Z [2026-06-13 17:13:18 IST] ✗  FAIL    — SMOKE TEST — Outbound Cumulative (admin group only)  (exit code=1)
+2026-06-13T11:43:18.298Z ──────────────────────────────────────────────────────────────────────
+2026-06-13T11:43:18.298Z [2026-06-13 17:13:18 IST] ▶  START   — SMOKE TEST — Inbound Cumulative  (admin group only)
+2026-06-13T11:43:18.298Z Python : /usr/local/bin/python
+2026-06-13T11:43:18.298Z Script : /app/generate_inbound_report.py
+2026-06-13T11:43:18.298Z Args   : ['--from-time', '09:30', '--to-time', '17:09', '--group', '120363426619711887@g.us']
+2026-06-13T11:43:18.298Z CMD    : /usr/local/bin/python /app/generate_inbound_report.py --from-time 09:30 --to-time 17:09 --group 120363426619711887@g.us
+2026-06-13T11:43:18.298Z cwd    : /app
+2026-06-13T11:45:23.439Z [2026-06-13 17:15:23 IST] FINISH — elapsed=125.1s  code=1  stdout=625B  stderr=2079B
+2026-06-13T11:45:23.439Z ═══ STDOUT (625B) ═══
+2026-06-13T11:45:23.439Z [   0.0s] === Inbound Report — START ===
+2026-06-13T11:45:23.439Z [   0.0s] No --csv supplied — downloading from CallInsight ...
+2026-06-13T11:45:23.439Z [   0.0s] Launching headless browser ...
+2026-06-13T11:45:23.439Z [   0.6s] Browser ready
+2026-06-13T11:45:23.439Z [   0.6s] Loading CallInsight login page ...
+2026-06-13T11:45:23.439Z [   3.9s] Login page loaded — URL: https://app.callinsight.io/login
+2026-06-13T11:45:23.439Z [   3.9s] Filling credentials for 'sid@degreefyd.com' ...
+2026-06-13T11:45:23.439Z [   4.1s] Submitted login form — waiting for redirect ...
+2026-06-13T11:45:23.439Z [ 124.2s] LOGIN FAILED — still on: https://app.callinsight.io/login
+2026-06-13T11:45:23.439Z [ 124.2s] Page body snippet: Login  "Securely log in to access your personalized dashboard effortlessly."  Email Password Forgot Password? Sign In  Powered by
+2026-06-13T11:45:23.439Z ═══ END STDOUT ═══
+2026-06-13T11:45:23.439Z ═══ STDERR (2079B) ═══
+2026-06-13T11:45:23.439Z Traceback (most recent call last):
+2026-06-13T11:45:23.439Z File "/app/generate_inbound_report.py", line 672, in <module>
+2026-06-13T11:45:23.439Z asyncio.run(main())
+2026-06-13T11:45:23.439Z File "/usr/local/lib/python3.12/asyncio/runners.py", line 195, in run
+2026-06-13T11:45:23.439Z return runner.run(main)
+2026-06-13T11:45:23.439Z ^^^^^^^^^^^^^^^^
+2026-06-13T11:45:23.439Z File "/usr/local/lib/python3.12/asyncio/runners.py", line 118, in run
+2026-06-13T11:45:23.439Z return self._loop.run_until_complete(task)
+2026-06-13T11:45:23.439Z ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2026-06-13T11:45:23.439Z File "/usr/local/lib/python3.12/asyncio/base_events.py", line 691, in run_until_complete
+2026-06-13T11:45:23.439Z return future.result()
+2026-06-13T11:45:23.439Z ^^^^^^^^^^^^^^^
+2026-06-13T11:45:23.439Z File "/app/generate_inbound_report.py", line 585, in main
+2026-06-13T11:45:23.439Z csv_text = await download_csv_playwright()
+2026-06-13T11:45:23.439Z ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2026-06-13T11:45:23.439Z File "/app/generate_inbound_report.py", line 131, in download_csv_playwright
+2026-06-13T11:45:23.439Z await page.wait_for_url(lambda url: 'login' not in url, timeout=120_000)
+2026-06-13T11:45:23.439Z File "/usr/local/lib/python3.12/site-packages/playwright/async_api/_generated.py", line 9759, in wait_for_url
+2026-06-13T11:45:23.439Z await self._impl_obj.wait_for_url(
+2026-06-13T11:45:23.439Z File "/usr/local/lib/python3.12/site-packages/playwright/_impl/_page.py", line 585, in wait_for_url
+2026-06-13T11:45:23.439Z return await self._main_frame.wait_for_url(**locals_to_params(locals()))
+2026-06-13T11:45:23.439Z ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2026-06-13T11:45:23.439Z File "/usr/local/lib/python3.12/site-packages/playwright/_impl/_frame.py", line 266, in wait_for_url
+2026-06-13T11:45:23.439Z async with self.expect_navigation(
+2026-06-13T11:45:23.439Z ^^^^^^^^^^^^^^^^^^^^^^^
+2026-06-13T11:45:23.439Z File "/usr/local/lib/python3.12/site-packages/playwright/_impl/_event_context_manager.py", line 33, in __aexit__
+2026-06-13T11:45:23.439Z await self._future
+2026-06-13T11:45:23.439Z File "/usr/local/lib/python3.12/site-packages/playwright/_impl/_frame.py", line 242, in continuation
+2026-06-13T11:45:23.439Z event = await waiter.result()
+2026-06-13T11:45:23.439Z ^^^^^^^^^^^^^^^^^^^^^
+2026-06-13T11:45:23.439Z playwright._impl._errors.TimeoutError: Timeout 120000ms exceeded.
+2026-06-13T11:45:23.439Z =========================== logs ===========================
+2026-06-13T11:45:23.439Z waiting for navigation to "<function ImplToApiMapping.wrap_handler.<locals>.wrapper_func at 0x71e432e2a8e0>" until 'load'
+2026-06-13T11:45:23.439Z ============================================================
+2026-06-13T11:45:23.439Z ═══ END STDERR ═══
+2026-06-13T11:45:23.439Z [2026-06-13 17:15:23 IST] ✗  FAIL    — SMOKE TEST — Inbound Cumulative  (admin group only)  (exit code=1)
+2026-06-13T11:45:23.439Z ======================================================================
+2026-06-13T11:45:23.439Z SMOKE TEST COMPLETE — Admin group notified. Scheduler is live.

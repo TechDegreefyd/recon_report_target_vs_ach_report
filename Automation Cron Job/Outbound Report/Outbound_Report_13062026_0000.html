@@ -1,0 +1,481 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Outbound Report · 13 June 2026</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: 'Inter', sans-serif;
+    background: #F8F9FB;
+    color: #111827;
+    padding: 36px 40px 48px;
+    font-size: 15px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+  }
+  .topbar {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 28px;
+  }
+  .topbar-left { display: flex; align-items: center; gap: 14px; }
+  .logo-mark {
+    width: 40px; height: 40px; border-radius: 10px;
+    background: #111827;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 14px; font-weight: 800; color: #fff; letter-spacing: -0.5px;
+  }
+  .topbar h1 { font-size: 1.15rem; font-weight: 700; color: #111827; }
+  .topbar p  { font-size: .85rem; color: #4b5563; margin-top: 2px; }
+  .pill {
+    font-size: .72rem; font-weight: 700; letter-spacing: .8px; text-transform: uppercase;
+    padding: 6px 14px; border-radius: 999px;
+    background: #f0fdf4; color: #16a34a; border: 1px solid #bbf7d0;
+  }
+  .kpis { display: grid; grid-template-columns: repeat(6,1fr); gap: 10px; margin-bottom: 28px; }
+  .kpi-card {
+    background: #fff; border: 1px solid #e5e7eb;
+    border-radius: 12px; padding: 16px 18px;
+    position: relative; overflow: hidden;
+  }
+  .kpi-card::after {
+    content: ''; position: absolute; top: 0; left: 0; right: 0;
+    height: 3px; background: var(--ac, #e5e7eb); border-radius: 12px 12px 0 0;
+  }
+  .kpi-card .v { font-size: 1.75rem; font-weight: 800; color: var(--vc, #111827); line-height: 1; margin-top: 4px; }
+  .kpi-card .l { font-size: .72rem; font-weight: 600; color: #4b5563; text-transform: uppercase; letter-spacing: .6px; margin-top: 8px; }
+  .layout { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; align-items: start; }
+  .col    { display: flex; flex-direction: column; gap: 16px; }
+  .tcard  { background: #fff; border: 1px solid #e5e7eb; border-radius: 14px; overflow: hidden; }
+  .tcard-head {
+    padding: 14px 18px 13px; border-bottom: 1px solid #f3f4f6;
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  .tname {
+    display: flex; align-items: center; gap: 9px;
+    font-size: .82rem; font-weight: 700; text-transform: uppercase; letter-spacing: .7px;
+  }
+  .tdot { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; }
+  .tmeta { font-size: .8rem; color: #4b5563; display: flex; gap: 4px; }
+  .tmeta span + span::before { content: '·'; margin-right: 4px; }
+  table { width: 100%; border-collapse: collapse; }
+  thead th {
+    padding: 9px 16px;
+    font-size: .72rem; font-weight: 700; text-transform: uppercase; letter-spacing: .55px;
+    color: #4b5563; text-align: right; white-space: nowrap;
+    background: #F5F6F8; border-bottom: 1px solid #e5e7eb;
+  }
+  thead th:first-child { text-align: left; }
+  tbody td {
+    padding: 11px 16px; text-align: right;
+    color: #121212; font-size: .88rem; font-weight: 700;
+    border-bottom: 1px solid #f3f4f6;
+    font-variant-numeric: tabular-nums;
+  }
+  tbody td:first-child { text-align: left; font-weight: 700; color: #121212; }
+  tbody tr:last-child td { border-bottom: none; }
+  tbody tr:hover td { background: #f9fafb; }
+  .zero-row td { color: #9ca3af; }
+  .zero-row td:first-child { color: #6b7280; font-weight: 500; }
+  tfoot tr { background: #f5f6f8; }
+  tfoot td {
+    padding: 11px 16px; text-align: right;
+    font-size: .82rem; font-weight: 700; color: #1f2937;
+    border-top: 2px solid #e5e7eb;
+    font-variant-numeric: tabular-nums;
+  }
+  tfoot td:first-child { text-align: left; font-size: .72rem; text-transform: uppercase; letter-spacing: .6px; color: #4b5563; }
+  .chip { display: inline-block; padding: 3px 9px; border-radius: 5px; font-size: .75rem; font-weight: 700; }
+  .cg { background: #f0fdf4; color: #15803d; border: 1px solid #bbf7d0; }
+  .co { background: #fff7ed; color: #c2410c; border: 1px solid #fed7aa; }
+  .cr { background: #fef2f2; color: #dc2626; border: 1px solid #fecaca; }
+  .cx { background: #f3f4f6; color: #6b7280; border: 1px solid #e5e7eb; }
+  footer { text-align: center; margin-top: 24px; font-size: .75rem; color: #6b7280; }
+  .sup-table-wrap { background:#fff; border:1px solid #e5e7eb; border-radius:14px; overflow:hidden; margin-bottom:20px; }
+  .sup-table-head { padding:14px 18px 13px; border-bottom:1px solid #e5e7eb; font-size:.82rem; font-weight:700; text-transform:uppercase; letter-spacing:.7px; color:#111827; }
+  .sup-name-cell { text-align:left !important; font-weight:700 !important; padding-left:14px !important; }
+  .act-badge { display:inline-block; margin-left:6px; padding:2px 7px; border-radius:4px; font-size:.7rem; font-weight:700; background:#fef3c7; color:#92400e; border:1px solid #fde68a; }
+  .sup-total td { background:#f5f6f8; font-weight:700; border-top:2px solid #e5e7eb; }
+  .sup-total td:first-child { font-size:.72rem; text-transform:uppercase; letter-spacing:.6px; color:#4b5563; }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="topbar-left">
+    <div class="logo-mark">OB</div>
+    <div>
+      <h1>Outbound Call Report</h1>
+      <p>13 June 2026 &nbsp;·&nbsp; 16 active counsellors &nbsp;·&nbsp; 6 teams</p>
+    </div>
+  </div>
+  <span class="pill">Outbound only</span>
+</div>
+
+<div class="sup-table-wrap">
+  <div class="sup-table-head">Supervisor Summary</div>
+  <table>
+    <thead><tr>
+      <th style="text-align:left">Supervisor</th>
+      <th>Counsellors</th><th>Calls</th><th>Connected</th>
+      <th>Connect&nbsp;%</th><th>Talk&nbsp;Time</th><th>Avg&nbsp;/&nbsp;Call</th>
+      <th>Talk&nbsp;/&nbsp;Active&nbsp;(5+)</th>
+    </tr></thead>
+    <tbody><tr>
+      <td class="sup-name-cell" style="border-left:3px solid #8b5cf6;">Vartika Team</td>
+      <td>5</td><td>388</td><td>151</td>
+      <td><span class="chip co">39%</span></td>
+      <td>6h 41m</td>
+      <td>2m 39s</td>
+      <td>1h 40m</td>
+    </tr><tr>
+      <td class="sup-name-cell" style="border-left:3px solid #0ea5e9;">Sunil Team</td>
+      <td>5</td><td>167</td><td>55</td>
+      <td><span class="chip co">33%</span></td>
+      <td>1h 56m</td>
+      <td>2m 06s</td>
+      <td>39m</td>
+    </tr><tr>
+      <td class="sup-name-cell" style="border-left:3px solid #2563eb;">Vishal Team</td>
+      <td>2</td><td>88</td><td>31</td>
+      <td><span class="chip co">35%</span></td>
+      <td>28m</td>
+      <td>53s</td>
+      <td>28m</td>
+    </tr><tr>
+      <td class="sup-name-cell" style="border-left:3px solid #f59e0b;">Sid Team</td>
+      <td>2</td><td>147</td><td>46</td>
+      <td><span class="chip co">31%</span></td>
+      <td>2h 28m</td>
+      <td>3m 13s</td>
+      <td>1h 14m</td>
+    </tr><tr>
+      <td class="sup-name-cell" style="border-left:3px solid #10b981;">Varun Team</td>
+      <td>3</td><td>237</td><td>95</td>
+      <td><span class="chip co">40%</span></td>
+      <td>3h 58m</td>
+      <td>2m 30s</td>
+      <td>1h 59m</td>
+    </tr><tr>
+      <td class="sup-name-cell" style="border-left:3px solid #ec4899;">Prashant Team</td>
+      <td>2</td><td>186</td><td>90</td>
+      <td><span class="chip cg">48%</span></td>
+      <td>1h 43m</td>
+      <td>1m 09s</td>
+      <td>52m</td>
+    </tr><tr class="sup-total">
+      <td>Total</td><td>16</td><td>1213</td><td>468</td>
+      <td><span class="chip co">39%</span></td>
+      <td>17h 13m</td>
+      <td>2m 12s</td>
+      <td>1h 14m<span class="act-badge">14</span></td>
+    </tr></tbody>
+  </table>
+</div>
+
+<div class="kpis">
+  <div class="kpi-card" style="--ac:#e5e7eb"><div class="v">1213</div><div class="l">Total calls</div></div>
+  <div class="kpi-card" style="--ac:#22c55e;--vc:#16a34a"><div class="v">468</div><div class="l">Connected</div></div>
+  <div class="kpi-card" style="--ac:#3b82f6;--vc:#2563eb"><div class="v">39%</div><div class="l">Connect rate</div></div>
+  <div class="kpi-card" style="--ac:#e5e7eb"><div class="v">17h 13m</div><div class="l">Total talk time</div></div>
+  <div class="kpi-card" style="--ac:#e5e7eb"><div class="v">2m 12s</div><div class="l">Avg / connected</div></div>
+  <div class="kpi-card" style="--ac:#f59e0b;--vc:#b45309"><div class="v">1h 14m</div><div class="l">Talk / counsellor (5+ calls) · 14</div></div>
+</div>
+
+<div class="layout">
+  <div class="col"><div class="tcard">
+  <div class="tcard-head">
+    <div class="tname" style="color:#8b5cf6">
+      <span class="tdot" style="background:#8b5cf6"></span>Vartika Team
+    </div>
+    <div class="tmeta">
+      <span>388 calls</span>
+      <span>151 connected</span>
+      <span>6h 41m</span>
+    </div>
+  </div>
+  <table>
+    <thead><tr>
+      <th>Counsellor</th><th>Calls</th><th>Connected</th>
+      <th>Connect&nbsp;%</th><th>Talk&nbsp;Time</th><th>Avg&nbsp;/&nbsp;Call</th>
+    </tr></thead>
+    <tbody><tr class="">
+      <td>Aditya</td>
+      <td>63</td>
+      <td>39</td>
+      <td><span class="chip cg">61%</span></td>
+      <td>2h 02m</td>
+      <td>3m 08s</td>
+    </tr><tr class="">
+      <td>Nitin</td>
+      <td>132</td>
+      <td>42</td>
+      <td><span class="chip co">31%</span></td>
+      <td>1h 50m</td>
+      <td>2m 37s</td>
+    </tr><tr class="">
+      <td>Sanjay</td>
+      <td>108</td>
+      <td>34</td>
+      <td><span class="chip co">31%</span></td>
+      <td>1h 32m</td>
+      <td>2m 42s</td>
+    </tr><tr class="">
+      <td>Shiv</td>
+      <td>85</td>
+      <td>36</td>
+      <td><span class="chip co">42%</span></td>
+      <td>1h 17m</td>
+      <td>2m 08s</td>
+    </tr><tr class="zero-row">
+      <td>Sagar</td>
+      <td>0</td>
+      <td>0</td>
+      <td><span class="chip cx">—</span></td>
+      <td>—</td>
+      <td>—</td>
+    </tr></tbody>
+    <tfoot><tr>
+      <td>Team Total</td>
+      <td>388</td><td>151</td>
+      <td><span class="chip co">39%</span></td>
+      <td>6h 41m</td>
+      <td>2m 39s</td>
+    </tr></tfoot>
+  </table>
+</div>
+<div class="tcard">
+  <div class="tcard-head">
+    <div class="tname" style="color:#0ea5e9">
+      <span class="tdot" style="background:#0ea5e9"></span>Sunil Team
+    </div>
+    <div class="tmeta">
+      <span>167 calls</span>
+      <span>55 connected</span>
+      <span>1h 56m</span>
+    </div>
+  </div>
+  <table>
+    <thead><tr>
+      <th>Counsellor</th><th>Calls</th><th>Connected</th>
+      <th>Connect&nbsp;%</th><th>Talk&nbsp;Time</th><th>Avg&nbsp;/&nbsp;Call</th>
+    </tr></thead>
+    <tbody><tr class="">
+      <td>Vikas</td>
+      <td>95</td>
+      <td>34</td>
+      <td><span class="chip co">35%</span></td>
+      <td>1h 04m</td>
+      <td>1m 53s</td>
+    </tr><tr class="">
+      <td>Himanshi</td>
+      <td>24</td>
+      <td>9</td>
+      <td><span class="chip co">37%</span></td>
+      <td>24m</td>
+      <td>2m 41s</td>
+    </tr><tr class="">
+      <td>Preeti</td>
+      <td>46</td>
+      <td>11</td>
+      <td><span class="chip cr">23%</span></td>
+      <td>20m</td>
+      <td>1m 48s</td>
+    </tr><tr class="">
+      <td>Avneet</td>
+      <td>2</td>
+      <td>1</td>
+      <td><span class="chip cg">50%</span></td>
+      <td>8m</td>
+      <td>7m 31s</td>
+    </tr><tr class="zero-row">
+      <td>Abhishek</td>
+      <td>0</td>
+      <td>0</td>
+      <td><span class="chip cx">—</span></td>
+      <td>—</td>
+      <td>—</td>
+    </tr></tbody>
+    <tfoot><tr>
+      <td>Team Total</td>
+      <td>167</td><td>55</td>
+      <td><span class="chip co">33%</span></td>
+      <td>1h 56m</td>
+      <td>2m 06s</td>
+    </tr></tfoot>
+  </table>
+</div>
+<div class="tcard">
+  <div class="tcard-head">
+    <div class="tname" style="color:#2563eb">
+      <span class="tdot" style="background:#2563eb"></span>Vishal Team
+    </div>
+    <div class="tmeta">
+      <span>88 calls</span>
+      <span>31 connected</span>
+      <span>28m</span>
+    </div>
+  </div>
+  <table>
+    <thead><tr>
+      <th>Counsellor</th><th>Calls</th><th>Connected</th>
+      <th>Connect&nbsp;%</th><th>Talk&nbsp;Time</th><th>Avg&nbsp;/&nbsp;Call</th>
+    </tr></thead>
+    <tbody><tr class="">
+      <td>Vishwajeet</td>
+      <td>87</td>
+      <td>30</td>
+      <td><span class="chip co">34%</span></td>
+      <td>27m</td>
+      <td>54s</td>
+    </tr><tr class="">
+      <td>Arnav</td>
+      <td>1</td>
+      <td>1</td>
+      <td><span class="chip cg">100%</span></td>
+      <td>1m</td>
+      <td>37s</td>
+    </tr></tbody>
+    <tfoot><tr>
+      <td>Team Total</td>
+      <td>88</td><td>31</td>
+      <td><span class="chip co">35%</span></td>
+      <td>28m</td>
+      <td>53s</td>
+    </tr></tfoot>
+  </table>
+</div></div>
+  <div class="col"><div class="tcard">
+  <div class="tcard-head">
+    <div class="tname" style="color:#f59e0b">
+      <span class="tdot" style="background:#f59e0b"></span>Sid Team
+    </div>
+    <div class="tmeta">
+      <span>147 calls</span>
+      <span>46 connected</span>
+      <span>2h 28m</span>
+    </div>
+  </div>
+  <table>
+    <thead><tr>
+      <th>Counsellor</th><th>Calls</th><th>Connected</th>
+      <th>Connect&nbsp;%</th><th>Talk&nbsp;Time</th><th>Avg&nbsp;/&nbsp;Call</th>
+    </tr></thead>
+    <tbody><tr class="">
+      <td>Virat</td>
+      <td>76</td>
+      <td>26</td>
+      <td><span class="chip co">34%</span></td>
+      <td>1h 27m</td>
+      <td>3m 21s</td>
+    </tr><tr class="">
+      <td>LaxmiNarayan</td>
+      <td>71</td>
+      <td>20</td>
+      <td><span class="chip cr">28%</span></td>
+      <td>1h 01m</td>
+      <td>3m 04s</td>
+    </tr></tbody>
+    <tfoot><tr>
+      <td>Team Total</td>
+      <td>147</td><td>46</td>
+      <td><span class="chip co">31%</span></td>
+      <td>2h 28m</td>
+      <td>3m 13s</td>
+    </tr></tfoot>
+  </table>
+</div>
+<div class="tcard">
+  <div class="tcard-head">
+    <div class="tname" style="color:#10b981">
+      <span class="tdot" style="background:#10b981"></span>Varun Team
+    </div>
+    <div class="tmeta">
+      <span>237 calls</span>
+      <span>95 connected</span>
+      <span>3h 58m</span>
+    </div>
+  </div>
+  <table>
+    <thead><tr>
+      <th>Counsellor</th><th>Calls</th><th>Connected</th>
+      <th>Connect&nbsp;%</th><th>Talk&nbsp;Time</th><th>Avg&nbsp;/&nbsp;Call</th>
+    </tr></thead>
+    <tbody><tr class="">
+      <td>Prashant</td>
+      <td>103</td>
+      <td>43</td>
+      <td><span class="chip co">41%</span></td>
+      <td>2h 16m</td>
+      <td>3m 10s</td>
+    </tr><tr class="">
+      <td>Tanisha</td>
+      <td>134</td>
+      <td>52</td>
+      <td><span class="chip co">38%</span></td>
+      <td>1h 41m</td>
+      <td>1m 57s</td>
+    </tr><tr class="zero-row">
+      <td>Anshika</td>
+      <td>0</td>
+      <td>0</td>
+      <td><span class="chip cx">—</span></td>
+      <td>—</td>
+      <td>—</td>
+    </tr></tbody>
+    <tfoot><tr>
+      <td>Team Total</td>
+      <td>237</td><td>95</td>
+      <td><span class="chip co">40%</span></td>
+      <td>3h 58m</td>
+      <td>2m 30s</td>
+    </tr></tfoot>
+  </table>
+</div>
+<div class="tcard">
+  <div class="tcard-head">
+    <div class="tname" style="color:#ec4899">
+      <span class="tdot" style="background:#ec4899"></span>Prashant Team
+    </div>
+    <div class="tmeta">
+      <span>186 calls</span>
+      <span>90 connected</span>
+      <span>1h 43m</span>
+    </div>
+  </div>
+  <table>
+    <thead><tr>
+      <th>Counsellor</th><th>Calls</th><th>Connected</th>
+      <th>Connect&nbsp;%</th><th>Talk&nbsp;Time</th><th>Avg&nbsp;/&nbsp;Call</th>
+    </tr></thead>
+    <tbody><tr class="">
+      <td>Swapnil</td>
+      <td>130</td>
+      <td>62</td>
+      <td><span class="chip cg">47%</span></td>
+      <td>56m</td>
+      <td>54s</td>
+    </tr><tr class="">
+      <td>Divya</td>
+      <td>56</td>
+      <td>28</td>
+      <td><span class="chip cg">50%</span></td>
+      <td>47m</td>
+      <td>1m 41s</td>
+    </tr></tbody>
+    <tfoot><tr>
+      <td>Team Total</td>
+      <td>186</td><td>90</td>
+      <td><span class="chip cg">48%</span></td>
+      <td>1h 43m</td>
+      <td>1m 09s</td>
+    </tr></tfoot>
+  </table>
+</div></div>
+</div>
+
+<footer>Source: CallInsight &nbsp;·&nbsp; Outbound calls only &nbsp;·&nbsp; 13 June 2026</footer>
+</body>
+</html>

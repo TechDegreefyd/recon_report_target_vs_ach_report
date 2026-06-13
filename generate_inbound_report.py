@@ -111,19 +111,39 @@ async def download_csv_playwright() -> str:
 
     log(f'Launching headless browser ...')
     async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=True)
-        context = await browser.new_context(accept_downloads=True)
-        page    = await context.new_page()
-        log(f'Browser ready')
+        browser = await p.chromium.launch(
+            headless=True,
+            args=[
+                '--no-sandbox',
+                '--disable-setuid-sandbox',
+                '--disable-blink-features=AutomationControlled',
+                '--disable-dev-shm-usage',
+            ],
+        )
+        context = await browser.new_context(
+            accept_downloads=True,
+            user_agent=(
+                'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
+                'AppleWebKit/537.36 (KHTML, like Gecko) '
+                'Chrome/125.0.0.0 Safari/537.36'
+            ),
+        )
+        page = await context.new_page()
+        # hide webdriver flag
+        await page.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+        log('Browser ready')
 
-        log(f'Loading CallInsight login page ...')
+        log('Loading CallInsight login page ...')
         await page.goto(CALLINSIGHT_URL, timeout=120_000, wait_until='domcontentloaded')
-        await page.wait_for_timeout(2000)
+        await page.wait_for_timeout(3000)
         log(f'Login page loaded — URL: {page.url}')
 
         log(f'Filling credentials for {CI_EMAIL!r} ...')
-        await page.fill('input[name="email"]',    CI_EMAIL)
-        await page.fill('input[type="password"]', CI_PASSWORD)
+        await page.click('input[name="email"]')
+        await page.type('input[name="email"]',    CI_EMAIL,    delay=60)
+        await page.click('input[type="password"]')
+        await page.type('input[type="password"]', CI_PASSWORD, delay=60)
+        await page.wait_for_timeout(500)
         await page.click('button[type="submit"]')
         log('Submitted login form — waiting for redirect ...')
 
@@ -133,6 +153,9 @@ async def download_csv_playwright() -> str:
             body_text = (await page.inner_text('body'))[:500].replace('\n', ' ')
             log(f'LOGIN FAILED — still on: {page.url}')
             log(f'Page body snippet: {body_text}')
+            fail_shot = os.path.join(DOWNLOAD_DIR_CI, 'login_failure.png')
+            await page.screenshot(path=fail_shot)
+            log(f'Failure screenshot saved → {fail_shot}')
             raise
         await page.wait_for_load_state('domcontentloaded')
         log(f'Logged in — URL: {page.url}')
