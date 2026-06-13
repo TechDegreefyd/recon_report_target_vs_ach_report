@@ -1,7 +1,6 @@
 # Microsoft's official Playwright image — ships with Chrome, Chromium, Firefox, WebKit
 # and all system dependencies pre-installed. No manual apt installs needed.
-FROM mcr.microsoft.com/playwright/python:v1.52.0-noble
-
+FROM mcr.microsoft.com/playwright:v1.60.0-jammy
 # Prevent Python from writing .pyc files and enable stdout logging
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
