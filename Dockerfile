@@ -1,37 +1,34 @@
-# Microsoft's official Playwright image — ships with Chrome, Chromium, Firefox, WebKit
-# and all system dependencies pre-installed. No manual apt installs needed.
-FROM mcr.microsoft.com/playwright:v1.60.0-jammy
-# Prevent Python from writing .pyc files and enable stdout logging
-ENV PYTHONDONTWRITEBYTECODE=1
-ENV PYTHONUNBUFFERED=1
+  FROM python:3.12-slim
 
-WORKDIR /app
+  ENV PYTHONDONTWRITEBYTECODE=1
+  ENV PYTHONUNBUFFERED=1
 
-# Install Python dependencies
-COPY requirements.txt .
+  RUN apt-get update && apt-get install -y --no-install-recommends \
+      gcc \
+      libpq-dev \
+      curl \
+      ca-certificates \
+      && rm -rf /var/lib/apt/lists/*
 
-RUN pip install --upgrade pip && \
-    pip install --no-cache-dir -r requirements.txt
+  WORKDIR /app
 
-# Copy application source files
-COPY generate_all_lms_reports.py .
-COPY generate_all_recon_reports.py .
-COPY bhugoal_generate_report.py .
-COPY bhugoal_daily_report_template.html .
-COPY sheets_config.py .
-COPY server.py .
-COPY generate_outbound_report.py .
-COPY generate_inbound_report.py .
-COPY download_callinsight.py .
+  COPY requirements.txt .
 
-# Create required directories
-RUN mkdir -p \
-    "Automation Cron Job/Target Report/local_fallback" \
-    "Automation Cron Job/Recon Data" \
-    "Automation Cron Job/Outbound Report" \
-    "Automation Cron Job/Inbound Report" \
-    "callinsight_downloads"
+  RUN pip install --upgrade pip && \
+      pip install --no-cache-dir -r requirements.txt
 
-EXPOSE 8000
+  RUN python -m playwright install --with-deps chromium
 
-CMD ["python", "server.py"]
+  COPY generate_all_lms_reports.py .
+  COPY generate_all_recon_reports.py .
+  COPY bhugoal_generate_report.py .
+  COPY bhugoal_daily_report_template.html .
+  COPY sheets_config.py .
+
+  RUN mkdir -p \
+      "Automation Cron Job/Target Report/local_fallback" \
+      "Automation Cron Job/Recon Data"
+
+  EXPOSE 8000
+
+  CMD ["python", "server.py"]
