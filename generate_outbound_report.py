@@ -103,80 +103,69 @@ CI_PASSWORD      = (os.getenv('CALLINSIGHT_PASSWORD') or '').strip()
 DOWNLOAD_DIR_CI  = os.path.join(_DIR, 'callinsight_downloads')
 
 
-async def download_csv_playwright() -> str:
+def download_csv_api(target_date: str) -> str:
+    """
+    Download call logs from CallInsight API for target_date (DD/MM/YYYY).
+    Filters client-side to only keep rows matching target_date,
+    because the API daterange filter bleeds into the next day.
+    """
     if not CI_EMAIL or not CI_PASSWORD:
         raise RuntimeError('CALLINSIGHT_EMAIL or CALLINSIGHT_PASSWORD env var is not set')
     os.makedirs(DOWNLOAD_DIR_CI, exist_ok=True)
 
-    log('Launching headless browser ...')
-    async with async_playwright() as p:
-        browser = await p.chromium.launch(
-            headless=True,
-            args=[
-                '--no-sandbox',
-                '--disable-setuid-sandbox',
-                '--disable-blink-features=AutomationControlled',
-                '--disable-dev-shm-usage',
-            ],
-        )
-        context = await browser.new_context(
-            accept_downloads=True,
-            user_agent=(
-                'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
-                'AppleWebKit/537.36 (KHTML, like Gecko) '
-                'Chrome/125.0.0.0 Safari/537.36'
-            ),
-        )
-        page = await context.new_page()
-        # hide webdriver flag
-        await page.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
-        log('Browser ready')
+    log(f'Logging into CallInsight API as {CI_EMAIL!r} ...')
+    login_r = requests.post(
+        'https://app.callinsight.io/api/login',
+        json={'email': CI_EMAIL, 'password': CI_PASSWORD},
+        timeout=30,
+    )
+    login_r.raise_for_status()
+    token = login_r.json().get('data', {}).get('token', '')
+    if not token:
+        raise RuntimeError(f'CallInsight login failed: {login_r.text}')
+    log('Logged in via API')
 
-        log('Loading CallInsight login page ...')
-        await page.goto(CALLINSIGHT_URL, timeout=120_000, wait_until='domcontentloaded')
-        await page.wait_for_timeout(3000)
-        log(f'Login page loaded — URL: {page.url}')
+    # Convert DD/MM/YYYY → YYYY-MM-DD for API
+    dt = datetime.strptime(target_date, '%d/%m/%Y')
+    date_iso = dt.strftime('%Y-%m-%d')
 
-        log(f'Filling credentials for {CI_EMAIL!r} ...')
-        await page.click('input[name="email"]')
-        await page.type('input[name="email"]',    CI_EMAIL,    delay=60)
-        await page.click('input[type="password"]')
-        await page.type('input[type="password"]', CI_PASSWORD, delay=60)
-        await page.wait_for_timeout(500)
-        await page.click('button[type="submit"]')
-        log('Submitted login form — waiting for redirect ...')
+    headers = {'Authorization': f'Bearer {token}', 'Content-Type': 'application/json', 'Accept': '*/*'}
+    payload = {
+        'sort': 'id', 'direction': 'desc', 'page': 0, 'per_page': 5000,
+        'daterange': [f'{date_iso}T00:00:00.000Z', f'{date_iso}T23:59:59.000Z'],
+        'call_status': '', 'call_type': '', 'organization': '', 'phone_numbers': [],
+        'call_duration': [0, 7200], 'caller_number': '', 'is_archive': False,
+        'filter_call_type': '', 'user': '', 'callback': '', 'department': '',
+        'internal_numbers': 'Y', 'start_time': '00:00', 'end_time': '23:59',
+        'is_initial_request': 1,
+    }
 
-        try:
-            await page.wait_for_url(lambda url: 'login' not in url, timeout=120_000)
-        except Exception:
-            body_text = (await page.inner_text('body'))[:500].replace('\n', ' ')
-            log(f'LOGIN FAILED — still on: {page.url}')
-            log(f'Page body snippet: {body_text}')
-            fail_shot = os.path.join(DOWNLOAD_DIR_CI, 'login_failure.png')
-            await page.screenshot(path=fail_shot)
-            log(f'Failure screenshot saved → {fail_shot}')
-            raise
-        await page.wait_for_load_state('domcontentloaded')
-        log(f'Logged in — URL: {page.url}')
+    log(f'Downloading call logs for {target_date} ...')
+    r = requests.post('https://app.callinsight.io/api/call-logs/download',
+                      headers=headers, json=payload, timeout=60)
+    r.raise_for_status()
+    raw_text = r.text
 
-        log('Navigating to /call-logs ...')
-        await page.goto(CALL_LOGS_URL, timeout=120_000, wait_until='domcontentloaded')
-        await page.wait_for_timeout(4000)
-        log(f'Call logs page ready — URL: {page.url}')
+    # Client-side date filter — API bleeds next day's rows into the response
+    reader = list(csv.DictReader(io.StringIO(raw_text)))
+    kept   = [row for row in reader if parse_date_cell(row.get('Date', '')) == target_date]
+    log(f'API returned {len(reader)} rows — kept {len(kept)} matching {target_date}')
 
-        log('Clicking Download CSV button ...')
-        async with page.expect_download(timeout=120_000) as dl_info:
-            await page.click('button:has-text("Download CSV")')
-        dl = await dl_info.value
-        save_path = os.path.join(DOWNLOAD_DIR_CI, dl.suggested_filename or 'call_logs.csv')
-        await dl.save_as(save_path)
-        log(f'CSV saved → {save_path}')
+    if not kept:
+        return raw_text  # return as-is so caller can handle empty gracefully
 
-        await browser.close()
-        log('Browser closed')
+    out = io.StringIO()
+    writer = csv.DictWriter(out, fieldnames=reader[0].keys(), quoting=csv.QUOTE_ALL)
+    writer.writeheader()
+    writer.writerows(kept)
+    filtered_text = out.getvalue()
 
-        with open(save_path, encoding='utf-8-sig', errors='replace') as f:
-            return f.read()
+    save_path = os.path.join(DOWNLOAD_DIR_CI, f'call_logs_{dt.strftime("%d%m%Y")}.csv')
+    with open(save_path, 'w', encoding='utf-8') as f:
+        f.write(filtered_text)
+    log(f'CSV saved → {save_path}')
+
+    return filtered_text
 
 
 # ─── CSV parsing ─────────────────────────────────────────────────────────────
@@ -603,30 +592,29 @@ async def main():
     log('=== Outbound Report — START ===')
 
     # Load CSV — from file or via download
+    # Resolve effective date first (needed for API download)
+    effective_date_str = report_date_str
+    effective_dt       = report_dt
+
     if args.csv:
         csv_path = os.path.abspath(args.csv)
         log(f'Reading CSV from file: {csv_path}')
         with open(csv_path, encoding='utf-8-sig', errors='replace') as f:
             csv_text = f.read()
         log(f'CSV loaded ({len(csv_text):,} chars)')
+        # Auto-detect date from CSV if --date not given
+        if not args.date:
+            for row in csv.DictReader(io.StringIO(csv_text)):
+                d = parse_date_cell(row.get('Date', ''))
+                if re.match(r'\d{2}/\d{2}/\d{4}', d):
+                    effective_date_str = d
+                    effective_dt       = datetime.strptime(d, '%d/%m/%Y')
+                    break
+            log(f'Auto-detected date from CSV: {effective_date_str}')
     else:
-        log('No --csv supplied — downloading from CallInsight ...')
-        csv_text = await download_csv_playwright()
+        log(f'Downloading from CallInsight API for {effective_date_str} ...')
+        csv_text = download_csv_api(effective_date_str)
         log(f'Download complete ({len(csv_text):,} chars)')
-
-    # Auto-detect date from CSV if --date not given
-    effective_date_str = report_date_str
-    effective_dt       = report_dt
-    if not args.date:
-        for row in csv.DictReader(io.StringIO(csv_text)):
-            d = parse_date_cell(row.get('Date', ''))
-            if re.match(r'\d{2}/\d{2}/\d{4}', d):
-                effective_date_str = d
-                effective_dt = datetime.strptime(d, '%d/%m/%Y')
-                break
-        log(f'Auto-detected date from CSV: {effective_date_str}')
-    else:
-        log(f'Using --date override: {effective_date_str}')
 
     eff_label = effective_dt.strftime('%#d %B %Y') if sys.platform == 'win32' else effective_dt.strftime('%-d %B %Y')
     eff_stamp = effective_dt.strftime('%d%m%Y_%H%M')

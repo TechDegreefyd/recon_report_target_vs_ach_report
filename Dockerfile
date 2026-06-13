@@ -1,27 +1,18 @@
-FROM python:3.12-slim
+# Microsoft's official Playwright image — ships with Chrome, Chromium, Firefox, WebKit
+# and all system dependencies pre-installed. No manual apt installs needed.
+FROM mcr.microsoft.com/playwright/python:v1.52.0-noble
 
 # Prevent Python from writing .pyc files and enable stdout logging
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 
-# Install only build dependencies (Playwright --with-deps handles browser libs)
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    gcc \
-    libpq-dev \
-    curl \
-    ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
-
 WORKDIR /app
 
-# Install Python dependencies first for Docker layer caching
+# Install Python dependencies
 COPY requirements.txt .
 
 RUN pip install --upgrade pip && \
     pip install --no-cache-dir -r requirements.txt
-
-# Install Playwright browser binaries and required dependencies
-RUN python -m playwright install --with-deps chromium
 
 # Copy application source files
 COPY generate_all_lms_reports.py .
@@ -32,6 +23,7 @@ COPY sheets_config.py .
 COPY server.py .
 COPY generate_outbound_report.py .
 COPY generate_inbound_report.py .
+COPY download_callinsight.py .
 
 # Create required directories
 RUN mkdir -p \
