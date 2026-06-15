@@ -65,8 +65,8 @@ RUN_STAMP  = report_dt.strftime('%d%m%Y_%H%M')
 
 # ─── Counsellor → SIM → Team mapping ────────────────────────────────────────
 SIM_MAP = {
-    '6357928504': ('Vishwajeet',   'Vishal Team'),
-    '6357928508': ('Arnav',        'Vishal Team'),
+    '6357928504': ('Vishwajeet',   'Sunil Team'),
+    '6357928508': ('Arnav',        'Vartika Team'),
     '6357928515': ('Avneet',       'Sunil Team'),
     '6357928503': ('Himanshi',     'Sunil Team'),
     '6357928509': ('Vikas',        'Sunil Team'),
@@ -86,11 +86,10 @@ SIM_MAP = {
     '6357928507': ('Divya',        'Prashant Team'),
 }
 
-TEAM_ORDER = ['Vartika Team', 'Sunil Team', 'Vishal Team', 'Sid Team', 'Varun Team', 'Prashant Team']
+TEAM_ORDER = ['Vartika Team', 'Sunil Team', 'Sid Team', 'Varun Team', 'Prashant Team']
 TEAM_COLORS = {
     'Vartika Team':  '#8b5cf6',
     'Sunil Team':    '#0ea5e9',
-    'Vishal Team':   '#2563eb',
     'Sid Team':      '#f59e0b',
     'Varun Team':    '#10b981',
     'Prashant Team': '#ec4899',
