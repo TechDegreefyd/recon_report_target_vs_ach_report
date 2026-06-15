@@ -8,9 +8,18 @@ Run:  python setup_sheets.py
 
 import os
 import sys
+import calendar
+from datetime import datetime, timedelta
 
 if sys.stdout.encoding != 'utf-8':
     sys.stdout.reconfigure(encoding='utf-8')
+
+# ── Dynamic date helpers (recomputed every time setup_sheets.py is run) ────────
+_today       = datetime.today()
+_month_start = _today.replace(day=1).strftime('%Y-%m-%d')
+_month_end   = _today.replace(day=calendar.monthrange(_today.year, _today.month)[1]).strftime('%Y-%m-%d')
+_monday      = (_today - timedelta(days=_today.weekday())).strftime('%Y-%m-%d')
+_sunday      = (_today + timedelta(days=6 - _today.weekday())).strftime('%Y-%m-%d')
 
 from googleapiclient.discovery import build
 from google.oauth2.credentials import Credentials
@@ -107,10 +116,10 @@ def format_tab(svc, sheet_id, ncols):
 #
 ONLINE_TARGETS_ROWS = [
     ['Supervisor', 'Fee Monthly Target', 'Adm Monthly Target', 'Week Start', 'Week End'],
-    ['Varun',          5000000, 80, '2026-05-19', '2026-05-25'],
-    ['Sunil',          5000000, 80, '',           ''           ],
-    ['Siddarth Kumar', 5000000, 80, '',           ''           ],
-    ['Vishal Gaur',    2000000, 40, '',           ''           ],
+    ['Varun',          5000000, 80, _monday, _sunday],
+    ['Sunil',          5000000, 80, '',      ''     ],
+    ['Siddarth Kumar', 5000000, 80, '',      ''     ],
+    ['Vishal Gaur',    2000000, 40, '',      ''     ],
 ]
 
 #
@@ -172,7 +181,7 @@ REGULAR_TARGETS_ROWS = [
     ['College', 'Month Start', 'Month End', 'Week Start', 'Week End',
      'Adm Monthly Target', 'Forms Monthly Target'],
     ['Amity University (All Campuses)',
-     '2026-05-01', '2026-05-31', '2026-05-19', '2026-05-25', 120, 1200],
+     _month_start, _month_end, _monday, _sunday, 120, 1200],
     ['Lovely Professional University',
      '', '', '', '', 94, 409],
     ['Chandigarh University, Mohali',

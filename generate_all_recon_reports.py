@@ -42,7 +42,7 @@ OUTPUT_DIR = os.path.join(BASE_DIR, 'Automation Cron Job', 'Recon Data')
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 # ─── WHAPI ──────────────────────────────────────────────────────────────────────
-WHAPI_TOKEN = os.getenv('WHAPI_TOKEN')
+WHAPI_TOKEN = os.getenv('WHAPI_TOKEN_PAID')
 WHATSAPP_GROUP = [g.strip() for g in os.getenv('WHATSAPP_GROUP_DAILY_UPDATES', os.getenv('WHATSAPP_GROUP', '120363426619711887@g.us')).split(',') if g.strip()]
 
 # ─── DB ─────────────────────────────────────────────────────────────────────────
@@ -391,7 +391,7 @@ async def screenshot_html(html_path, png_path, viewport_width=1024):
 def send_via_whapi(file_path, caption):
     """Send a file to WhatsApp via WHAPI (best-effort)."""
     if not WHAPI_TOKEN:
-        print(f"  ⚠️  WHAPI_TOKEN not set — file kept at: {file_path}")
+        print(f"  ⚠️  WHAPI_TOKEN_PAID not set — file kept at: {file_path}")
         return False
 
     filename = os.path.basename(file_path)
@@ -451,7 +451,7 @@ async def main():
     for key in ('REGULAR_LMS_DB_HOST', 'REGULAR_LMS_DB_PORT', 'REGULAR_LMS_DB_NAME',
                 'REGULAR_LMS_DB_USER', 'REGULAR_LMS_DB_PASSWORD',
                 'GOOGLE_TOKEN_JSON', 'GOOGLE_CLIENT_SECRET_JSON',
-                'WHAPI_TOKEN', 'WHATSAPP_GROUP'):
+                'WHAPI_TOKEN_PAID', 'WHATSAPP_GROUP'):
         val = os.getenv(key)
         if val:
             masked = val[:6] + '...' + val[-4:] if len(val) > 12 else '***'

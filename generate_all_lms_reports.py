@@ -58,7 +58,7 @@ os.makedirs(OUTPUT_DIR, exist_ok=True)
 os.makedirs(LOCAL_FALLBACK_DIR, exist_ok=True)
 
 # ─── WHAPI ──────────────────────────────────────────────────────────────────────
-WHAPI_TOKEN = os.getenv('WHAPI_TOKEN')
+WHAPI_TOKEN = os.getenv('WHAPI_TOKEN_PAID')
 
 # ── Named groups — IDs are read from .env (comma-separated = multiple groups, auto-picked up)
 _fallback = os.getenv('WHATSAPP_GROUP', '120363426619711887@g.us')
@@ -113,17 +113,27 @@ MONTH_SHORT = report_date.strftime('%b')
 # Last month date range — same day window as current MTD
 # e.g. today = Jun 9  →  compare May 1–9 vs Jun 1–9
 _lm_first       = (report_date.replace(day=1) - timedelta(days=1)).replace(day=1)
-_lm_same_day    = _lm_first.replace(day=report_date.day)
+_lm_same_day    = _lm_first.replace(day=min(report_date.day, calendar.monthrange(_lm_first.year, _lm_first.month)[1]))
 LAST_MTD_START  = _lm_first.strftime('%Y-%m-%d')
 LAST_MTD_END    = _lm_same_day.strftime('%Y-%m-%d')
 LAST_MONTH_LABEL = _lm_first.strftime('%B %Y')
 
-# First 12 days of current month vs last 12 days of previous month
-_prev_last    = report_date.replace(day=1) - timedelta(days=1)
-LAST12_START  = (_prev_last - timedelta(days=11)).strftime('%Y-%m-%d')
-LAST12_END    = _prev_last.strftime('%Y-%m-%d')
-FIRST12_START = report_date.replace(day=1).strftime('%Y-%m-%d')
-FIRST12_END   = report_date.replace(day=min(12, report_date.day)).strftime('%Y-%m-%d')
+# N-day comparisons — N grows daily with report_date.day, two variants:
+#   A) First N days of prev month  vs  First N days of current month  (same-window MoM)
+#   B) Last N days of prev month   vs  First N days of current month  (momentum/transition)
+_prev_last       = report_date.replace(day=1) - timedelta(days=1)
+_days_in_lm      = calendar.monthrange(_lm_first.year, _lm_first.month)[1]
+_n_days          = report_date.day   # grows every day, no cap
+# Shared — first N days of current month (right side of both comparisons)
+FIRST12_START    = report_date.replace(day=1).strftime('%Y-%m-%d')
+FIRST12_END      = report_date.strftime('%Y-%m-%d')   # = FTD_DATE
+# Comparison A — first N days of previous month (capped at prev month length)
+LM_FIRST_N_START = _lm_first.strftime('%Y-%m-%d')
+LM_FIRST_N_END   = _lm_first.replace(day=min(_n_days, _days_in_lm)).strftime('%Y-%m-%d')
+# Comparison B — last N days of previous month (capped at prev month length)
+_b_n             = min(_n_days, _days_in_lm)
+LAST12_START     = (_prev_last - timedelta(days=_b_n - 1)).strftime('%Y-%m-%d')
+LAST12_END       = _prev_last.strftime('%Y-%m-%d')
 PREV_MONTH_LABEL = _prev_last.strftime('%B %Y')
 
 # Timestamp of this run (IST) — appended to all output filenames
@@ -223,7 +233,7 @@ async def online_get_data():
     if extra_all:
         df_couns_all = pd.concat([df_couns_all, pd.DataFrame(extra_all)], ignore_index=True)
 
-    YTD_START  = '2025-01-01'
+    YTD_START  = f'{report_date.year}-01-01'
     MTD_START_ = MTD_START
     MTD_END_   = MTD_END
     FTD_DATE_  = FTD_DATE
@@ -1504,7 +1514,7 @@ ORDER BY s.student_id, uc.course_id, csj.created_at ASC;"""
 
 
 async def regular_get_data():
-    ytd_start = '2025-01-01'
+    ytd_start = f'{report_date.year}-01-01'
     ytd_end   = (report_date + timedelta(days=1)).strftime('%Y-%m-%d')
     all_adm, all_form = [], []
     db_excludes = {
@@ -1578,7 +1588,7 @@ def _count(df, college, start=None, end=None, exact=None):
     return int(mask.sum())
 
 
-YTD_START = '2025-01-01'  # fixed: track from Jan 1 2025 across both reports
+YTD_START = f'{report_date.year}-01-01'
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1701,7 +1711,7 @@ ORDER BY s.student_id, csj.course_id, csj.created_at ASC
 async def amity_get_total_forms_this_year():
     """Query AMITY DB for this year's Amity total forms via course_status_journeys."""
     db = next(d for d in REGULAR_DB_CONFIGS if d['name'] == 'AMITY')
-    ytd_start = '2025-01-01'
+    ytd_start = f'{report_date.year}-01-01'
     sql = _AMITY_TOTAL_FORMS_SQL.format(ytd_start=ytd_start)
     conn = await asyncpg.connect(host=db['host'], port=db['port'],
                                   database=db['database'], user=db['user'], password=db['password'])
@@ -1994,25 +2004,39 @@ def regular_prepare_data(df_adm, df_form):
         f'Form {LAST_MONTH_LABEL}', f'Form {MONTH_LABEL}', 'Form Δ',
     ])
 
-    # ── College First-12 vs Last-12 Comparison ───────────────────────────────
-    # Last 12 days of previous month vs first 12 days of current month
-    day12_rows = []
+    # ── College 12-Day Comparisons ────────────────────────────────────────────
+    # Comparison A: First N days of prev month vs First N days of current month
+    cmp_a_rows = []
     for col in COLLEGE_TARGETS.keys():
-        prev12_adm  = _count(df_adm,  col, start=LAST12_START,  end=LAST12_END)
-        curr12_adm  = _count(df_adm,  col, start=FIRST12_START, end=FIRST12_END)
-        prev12_form = _count(df_form, col, start=LAST12_START,  end=LAST12_END)
-        curr12_form = _count(df_form, col, start=FIRST12_START, end=FIRST12_END)
-        chg_adm  = curr12_adm  - prev12_adm
-        chg_form = curr12_form - prev12_form
-        day12_rows.append([col, prev12_adm, curr12_adm, chg_adm, prev12_form, curr12_form, chg_form])
-
-    gt_p12a = sum(r[1] for r in day12_rows); gt_c12a = sum(r[2] for r in day12_rows)
-    gt_p12f = sum(r[4] for r in day12_rows); gt_c12f = sum(r[5] for r in day12_rows)
-    day12_rows.append(['Total', gt_p12a, gt_c12a, gt_c12a - gt_p12a, gt_p12f, gt_c12f, gt_c12f - gt_p12f])
-    sheets['College_12Day'] = pd.DataFrame(day12_rows, columns=[
+        a_prev_adm  = _count(df_adm,  col, start=LM_FIRST_N_START, end=LM_FIRST_N_END)
+        a_curr_adm  = _count(df_adm,  col, start=FIRST12_START,    end=FIRST12_END)
+        a_prev_form = _count(df_form, col, start=LM_FIRST_N_START, end=LM_FIRST_N_END)
+        a_curr_form = _count(df_form, col, start=FIRST12_START,    end=FIRST12_END)
+        cmp_a_rows.append([col, a_prev_adm, a_curr_adm, a_curr_adm - a_prev_adm, a_prev_form, a_curr_form, a_curr_form - a_prev_form])
+    gt_a_pa = sum(r[1] for r in cmp_a_rows); gt_a_ca = sum(r[2] for r in cmp_a_rows)
+    gt_a_pf = sum(r[4] for r in cmp_a_rows); gt_a_cf = sum(r[5] for r in cmp_a_rows)
+    cmp_a_rows.append(['Total', gt_a_pa, gt_a_ca, gt_a_ca - gt_a_pa, gt_a_pf, gt_a_cf, gt_a_cf - gt_a_pf])
+    sheets['College_12Day_A'] = pd.DataFrame(cmp_a_rows, columns=[
         'College',
-        f'Adm Last 12 ({PREV_MONTH_LABEL})', f'Adm First 12 ({MONTH_LABEL})', 'Adm Δ',
-        f'Form Last 12 ({PREV_MONTH_LABEL})', f'Form First 12 ({MONTH_LABEL})', 'Form Δ',
+        f'Adm First {_n_days} ({PREV_MONTH_LABEL})', f'Adm First {_n_days} ({MONTH_LABEL})', 'Adm Δ',
+        f'Form First {_n_days} ({PREV_MONTH_LABEL})', f'Form First {_n_days} ({MONTH_LABEL})', 'Form Δ',
+    ])
+
+    # Comparison B: Last N days of prev month vs First N days of current month
+    cmp_b_rows = []
+    for col in COLLEGE_TARGETS.keys():
+        b_prev_adm  = _count(df_adm,  col, start=LAST12_START,  end=LAST12_END)
+        b_curr_adm  = _count(df_adm,  col, start=FIRST12_START, end=FIRST12_END)
+        b_prev_form = _count(df_form, col, start=LAST12_START,  end=LAST12_END)
+        b_curr_form = _count(df_form, col, start=FIRST12_START, end=FIRST12_END)
+        cmp_b_rows.append([col, b_prev_adm, b_curr_adm, b_curr_adm - b_prev_adm, b_prev_form, b_curr_form, b_curr_form - b_prev_form])
+    gt_b_pa = sum(r[1] for r in cmp_b_rows); gt_b_ca = sum(r[2] for r in cmp_b_rows)
+    gt_b_pf = sum(r[4] for r in cmp_b_rows); gt_b_cf = sum(r[5] for r in cmp_b_rows)
+    cmp_b_rows.append(['Total', gt_b_pa, gt_b_ca, gt_b_ca - gt_b_pa, gt_b_pf, gt_b_cf, gt_b_cf - gt_b_pf])
+    sheets['College_12Day'] = pd.DataFrame(cmp_b_rows, columns=[
+        'College',
+        f'Adm Last {_n_days} ({PREV_MONTH_LABEL})', f'Adm First {_n_days} ({MONTH_LABEL})', 'Adm Δ',
+        f'Form Last {_n_days} ({PREV_MONTH_LABEL})', f'Form First {_n_days} ({MONTH_LABEL})', 'Form Δ',
     ])
 
     print("✅ Regular LMS data prepared")
@@ -2092,22 +2116,18 @@ def _reg_col_mom_html_section(df):
 </div>'''
 
 
-def _reg_col_12day_html_section(df):
-    """Render College 12-Day Comparison table: last 12 days of prev month vs first 12 of current."""
-    if df is None or df.empty:
-        return '<p style="color:#888">No data available.</p>'
-
+def _reg_col_12day_html_section(df_b, df_a=None):
+    """Render two College N-Day Comparison tables:
+       df_a — Comparison A: First N days of prev month vs First N days of current month
+       df_b — Comparison B: Last N days of prev month  vs First N days of current month
+    """
     name_map = {
-        'Chandigarh University, Mohali':             'CU Mohali',
-        'Lovely Professional University':            'LPU',
-        'Chandigarh University, Lucknow':            'CU Lucknow',
-        'Chandigarh Group of Colleges, Landran (CGC)': 'Landran',
-        'Amity University (All Campuses)':           'Amity',
+        'Chandigarh University, Mohali':                'CU Mohali',
+        'Lovely Professional University':               'LPU',
+        'Chandigarh University, Lucknow':               'CU Lucknow',
+        'Chandigarh Group of Colleges, Landran (CGC)':  'Landran',
+        'Amity University (All Campuses)':              'Amity',
     }
-
-    cols = list(df.columns)
-    adm_lm_col  = cols[1]; adm_tm_col  = cols[2]
-    form_lm_col = cols[4]; form_tm_col = cols[5]
 
     def chg_cls(val):
         try:
@@ -2116,41 +2136,38 @@ def _reg_col_12day_html_section(df):
         except:
             return ''
 
-    header = (
-        f'<th>{html.escape(adm_lm_col)}</th>'
-        f'<th>{html.escape(adm_tm_col)}</th>'
-        f'<th>Adm Δ</th>'
-        f'<th>{html.escape(form_lm_col)}</th>'
-        f'<th>{html.escape(form_tm_col)}</th>'
-        f'<th>Form Δ</th>'
-    )
-    tbody = ''
-    for _, row in df.iterrows():
-        college  = str(row['College'])
-        is_total = college.lower() == 'total'
-        name     = '⭟ Total' if is_total else name_map.get(college, college)
-        cls      = 'total-row' if is_total else ''
-        sep      = 'border-top:2px solid #1a1a18;' if is_total else ''
-        adm_chg_cls  = chg_cls(row.iloc[3])
-        form_chg_cls = chg_cls(row.iloc[6])
-        tbody += (
-            f'<tr class="{cls}" style="{sep}">'
-            f'<td class="college-name {"bold" if is_total else ""}">{html.escape(name)}</td>'
-            f'<td class="num">{row.iloc[1]}</td>'
-            f'<td class="num">{row.iloc[2]}</td>'
-            f'<td class="num {adm_chg_cls}">{row.iloc[3]:+d}</td>'
-            f'<td class="num">{row.iloc[4]}</td>'
-            f'<td class="num">{row.iloc[5]}</td>'
-            f'<td class="num {form_chg_cls}">{row.iloc[6]:+d}</td>'
-            f'</tr>\n'
+    def _render_table(df, label, date_range):
+        if df is None or df.empty:
+            return f'<p style="color:#888">No data for {label}.</p>'
+        cols = list(df.columns)
+        header = (
+            f'<th>{html.escape(cols[1])}</th>'
+            f'<th>{html.escape(cols[2])}</th>'
+            f'<th>Adm Δ</th>'
+            f'<th>{html.escape(cols[4])}</th>'
+            f'<th>{html.escape(cols[5])}</th>'
+            f'<th>Form Δ</th>'
         )
-
-    date_range = (
-        f'{LAST12_START[8:]} – {LAST12_END[8:]} {PREV_MONTH_LABEL}'
-        f' vs {FIRST12_START[8:]} – {FIRST12_END[8:]} {MONTH_LABEL}'
-    )
-    return f'''
-<div class="section-label"><span>College 12-Day Comparison &middot; {date_range}</span></div>
+        tbody = ''
+        for _, row in df.iterrows():
+            college  = str(row['College'])
+            is_total = college.lower() == 'total'
+            name     = '⭟ Total' if is_total else name_map.get(college, college)
+            cls      = 'total-row' if is_total else ''
+            sep      = 'border-top:2px solid #1a1a18;' if is_total else ''
+            tbody += (
+                f'<tr class="{cls}" style="{sep}">'
+                f'<td class="college-name {"bold" if is_total else ""}">{html.escape(name)}</td>'
+                f'<td class="num">{row.iloc[1]}</td>'
+                f'<td class="num">{row.iloc[2]}</td>'
+                f'<td class="num {chg_cls(row.iloc[3])}">{row.iloc[3]:+d}</td>'
+                f'<td class="num">{row.iloc[4]}</td>'
+                f'<td class="num">{row.iloc[5]}</td>'
+                f'<td class="num {chg_cls(row.iloc[6])}">{row.iloc[6]:+d}</td>'
+                f'</tr>\n'
+            )
+        return f'''
+<div class="section-label" style="margin-top:20px"><span>{html.escape(label)} &middot; {date_range}</span></div>
 <div class="table-wrap">
 <table>
 <thead>
@@ -2164,6 +2181,17 @@ def _reg_col_12day_html_section(df):
 <tbody>{tbody}</tbody>
 </table>
 </div>'''
+
+    out = ''
+    if df_a is not None and not df_a.empty:
+        range_a = f'{LM_FIRST_N_START[8:]} – {LM_FIRST_N_END[8:]} {PREV_MONTH_LABEL} vs {FIRST12_START[8:]} – {FIRST12_END[8:]} {MONTH_LABEL}'
+        out += _render_table(df_a, f'First {_n_days} Days — {PREV_MONTH_LABEL} vs {MONTH_LABEL}', range_a)
+
+    if df_b is not None and not df_b.empty:
+        range_b = f'{LAST12_START[8:]} – {LAST12_END[8:]} {PREV_MONTH_LABEL} vs {FIRST12_START[8:]} – {FIRST12_END[8:]} {MONTH_LABEL}'
+        out += _render_table(df_b, f'Last {_n_days} {PREV_MONTH_LABEL} vs First {_n_days} {MONTH_LABEL}', range_b)
+
+    return out or '<p style="color:#888">No data available.</p>'
 
 
 def _reg_mom_breakdown_html_section(df_mom, dim_label, section_title, df_12day=None):
@@ -2228,11 +2256,12 @@ def _reg_mom_breakdown_html_section(df_mom, dim_label, section_title, df_12day=N
 
     lm_range = f'{_lm_first.day} {_lm_first.strftime("%b")} – {_lm_same_day.day} {_lm_same_day.strftime("%b %Y")}'
     tm_range = f'{report_date.replace(day=1).day} {report_date.strftime("%b")} – {report_date.day} {report_date.strftime("%b %Y")}'
-    _prev_last_day = report_date.replace(day=1) - timedelta(days=1)
-    last12_start_dt = _prev_last_day - timedelta(days=11)
+    _prev_last_day  = report_date.replace(day=1) - timedelta(days=1)
+    _days_in_lm_il  = calendar.monthrange(_prev_last_day.year, _prev_last_day.month)[1]
+    _b_n_inline     = min(report_date.day, _days_in_lm_il)
+    last12_start_dt = _prev_last_day - timedelta(days=_b_n_inline - 1)
     l12_range = f'{last12_start_dt.day} – {_prev_last_day.day} {_prev_last_day.strftime("%b %Y")}'
-    f12_end_day = min(12, report_date.day)
-    f12_range = f'01 – {f12_end_day:02d} {report_date.strftime("%b %Y")}'
+    f12_range = f'01 – {report_date.day:02d} {report_date.strftime("%b %Y")}'
 
     def _note(text):
         return (f'<div style="font-size:11px;color:#8896a8;margin-bottom:14px;padding:6px 10px;'
@@ -2257,8 +2286,9 @@ def regular_generate_html(sheets, amity_yoy_df=None, amity_adm_df=None):
 
     adm = sheets['Admissions Data']
     forms = sheets['Forms Data']
-    col_mom = sheets.get('College_MoM', pd.DataFrame())
-    col_12day = sheets.get('College_12Day', pd.DataFrame())
+    col_mom     = sheets.get('College_MoM',     pd.DataFrame())
+    col_12day   = sheets.get('College_12Day',   pd.DataFrame())
+    col_12day_a = sheets.get('College_12Day_A', pd.DataFrame())
 
     def esc(v):
         return html.escape(str(v))
@@ -2487,7 +2517,7 @@ tbody tr:hover td{background:#eef4ff}
 </section>
 
 <section class="panel" id="panel-college-12day">
-{_reg_col_12day_html_section(col_12day)}
+{_reg_col_12day_html_section(col_12day, df_a=col_12day_a)}
 </section>
 
 {_reg_close}</body></html>'''
@@ -2520,7 +2550,7 @@ def send_via_whapi(file_path, caption, group_id=None):
     group_id defaults to WHATSAPP_GROUP_ONLINE when not provided.
     On any failure the file is copied to LOCAL_FALLBACK_DIR."""
     if not WHAPI_TOKEN:
-        print(f"  ⚠️  WHAPI_TOKEN not set — file already at: {file_path}")
+        print(f"  ⚠️  WHAPI_TOKEN_PAID not set — file already at: {file_path}")
         _save_fallback(file_path)
         return False
 
@@ -2595,21 +2625,25 @@ async def screenshot_html_tabs(html_path, tab_ids, png_paths, viewport_width=160
         async with async_playwright() as pw:
             browser = await pw.chromium.launch(args=['--no-sandbox', '--disable-setuid-sandbox'])
             for tab_id, png_path in zip(tab_ids, png_paths):
-                page = await browser.new_page(
-                    viewport={'width': viewport_width, 'height': 900},
-                    device_scale_factor=2,   # 2x for crisp, non-blurry output
-                )
-                await page.goto(f'file:///{os.path.abspath(html_path)}', wait_until='networkidle', timeout=30000)
-                await page.click(f'label[for="{tab_id}"]')
-                await page.wait_for_timeout(400)
-                _locator = '.content' if sidebar_nav else '.shell'
-                await page.locator(_locator).screenshot(path=png_path)
-                await page.close()
-                print(f"  ✅ Screenshot saved: {os.path.basename(png_path)}")
-                results.append(True)
+                try:
+                    page = await browser.new_page(
+                        viewport={'width': viewport_width, 'height': 900},
+                        device_scale_factor=2,
+                    )
+                    await page.goto(f'file:///{os.path.abspath(html_path)}', wait_until='networkidle', timeout=30000)
+                    await page.click(f'label[for="{tab_id}"]')
+                    await page.wait_for_timeout(400)
+                    _locator = '.content' if sidebar_nav else '.shell'
+                    await page.locator(_locator).screenshot(path=png_path)
+                    await page.close()
+                    print(f"  ✅ Screenshot saved: {os.path.basename(png_path)}")
+                    results.append(True)
+                except Exception as tab_err:
+                    print(f"  ⚠️  Screenshot failed for tab '{tab_id}': {tab_err}")
+                    results.append(False)
             await browser.close()
     except Exception as e:
-        print(f"  ⚠️  Screenshot failed: {e}")
+        print(f"  ⚠️  Browser launch failed: {e}")
         while len(results) < len(tab_ids):
             results.append(False)
     return results
@@ -2739,7 +2773,7 @@ async def main():
         'Regular_LMS_Amity_Forms':  'Amity Total Forms - Campus YoY',
         'Regular_LMS_Amity_Adm':    'Amity Admissions - Campus YoY',
         'Regular_LMS_College_MoM':   f'College Wise Monthly Comparison — {LAST_MONTH_LABEL} vs {MONTH_LABEL}',
-        'Regular_LMS_College_12Day': f'College 12-Day Comparison — Last 12 {PREV_MONTH_LABEL} vs First 12 {MONTH_LABEL}',
+        'Regular_LMS_College_12Day': f'College {_n_days}-Day Comparison — {PREV_MONTH_LABEL} vs {MONTH_LABEL}',
     }
 
     def _resolve_groups(caption):

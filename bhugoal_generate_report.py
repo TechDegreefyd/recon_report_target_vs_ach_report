@@ -61,7 +61,7 @@ _LEAD_STATUS          = os.getenv('BHUGOAL_API_LEAD_STATUS_REPORT')
 _LEAD_FUNNEL          = os.getenv('BHUGOAL_API_LEAD_FUNNEL_REPORT')
 _APPOINTMENT          = os.getenv('BHUGOAL_API_APPOINTMENT_FUNNEL_REPORT')
 
-WHAPI_TOKEN    = os.getenv('WHAPI_TOKEN_BHUGOAL') or os.getenv('WHAPI_TOKEN')
+WHAPI_TOKEN    = os.getenv('WHAPI_TOKEN_PAID')
 BHUGOAL_GROUP  = os.getenv('WHATSAPP_GROUP_BHUGOAL')
 
 # ─── FRESH LEADS AGING CONFIG ────────────────────────────────────────────────
@@ -536,7 +536,7 @@ def send_to_whatsapp(screenshots):
         print("  [SKIP] WHATSAPP_GROUP_BHUGOAL not set in .env")
         return
     if not WHAPI_TOKEN:
-        print("  [SKIP] WHAPI_TOKEN not set in .env")
+        print("  [SKIP] WHAPI_TOKEN_PAID not set in .env")
         return
 
     yesterday_str = DATES['yesterday']

@@ -48,7 +48,7 @@ load_dotenv(os.path.join(_DIR, '.env'))
 OUTPUT_DIR = os.path.join(_DIR, 'Automation Cron Job', 'Inbound Report')
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-WHAPI_TOKEN    = os.getenv('WHAPI_TOKEN')
+WHAPI_TOKEN    = os.getenv('WHAPI_TOKEN_PAID')
 WHATSAPP_GROUP = os.getenv('WHATSAPP_GROUP', '120363426619711887@g.us')
 
 # ─── Date logic ──────────────────────────────────────────────────────────────
@@ -549,34 +549,39 @@ async def take_screenshots(html_path: str, base_path: str):
 # ─── WhatsApp send ────────────────────────────────────────────────────────────
 
 def send_whatsapp_image(img_path: str, caption: str, group_id: str, token: str):
-    url = 'https://gate.whapi.cloud/messages/image'
+    import base64, time
+    filename = os.path.basename(img_path)
     with open(img_path, 'rb') as f:
-        resp = requests.post(
-            url,
-            headers={'Authorization': f'Bearer {token}'},
-            data={'to': group_id, 'caption': caption},
-            files={'media': (os.path.basename(img_path), f, 'image/png')},
-            timeout=60,
-        )
-    if not resp.ok:
-        print(f'WHAPI error {resp.status_code}: {resp.text}')
-    resp.raise_for_status()
-    print(f'WhatsApp image sent → {group_id}: {resp.status_code}')
-    return resp.json()
+        b64 = base64.b64encode(f.read()).decode('utf-8')
+    media_data = f'data:image/png;name={filename};base64,{b64}'
+    payload = {'to': group_id, 'media': media_data, 'caption': caption}
+    headers = {'accept': 'application/json', 'authorization': f'Bearer {token}', 'content-type': 'application/json'}
+    for attempt in range(2):
+        try:
+            resp = requests.post('https://gate.whapi.cloud/messages/image', headers=headers, json=payload, timeout=20)
+            if 200 <= resp.status_code < 300:
+                print(f'WhatsApp image sent → {group_id}: {resp.status_code}')
+                return resp.json()
+            print(f'WHAPI error {resp.status_code}: {resp.text[:150]}')
+            resp.raise_for_status()
+        except Exception as e:
+            print(f'WHAPI attempt {attempt + 1} failed: {e}')
+            if attempt == 0:
+                time.sleep(3)
+    raise RuntimeError(f'WHAPI failed after 2 attempts for {filename}')
 
 
 def send_whatsapp_html(html_path: str, caption: str, group_id: str, token: str):
-    url = 'https://gate.whapi.cloud/messages/document'
+    import base64
+    filename = os.path.basename(html_path)
     with open(html_path, 'rb') as f:
-        resp = requests.post(
-            url,
-            headers={'Authorization': f'Bearer {token}'},
-            data={'to': group_id, 'caption': caption},
-            files={'document': (os.path.basename(html_path), f, 'text/html')},
-            timeout=60,
-        )
+        b64 = base64.b64encode(f.read()).decode('utf-8')
+    media_data = f'data:text/html;name={filename};base64,{b64}'
+    payload = {'to': group_id, 'media': media_data, 'caption': caption}
+    headers = {'accept': 'application/json', 'authorization': f'Bearer {token}', 'content-type': 'application/json'}
+    resp = requests.post('https://gate.whapi.cloud/messages/document', headers=headers, json=payload, timeout=20)
     resp.raise_for_status()
-    print(f'WhatsApp sent → {group_id}: {resp.status_code}')
+    print(f'WhatsApp html sent → {group_id}: {resp.status_code}')
     return resp.json()
 
 
@@ -670,10 +675,18 @@ async def main():
     png_base = html_path.replace('.html', '.png')
     png1, png2 = await take_screenshots(html_path, png_base)
 
-    log(f'Sending image 1/2 to WhatsApp group {target_group} ...')
-    send_whatsapp_image(png1, caption1, target_group, WHAPI_TOKEN)
-    log(f'Sending image 2/2 to WhatsApp group {target_group} ...')
-    send_whatsapp_image(png2, caption2, target_group, WHAPI_TOKEN)
+    if not args.local:
+        log(f'Sending image 1/2 to WhatsApp group {target_group} ...')
+        send_whatsapp_image(png1, caption1, target_group, WHAPI_TOKEN)
+        log(f'Sending image 2/2 to WhatsApp group {target_group} ...')
+        send_whatsapp_image(png2, caption2, target_group, WHAPI_TOKEN)
+        log('Cleaning up local files ...')
+        for f in [html_path, png1, png2]:
+            try:
+                if os.path.exists(f):
+                    os.remove(f)
+            except Exception as e:
+                log(f'  ⚠️  Could not remove {f}: {e}')
     log('=== Done ===')
 
 
