@@ -2844,10 +2844,13 @@ async def main():
         for item in os.listdir(OUTPUT_DIR):
             item_path = os.path.join(OUTPUT_DIR, item)
             try:
+                _LMS_OWN_DIRS = {'local_fallback'}
                 if os.path.isfile(item_path):
                     os.remove(item_path)
                     removed += 1
-                # Never delete subdirectories — other concurrent scripts (e.g. bhugoal) use them
+                elif os.path.isdir(item_path) and item in _LMS_OWN_DIRS:
+                    shutil.rmtree(item_path)
+                    removed += 1
             except Exception as e:
                 print(f"   ⚠️  Could not remove: {item} — {e}")
         print(f"   Cleaned: {removed} items removed from {OUTPUT_DIR}")
