@@ -528,8 +528,7 @@ async def take_screenshots(html_path: str, base_path: str):
         page     = await browser.new_page(viewport={'width': 1400, 'height': 900}, device_scale_factor=2)
         file_url = 'file:///' + html_path.replace('\\', '/')
         log(f'Loading HTML for screenshot: {file_url}')
-        await page.goto(file_url)
-        await page.wait_for_load_state('networkidle')
+        await page.goto(file_url, wait_until='domcontentloaded')
         await page.wait_for_timeout(1500)
 
         full_height = await page.evaluate('document.body.scrollHeight')
@@ -648,7 +647,7 @@ async def main():
     # Build HTML
     log('Building HTML report ...')
     html_content  = build_html(stats, eff_label, csv_source=args.csv or 'CallInsight', time_window=time_window)
-    slug          = f'_{from_time.replace(":", "")}-{to_time.replace(":", "")}' if from_time or to_time else ''
+    slug          = f'_{(from_time or "").replace(":", "")}-{(to_time or "").replace(":", "")}' if from_time or to_time else ''
     html_filename = f'Outbound_Report_{eff_stamp}{slug}.html'
     html_path     = os.path.join(OUTPUT_DIR, html_filename)
     with open(html_path, 'w', encoding='utf-8') as f:
@@ -682,18 +681,25 @@ async def main():
     png_base = html_path.replace('.html', '.png')
     png1, png2 = await take_screenshots(html_path, png_base)
 
-    if not args.local:
-        log(f'Sending image 1/2 to WhatsApp group {target_group} ...')
+    log(f'Sending image 1/2 to WhatsApp group {target_group} ...')
+    try:
         send_whatsapp_image(png1, caption1, target_group, WHAPI_TOKEN)
-        log(f'Sending image 2/2 to WhatsApp group {target_group} ...')
+    except Exception as e:
+        log(f'  ⚠️  Image 1/2 send failed: {e}')
+
+    log(f'Sending image 2/2 to WhatsApp group {target_group} ...')
+    try:
         send_whatsapp_image(png2, caption2, target_group, WHAPI_TOKEN)
-        log('Cleaning up local files ...')
-        for f in [html_path, png1, png2]:
-            try:
-                if os.path.exists(f):
-                    os.remove(f)
-            except Exception as e:
-                log(f'  ⚠️  Could not remove {f}: {e}')
+    except Exception as e:
+        log(f'  ⚠️  Image 2/2 send failed: {e}')
+
+    log('Cleaning up local files ...')
+    for f in [html_path, png1, png2]:
+        try:
+            if os.path.exists(f):
+                os.remove(f)
+        except Exception as e:
+            log(f'  ⚠️  Could not remove {f}: {e}')
     log('=== Done ===')
 
 

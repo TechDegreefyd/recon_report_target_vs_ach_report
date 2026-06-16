@@ -87,7 +87,7 @@ CAPTION_GROUP_MAP = {
     'Admission Target vs Achieved':                          'Leadership_Regular',
     'Form Target vs Achieved':                               'Leadership_Regular',
     'College Wise Monthly Comparison':                       'Leadership_Regular',
-    'College 12-Day Comparison':                            'Leadership_Regular',
+    'College ':                                               'Leadership_Regular',
     'Amity Total Forms - Campus YoY':                        'Daily Updates',
     'Amity Admissions - Campus YoY':                         'Daily Updates',
 }
@@ -2687,6 +2687,9 @@ async def main():
         if LAST_ACTIVITY_ONLY:
             _online_tab_ids   = ['t6']
             _online_tab_names = ['Last_Activity']
+        elif SKIP_LAST_ACTIVITY:
+            _online_tab_ids   = ['t1',        't4',       't5',                              't7',              't8']
+            _online_tab_names = ['Overview', 'Colleges', 'Counsellor_TVA',                'Supervisor_MoM', 'University_MoM']
         else:
             _online_tab_ids   = ['t1',        't4',       't5',                't6',           't7',              't8']
             _online_tab_names = ['Overview', 'Colleges', 'Counsellor_TVA', 'Last_Activity', 'Supervisor_MoM', 'University_MoM']
@@ -2844,9 +2847,7 @@ async def main():
                 if os.path.isfile(item_path):
                     os.remove(item_path)
                     removed += 1
-                elif os.path.isdir(item_path):
-                    shutil.rmtree(item_path)
-                    removed += 1
+                # Never delete subdirectories — other concurrent scripts (e.g. bhugoal) use them
             except Exception as e:
                 print(f"   ⚠️  Could not remove: {item} — {e}")
         print(f"   Cleaned: {removed} items removed from {OUTPUT_DIR}")
