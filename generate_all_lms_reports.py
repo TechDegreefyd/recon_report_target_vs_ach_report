@@ -78,14 +78,14 @@ GROUPS = {
 # ── Caption → Group name — edit here to control which group each report goes to
 # Every report also goes to 'All Reports' group automatically (if configured above)
 CAPTION_GROUP_MAP = {
-    'Owner wise Achievement Report - Online Business':       'Daily Updates',
+    'Owner wise Achievement Report - Online Business':       ['Daily Updates', 'Online LOB Reports'],
     'Online LOB - University wise Forms & Adm':              'Daily Updates',
-    'Counsellor Targets vs Achievements — Fee & Admissions': 'Online Admission Team',
-    'Admission and Application Ageing Report':               ['Online Admission Team', 'Online LOB Reports'],
-    'Till Date Supervisor Month on Month':                   'Daily Updates',
+    'Counsellor Targets vs Achievements — Fee & Admissions': 'Online LOB Reports',
+    'Admission and Application Ageing Report':               'Online LOB Reports',
+    'Till Date Supervisor Month on Month':                   'Online LOB Reports',
     'Till Date University Month on Month':                   'Daily Updates',
-    'Admission Target vs Achieved':                          'Leadership_Regular',
-    'Form Target vs Achieved':                               'Leadership_Regular',
+    'Admission Target vs Achieved':                          'Daily Updates',
+    'Form Target vs Achieved':                               'Daily Updates',
     'College Wise Monthly Comparison':                       'Daily Updates',
     'College ':                                               'Daily Updates',
     'Amity Total Forms - Campus YoY':                        'Daily Updates',

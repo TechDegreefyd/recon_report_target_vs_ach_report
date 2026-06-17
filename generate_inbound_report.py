@@ -654,7 +654,7 @@ async def main():
         return
 
     target_group = args.group or os.getenv('WHATSAPP_GROUP_CALL_REPORTS', WHATSAPP_GROUP)
-    report_type  = 'Cumulative' if (not from_time or from_time == '09:30') else 'Last Hour'
+    report_type  = 'Cumulative' if (not from_time or from_time == '09:30') else 'Last 2 Hours'
     caption1 = (
         f'📲 Inbound Report — {report_type}'
         + f'\n📅 {eff_label}'

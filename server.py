@@ -86,9 +86,9 @@ def _call_cumulative_ob():
             '--group', _CALL_GROUP]
 
 def _call_last_hour_ob():
-    """Outbound: last 1-hour window."""
+    """Outbound: last 2-hour window (schedule fires every 2h)."""
     now_ist  = datetime.now(IST)
-    from_dt  = now_ist - timedelta(hours=1)
+    from_dt  = now_ist - timedelta(hours=2)
     return ['--from-time', from_dt.strftime('%H:%M'), '--to-time', now_ist.strftime('%H:%M'),
             '--group', _CALL_GROUP]
 
@@ -99,9 +99,9 @@ def _call_cumulative_ib():
             '--group', _CALL_GROUP]
 
 def _call_last_hour_ib():
-    """Inbound: last 1-hour window."""
+    """Inbound: last 2-hour window (schedule fires every 2h)."""
     now_ist  = datetime.now(IST)
-    from_dt  = now_ist - timedelta(hours=1)
+    from_dt  = now_ist - timedelta(hours=2)
     return ['--from-time', from_dt.strftime('%H:%M'), '--to-time', now_ist.strftime('%H:%M'),
             '--group', _CALL_GROUP]
 
@@ -127,17 +127,12 @@ CALL_SCHEDULE = []
 for _utc_h in _CALL_HOURS_UTC:
     _ist_h = (_utc_h + 5) % 24
     _ist_m = 30
-    _is_first_slot = (_utc_h == 4)   # UTC 04:30 = IST 10:00 AM — cumulative only
-
     CALL_SCHEDULE += [
         (_utc_h, 30, "generate_outbound_report.py",
          f"Outbound Cumulative — {_ist_h:02d}:{_ist_m:02d} IST", _call_cumulative_ob),
+        (_utc_h, 32, "generate_outbound_report.py",
+         f"Outbound Last 2hrs  — {_ist_h:02d}:{_ist_m:02d} IST", _call_last_hour_ob),
     ]
-    if not _is_first_slot:
-        CALL_SCHEDULE += [
-            (_utc_h, 32, "generate_outbound_report.py",
-             f"Outbound Last 2hrs  — {_ist_h:02d}:{_ist_m:02d} IST", _call_last_hour_ob),
-        ]
 
 
 def ist_now():
