@@ -78,16 +78,16 @@ GROUPS = {
 # ── Caption → Group name — edit here to control which group each report goes to
 # Every report also goes to 'All Reports' group automatically (if configured above)
 CAPTION_GROUP_MAP = {
-    'Owner wise Achievement Report - Online Business':       'Online LOB Reports',
-    'Online LOB - University wise Forms & Adm':              'Online LOB Reports',
+    'Owner wise Achievement Report - Online Business':       'Daily Updates',
+    'Online LOB - University wise Forms & Adm':              'Daily Updates',
     'Counsellor Targets vs Achievements — Fee & Admissions': 'Online Admission Team',
     'Admission and Application Ageing Report':               ['Online Admission Team', 'Online LOB Reports'],
-    'Till Date Supervisor Month on Month':                   'Online LOB Reports',
-    'Till Date University Month on Month':                   'Online LOB Reports',
+    'Till Date Supervisor Month on Month':                   'Daily Updates',
+    'Till Date University Month on Month':                   'Daily Updates',
     'Admission Target vs Achieved':                          'Leadership_Regular',
     'Form Target vs Achieved':                               'Leadership_Regular',
-    'College Wise Monthly Comparison':                       'Leadership_Regular',
-    'College ':                                               'Leadership_Regular',
+    'College Wise Monthly Comparison':                       'Daily Updates',
+    'College ':                                               'Daily Updates',
     'Amity Total Forms - Campus YoY':                        'Daily Updates',
     'Amity Admissions - Campus YoY':                         'Daily Updates',
 }
@@ -308,13 +308,11 @@ async def online_get_data():
         uc.university_name AS college_name,
         COUNT(DISTINCT CASE
             WHEN csj.course_status = 'Application'
-             AND csj.created_at >= '{YTD_START}'::timestamptz
              AND csj.created_at < CURRENT_DATE + INTERVAL '1 day' - INTERVAL '5 hours 30 minutes'
             THEN csj.student_id || '_' || csj.course_id END) AS ytd_forms,
         COUNT(DISTINCT CASE
             WHEN csj.course_status IN ('Admission', 'Enrolled')
              AND INITCAP(TRIM(csj.fee_type)) NOT IN ('Partial Paid', 'Partially Paid', 'Partial Done')
-             AND csj.created_at >= '{YTD_START}'::timestamptz
              AND csj.created_at < CURRENT_DATE + INTERVAL '1 day' - INTERVAL '5 hours 30 minutes'
             THEN csj.student_id END) AS ytd_adm,
         COUNT(DISTINCT CASE
@@ -339,8 +337,7 @@ async def online_get_data():
             THEN csj.student_id END) AS ftd_adm
     FROM course_status_journeys csj
     JOIN university_courses uc ON uc.course_id = csj.course_id
-    WHERE csj.created_at >= '{YTD_START}'::timestamptz
-      AND csj.created_at < CURRENT_DATE + INTERVAL '1 day' - INTERVAL '5 hours 30 minutes'
+    WHERE csj.created_at < CURRENT_DATE + INTERVAL '1 day' - INTERVAL '5 hours 30 minutes'
     GROUP BY uc.university_name
     HAVING COUNT(DISTINCT CASE
         WHEN csj.course_status IN ('Application', 'Admission', 'Enrolled')
@@ -1374,9 +1371,6 @@ REGULAR_DB_CONFIGS = [
     {"name": "REGULAR", "host": os.getenv("REGULAR_LMS_DB_HOST"), "port": int(os.getenv("REGULAR_LMS_DB_PORT", "54321")),
      "database": os.getenv("REGULAR_LMS_DB_NAME"), "user": os.getenv("REGULAR_LMS_DB_USER"),
      "password": os.getenv("REGULAR_LMS_DB_PASSWORD")},
-    {"name": "CGC", "host": os.getenv("REGULAR_CGC_LMS_DB_HOST"), "port": int(os.getenv("REGULAR_CGC_LMS_DB_PORT", "54321")),
-     "database": os.getenv("REGULAR_CGC_LMS_DB_NAME"), "user": os.getenv("REGULAR_CGC_LMS_DB_USER"),
-     "password": os.getenv("REGULAR_CGC_LMS_DB_PASSWORD")},
     {"name": "AMITY", "host": os.getenv("REGULAR_AMITY_LMS_DB_HOST"), "port": int(os.getenv("REGULAR_AMITY_LMS_DB_PORT", "54321")),
      "database": os.getenv("REGULAR_AMITY_LMS_DB_NAME"), "user": os.getenv("REGULAR_AMITY_LMS_DB_USER"),
      "password": os.getenv("REGULAR_AMITY_LMS_DB_PASSWORD")},
@@ -1468,15 +1462,12 @@ WHERE LOWER(csj.course_status) IN (
   {exclude_clause}
 ORDER BY s.student_id, csj.course_id, csj.created_at ASC;"""
 
-# REGULAR DB contains stale rows for CGC and Amity colleges that are
-# authoritatively sourced from their dedicated DBs. Exclude them here
-# to prevent double-counting.
-_REGULAR_EXCLUDE = """AND uc.university_name NOT ILIKE '%Amity%'
-  AND uc.university_name NOT ILIKE '%Chandigarh Group%'
-  AND uc.university_name NOT ILIKE '%CGC%'
-  AND uc.university_name NOT ILIKE '%Landran%'"""
+# REGULAR DB contains stale rows for Amity colleges that are
+# authoritatively sourced from the dedicated Amity DB. Exclude them here
+# to prevent double-counting. CGC colleges are now in REGULAR DB.
+_REGULAR_EXCLUDE = """AND uc.university_name NOT ILIKE '%Amity%'"""
 
-# CGC and AMITY DBs are the sole sources for their colleges — no exclusion needed
+# AMITY DB is the sole source for Amity colleges — no exclusion needed
 _NO_EXCLUDE = ""
 
 # Amity admissions include partial payments (no fee_type filter)
@@ -1519,7 +1510,6 @@ async def regular_get_data():
     all_adm, all_form = [], []
     db_excludes = {
         "REGULAR": _REGULAR_EXCLUDE,
-        "CGC":     _NO_EXCLUDE,
         "AMITY":   _NO_EXCLUDE,
     }
 
@@ -2717,7 +2707,7 @@ async def main():
             print(f"  Warning: Could not sync Regular_Targets dates (non-fatal): {e}")
         regular_summary = None
         try:
-            print("  [2a] Fetching regular LMS data from DB (REGULAR + CGC + AMITY)...")
+            print("  [2a] Fetching regular LMS data from DB (REGULAR + AMITY)...")
             reg_adm, reg_forms = await regular_get_data()
             print("  [2b] Preparing regular LMS data...")
             regular_sheets = regular_prepare_data(reg_adm, reg_forms)

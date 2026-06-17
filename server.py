@@ -106,8 +106,8 @@ def _call_last_hour_ib():
             '--group', _CALL_GROUP]
 
 
-# IST 10 AM – 9 PM = UTC 04:30 – 15:30  →  UTC hours 4–15, minute 30
-_CALL_HOURS_UTC = list(range(4, 16))   # 4,5,...,15
+# IST 10 AM – 9 PM = UTC 04:30 – 15:30  →  UTC hours 4–15, every 2 hours
+_CALL_HOURS_UTC = list(range(4, 16, 2))   # 4,6,8,10,12,14 → IST 9:30,11:30,13:30,15:30,17:30,19:30
 
 SCHEDULE = [
     (4,  30, "generate_all_recon_reports.py",  "Recon — Yesterday (full day)",               _yesterday_full),
@@ -120,9 +120,8 @@ SCHEDULE = [
     (15, 0,  "generate_all_lms_reports.py",    "LMS Reports (Online + Regular)",             lambda: ['--skip-last-activity']),
 ]
 
-# ─── Call Report schedule (10 AM – 9 PM IST, every hour) ─────────────────────
-# Each slot: (a) cumulative outbound, (b) last-hour outbound,
-#            (c) cumulative inbound,  (d) last-hour inbound
+# ─── Call Report schedule (10 AM – 9 PM IST, every 2 hours) ──────────────────
+# Inbound reports stopped. Outbound only: cumulative + last-2hr window.
 # UTC hour 4 = IST 9:30 AM → first slot 10 AM IST = UTC 04:30
 CALL_SCHEDULE = []
 for _utc_h in _CALL_HOURS_UTC:
@@ -133,15 +132,11 @@ for _utc_h in _CALL_HOURS_UTC:
     CALL_SCHEDULE += [
         (_utc_h, 30, "generate_outbound_report.py",
          f"Outbound Cumulative — {_ist_h:02d}:{_ist_m:02d} IST", _call_cumulative_ob),
-        (_utc_h, 34, "generate_inbound_report.py",
-         f"Inbound Cumulative  — {_ist_h:02d}:{_ist_m:02d} IST", _call_cumulative_ib),
     ]
     if not _is_first_slot:
         CALL_SCHEDULE += [
             (_utc_h, 32, "generate_outbound_report.py",
-             f"Outbound Last Hour  — {_ist_h:02d}:{_ist_m:02d} IST", _call_last_hour_ob),
-            (_utc_h, 36, "generate_inbound_report.py",
-             f"Inbound Last Hour   — {_ist_h:02d}:{_ist_m:02d} IST", _call_last_hour_ib),
+             f"Outbound Last 2hrs  — {_ist_h:02d}:{_ist_m:02d} IST", _call_last_hour_ob),
         ]
 
 
@@ -292,8 +287,6 @@ def main():
         run_script("generate_all_recon_reports.py",  "SMOKE TEST — Recon Report (yesterday full day)",       _yesterday_full, extra_env=_smoke_env)
         run_script("bhugoal_generate_report.py",     "SMOKE TEST — Bhugoal Daily Report (admin group only)", None,            extra_env=_smoke_env)
         run_script("generate_outbound_report.py",    "SMOKE TEST — Outbound Cumulative (admin group only)",
-                   lambda: ['--from-time', _smoke_from, '--to-time', _smoke_to, '--group', _SMOKE_GROUP], extra_env=_smoke_env)
-        run_script("generate_inbound_report.py",     "SMOKE TEST — Inbound Cumulative  (admin group only)",
                    lambda: ['--from-time', _smoke_from, '--to-time', _smoke_to, '--group', _SMOKE_GROUP], extra_env=_smoke_env)
         print("=" * 70, flush=True)
         print("  SMOKE TEST COMPLETE — Admin group notified. Scheduler is live.\n", flush=True)
