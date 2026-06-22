@@ -67,7 +67,7 @@ SIM_MAP = {
     '6357928504': ('Vishwajeet',   'Sunil Team'),
     '6357928508': ('Arnav',        'Vartika Team'),
     '6357928515': ('Avneet',       'Sunil Team'),   # Avneet is Sunil Team
-    '6357928503': ('Himanshi',     'Sunil Team'),
+    '6357725447': ('Himanshi',     'Sunil Team'),
     '6357928509': ('Vikas',        'Sunil Team'),
     '6357928511': ('Abhishek',     'Sunil Team'),
     '6357928505': ('Preeti',        'Sunil Team'),
@@ -81,8 +81,20 @@ SIM_MAP = {
     '6357928516': ('Sagar',        'Vartika Team'),
     '6357928519': ('Nitin',        'Vartika Team'),
     '6357928514': ('Aditya',       'Vartika Team'),
-    '6357928510': ('Swapnil',      'Prashant Team'),
-    '6357928507': ('Divya',        'Prashant Team'),
+    '6357928510': ('Swapnil',          'Prashant Team'),
+    '6357928507': ('Divya',            'Prashant Team'),
+    '6357725435': ('Tanya',            'Sid Team'),
+    '6357725419': ('Suhani',           'Sid Team'),
+    '6357725431': ('Kuldeep',          'Sid Team'),
+    '6357724433': ('Om',               'Varun Team'),
+    '6357724418': ('Abhishek Dubey',   'Prashant Team'),
+    '6357724434': ('Mohit',            'Prashant Team'),
+    '6357724430': ('Abhishek Kamat',   'Vartika Team'),
+    '6357725429': ('Neha',             'Sunil Team'),
+    '6357725421': ('Navneet',          'Sunil Team'),
+    '6357725426': ('Akshay',           'Sunil Team'),
+    '6357725415': ('Abhishek Sikarwar','Varun Team'),
+    '6357725416': ('Divya Goel',       'Varun Team'),
 }
 
 TEAM_ORDER = ['Vartika Team', 'Sunil Team', 'Sid Team', 'Varun Team', 'Prashant Team']
@@ -201,7 +213,7 @@ def process_csv(csv_text: str, target_date: str, from_time: str = None, to_time:
     """
     stats = {}
     for sim, (name, team) in SIM_MAP.items():
-        stats[name] = {'team': team, 'total': 0, 'answered': 0, 'talk_secs': 0}
+        stats[name] = {'team': team, 'total': 0, 'answered': 0, 'talk_secs': 0, 'ring_secs': 0}
 
     reader = csv.DictReader(io.StringIO(csv_text))
     for row in reader:
@@ -222,18 +234,21 @@ def process_csv(csv_text: str, target_date: str, from_time: str = None, to_time:
         if sim_no not in SIM_MAP:
             continue
 
-        name     = SIM_MAP[sim_no][0]
-        status   = row.get('Call Status', '').strip()
-        dur_secs = duration_to_secs(row.get('Call Duration', '0:0:0'))
+        name      = SIM_MAP[sim_no][0]
+        status    = row.get('Call Status', '').strip()
+        dur_secs  = duration_to_secs(row.get('Call Duration', '0:0:0'))
+        ring_secs = duration_to_secs(row.get('Ring Duration', '0:0:0'))
 
         stats[name]['total'] += 1
         if status == 'Answered':
             stats[name]['answered'] += 1
         stats[name]['talk_secs'] += dur_secs
+        stats[name]['ring_secs'] += ring_secs
 
     for name, s in stats.items():
-        s['connect_pct'] = round(s['answered'] / s['total'] * 100, 1) if s['total'] else 0.0
-        s['avg_secs']    = round(s['talk_secs'] / s['answered']) if s['answered'] else 0
+        s['not_answered']  = s['total'] - s['answered']
+        s['connect_pct']   = round(s['answered'] / s['total'] * 100, 1) if s['total'] else 0.0
+        s['avg_secs']      = round(s['talk_secs'] / s['answered']) if s['answered'] else 0
 
     return stats
 
@@ -290,16 +305,21 @@ def build_html(stats: dict, date_label: str, csv_source: str = '', time_window: 
         tr_     = round(ta / tc * 100) if tc else 0
         t_avg   = round(tt / ta)       if ta else 0
 
+        t_ring = sum(m['ring_secs'] for m in members)
         rows = ''
         for m in members:
             zero = 'zero-row' if not m['total'] else ''
+            overall = m["talk_secs"] + m["ring_secs"]
             rows += f'''<tr class="{zero}">
       <td>{m["name"]}</td>
       <td>{m["total"] or "0"}</td>
       <td>{m["answered"] or "0"}</td>
+      <td>{m["not_answered"] or "0"}</td>
       <td>{chip(int(m["connect_pct"]), m["total"])}</td>
       <td>{fmt_talk(m["talk_secs"])}</td>
       <td>{fmt_avg(m["avg_secs"])}</td>
+      <td>{fmt_talk(m["ring_secs"])}</td>
+      <td>{fmt_talk(overall)}</td>
     </tr>'''
 
         return f'''<div class="tcard">
@@ -315,16 +335,18 @@ def build_html(stats: dict, date_label: str, csv_source: str = '', time_window: 
   </div>
   <table>
     <thead><tr>
-      <th>Counsellor</th><th>Calls</th><th>Connected</th>
-      <th>Connect&nbsp;%</th><th>Talk&nbsp;Time</th><th>Avg&nbsp;/&nbsp;Call</th>
+      <th>Counsellor</th><th>Calls</th><th>Connected</th><th>Not&nbsp;Connected</th>
+      <th>Connect&nbsp;%</th><th>Talk&nbsp;Time</th><th>Avg&nbsp;/&nbsp;Call</th><th>Ring&nbsp;Time</th><th>Overall&nbsp;Time</th>
     </tr></thead>
     <tbody>{rows}</tbody>
     <tfoot><tr>
       <td>Team Total</td>
-      <td>{tc}</td><td>{ta}</td>
+      <td>{tc}</td><td>{ta}</td><td>{tc - ta}</td>
       <td>{chip(tr_, tc)}</td>
       <td>{fmt_talk(tt)}</td>
       <td>{fmt_avg(t_avg)}</td>
+      <td>{fmt_talk(t_ring)}</td>
+      <td>{fmt_talk(tt + t_ring)}</td>
     </tr></tfoot>
   </table>
 </div>'''
@@ -336,7 +358,7 @@ def build_html(stats: dict, date_label: str, csv_source: str = '', time_window: 
 
     # ── Supervisor summary table ──────────────────────────────────────────────
     sup_rows_html = ''
-    gt_tc = gt_ta = gt_tt = 0
+    gt_tc = gt_ta = gt_tt = gt_tr = 0
     for team_name in TEAM_ORDER:
         members = teams.get(team_name, [])
         if not members:
@@ -344,30 +366,35 @@ def build_html(stats: dict, date_label: str, csv_source: str = '', time_window: 
         tc   = sum(m['total']     for m in members)
         ta   = sum(m['answered']  for m in members)
         tt   = sum(m['talk_secs'] for m in members)
+        tr_  = sum(m['ring_secs'] for m in members)
         rate = round(ta / tc * 100) if tc else 0
         avg  = round(tt / ta)       if ta else 0
         a5   = sum(1 for m in members if m['total'] > 5)
         tpa  = round(tt / a5) if a5 else 0
         color = TEAM_COLORS.get(team_name, '#6b7280')
-        gt_tc += tc; gt_ta += ta; gt_tt += tt
+        gt_tc += tc; gt_ta += ta; gt_tt += tt; gt_tr += tr_
         sup_rows_html += f'''<tr>
       <td class="sup-name-cell" style="border-left:3px solid {color};">{team_name}</td>
-      <td>{len(members)}</td><td>{tc}</td><td>{ta}</td>
+      <td>{len(members)}</td><td>{tc}</td><td>{ta}</td><td>{tc - ta}</td>
       <td>{chip(rate, tc)}</td>
       <td>{fmt_talk(tt)}</td>
       <td>{fmt_avg(avg)}</td>
       <td>{fmt_talk(tpa)}</td>
+      <td>{fmt_talk(tr_)}</td>
+      <td>{fmt_talk(tt + tr_)}</td>
     </tr>'''
     gt_rate = round(gt_ta / gt_tc * 100) if gt_tc else 0
     gt_avg  = round(gt_tt / gt_ta)       if gt_ta else 0
     gt_a5   = sum(1 for c in all_c if c['total'] > 5)
     gt_tpa  = round(gt_tt / gt_a5) if gt_a5 else 0
     sup_rows_html += f'''<tr class="sup-total">
-      <td>Total</td><td>{n_counsellors}</td><td>{gt_tc}</td><td>{gt_ta}</td>
+      <td>Total</td><td>{n_counsellors}</td><td>{gt_tc}</td><td>{gt_ta}</td><td>{gt_tc - gt_ta}</td>
       <td>{chip(gt_rate, gt_tc)}</td>
       <td>{fmt_talk(gt_tt)}</td>
       <td>{fmt_avg(gt_avg)}</td>
       <td>{fmt_talk(gt_tpa)}<span class="act-badge">{gt_a5}</span></td>
+      <td>{fmt_talk(gt_tr)}</td>
+      <td>{fmt_talk(gt_tt + gt_tr)}</td>
     </tr>'''
 
     return f'''<!DOCTYPE html>
@@ -434,15 +461,15 @@ def build_html(stats: dict, date_label: str, csv_source: str = '', time_window: 
   .tmeta span + span::before {{ content: '·'; margin-right: 4px; }}
   table {{ width: 100%; border-collapse: collapse; }}
   thead th {{
-    padding: 9px 16px;
-    font-size: .72rem; font-weight: 700; text-transform: uppercase; letter-spacing: .55px;
+    padding: 7px 12px;
+    font-size: .8rem; font-weight: 700; text-transform: uppercase; letter-spacing: .55px;
     color: #4b5563; text-align: right; white-space: nowrap;
     background: #F5F6F8; border-bottom: 1px solid #e5e7eb;
   }}
   thead th:first-child {{ text-align: left; }}
   tbody td {{
-    padding: 11px 16px; text-align: right;
-    color: #121212; font-size: .88rem; font-weight: 700;
+    padding: 8px 12px; text-align: right;
+    color: #121212; font-size: .95rem; font-weight: 700;
     border-bottom: 1px solid #f3f4f6;
     font-variant-numeric: tabular-nums;
   }}
@@ -453,13 +480,13 @@ def build_html(stats: dict, date_label: str, csv_source: str = '', time_window: 
   .zero-row td:first-child {{ color: #6b7280; font-weight: 500; }}
   tfoot tr {{ background: #f5f6f8; }}
   tfoot td {{
-    padding: 11px 16px; text-align: right;
-    font-size: .82rem; font-weight: 700; color: #1f2937;
+    padding: 8px 12px; text-align: right;
+    font-size: .88rem; font-weight: 700; color: #1f2937;
     border-top: 2px solid #e5e7eb;
     font-variant-numeric: tabular-nums;
   }}
-  tfoot td:first-child {{ text-align: left; font-size: .72rem; text-transform: uppercase; letter-spacing: .6px; color: #4b5563; }}
-  .chip {{ display: inline-block; padding: 3px 9px; border-radius: 5px; font-size: .75rem; font-weight: 700; }}
+  tfoot td:first-child {{ text-align: left; font-size: .78rem; text-transform: uppercase; letter-spacing: .6px; color: #4b5563; }}
+  .chip {{ display: inline-block; padding: 3px 9px; border-radius: 5px; font-size: .82rem; font-weight: 700; }}
   .cg {{ background: #f0fdf4; color: #15803d; border: 1px solid #bbf7d0; }}
   .co {{ background: #fff7ed; color: #c2410c; border: 1px solid #fed7aa; }}
   .cr {{ background: #fef2f2; color: #dc2626; border: 1px solid #fecaca; }}
@@ -491,9 +518,9 @@ def build_html(stats: dict, date_label: str, csv_source: str = '', time_window: 
   <table>
     <thead><tr>
       <th style="text-align:left">Supervisor</th>
-      <th>Counsellors</th><th>Calls</th><th>Connected</th>
+      <th>Counsellors</th><th>Calls</th><th>Connected</th><th>Not&nbsp;Connected</th>
       <th>Connect&nbsp;%</th><th>Talk&nbsp;Time</th><th>Avg&nbsp;/&nbsp;Call</th>
-      <th>Talk&nbsp;/&nbsp;Active&nbsp;(5+)</th>
+      <th>Talk&nbsp;/&nbsp;Active&nbsp;(5+)</th><th>Ring&nbsp;Time</th><th>Overall&nbsp;Time</th>
     </tr></thead>
     <tbody>{sup_rows_html}</tbody>
   </table>
@@ -525,7 +552,7 @@ async def take_screenshots(html_path: str, base_path: str):
     log('Screenshot browser launching ...')
     async with async_playwright() as p:
         browser  = await p.chromium.launch(headless=True)
-        page     = await browser.new_page(viewport={'width': 1400, 'height': 900}, device_scale_factor=2)
+        page     = await browser.new_page(viewport={'width': 2200, 'height': 900}, device_scale_factor=2)
         file_url = 'file:///' + html_path.replace('\\', '/')
         log(f'Loading HTML for screenshot: {file_url}')
         await page.goto(file_url, wait_until='domcontentloaded')
@@ -533,7 +560,7 @@ async def take_screenshots(html_path: str, base_path: str):
 
         full_height = await page.evaluate('document.body.scrollHeight')
         log(f'Page height: {full_height}px — resizing viewport ...')
-        await page.set_viewport_size({'width': 1400, 'height': full_height})
+        await page.set_viewport_size({'width': 2200, 'height': full_height})
         await page.wait_for_timeout(300)
 
         layout_box  = await page.locator('.layout').bounding_box()
@@ -543,9 +570,9 @@ async def take_screenshots(html_path: str, base_path: str):
         png1 = base_path.replace('.png', '_1.png')
         png2 = base_path.replace('.png', '_2.png')
 
-        await page.screenshot(path=png1, clip={'x': 0, 'y': 0,       'width': 1400, 'height': split_y})
+        await page.screenshot(path=png1, clip={'x': 0, 'y': 0,       'width': 2200, 'height': split_y})
         log(f'Screenshot 1 saved → {png1}')
-        await page.screenshot(path=png2, clip={'x': 0, 'y': split_y, 'width': 1400, 'height': full_height - split_y})
+        await page.screenshot(path=png2, clip={'x': 0, 'y': split_y, 'width': 2200, 'height': full_height - split_y})
         log(f'Screenshot 2 saved → {png2}')
 
         await browser.close()

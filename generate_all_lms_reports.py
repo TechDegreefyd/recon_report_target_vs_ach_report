@@ -2742,8 +2742,8 @@ async def main():
         regular_pngs = []
         if regular_html:
             print("  [2d] Taking screenshots of Regular LMS tabs...")
-            _reg_tab_ids   = ['tab-admissions', 'tab-forms', 'tab-amity-forms', 'tab-amity-adm', 'tab-college-mom', 'tab-college-12day']
-            _reg_tab_names = ['Admissions',     'Forms',     'Amity_Forms',      'Amity_Adm',     'College_MoM',     'College_12Day']
+            _reg_tab_ids   = ['tab-admissions', 'tab-forms', 'tab-amity-forms', 'tab-amity-adm', 'tab-college-12day']
+            _reg_tab_names = ['Admissions',     'Forms',     'Amity_Forms',      'Amity_Adm',     'College_12Day']
             regular_pngs = [
                 os.path.join(OUTPUT_DIR, f'Regular_LMS_{name}_{RUN_STAMP}.png')
                 for name in _reg_tab_names
@@ -2765,7 +2765,6 @@ async def main():
         'Regular_LMS_Forms':        'Form Target vs Achieved',
         'Regular_LMS_Amity_Forms':  'Amity Total Forms - Campus YoY',
         'Regular_LMS_Amity_Adm':    'Amity Admissions - Campus YoY',
-        'Regular_LMS_College_MoM':   f'College Wise Monthly Comparison — {LAST_MONTH_LABEL} vs {MONTH_LABEL}',
         'Regular_LMS_College_12Day': f'College {_n_days}-Day Comparison — {PREV_MONTH_LABEL} vs {MONTH_LABEL}',
     }
 
