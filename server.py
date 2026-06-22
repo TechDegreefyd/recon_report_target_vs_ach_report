@@ -113,7 +113,7 @@ SCHEDULE = [
     (4,  30, "generate_all_recon_reports.py",  "Recon — Yesterday (full day)",               _yesterday_full),
     (4,  35, "generate_all_recon_reports.py",  "Recon — Today (midnight → 10 AM)",           _today_cutoff_10am),
     (4,  30, "generate_all_lms_reports.py",    "LMS Reports — Morning (yesterday IST)",      _lms_yesterday),
-    (5,  30, "tat_reports.py",                "TAT Reports — Online LOB (11 AM IST)",       None),
+    (5,  35, "tat_reports.py",                "TAT Reports — Online LOB (11:05 AM IST)",    None),
     (4,  30, "bhugoal_generate_report.py",     "Bhugoal Daily Report — 10 AM IST",           None),
     (6,  30, "generate_all_recon_reports.py",  "Recon — Today (midnight → 12 PM)",           _today_cutoff_12pm),
     (10, 30, "generate_all_recon_reports.py",  "Recon — Today (midnight → 4 PM cumulative)", _today_midnight_to_4pm),
