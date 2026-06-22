@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ICC → Application Timeline — Supervisor View</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #F4F3F0; color: #1a1a1a; font-size: 13px; }
+  .page { max-width: 960px; margin: 0 auto; padding: 32px 20px 64px; }
+  .header { margin-bottom: 20px; }
+  .header h1 { font-size: 18px; font-weight: 600; color: #111; letter-spacing: -0.3px; }
+  .header .meta { font-size: 11px; color: #999; margin-top: 4px; }
+
+  .cards { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 24px; }
+  .card { background: #fff; border: 0.5px solid #E2E0DA; border-radius: 8px; padding: 12px 14px; }
+  .card-label { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; color: #aaa; margin-bottom: 4px; }
+  .card-val { font-size: 22px; font-weight: 600; letter-spacing: -0.5px; color: #111; }
+  .card-sub { font-size: 11px; color: #bbb; margin-top: 2px; }
+
+  .tbl-wrap { border: 0.5px solid #E2E0DA; border-radius: 10px; overflow: hidden; background: #fff; }
+  table { width: 100%; border-collapse: collapse; font-size: 12px; }
+
+  thead tr:first-child th { background: #F9F8F6; font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; color: #aaa; padding: 8px 12px; border-bottom: 0.5px solid #E2E0DA; white-space: nowrap; text-align: right; }
+  thead tr:first-child th.left { text-align: left; }
+  thead tr:first-child th.grp { text-align: center; border-left: 1px solid #E2E0DA; }
+  thead tr:nth-child(2) th { background: #FAFAF8; font-size: 10px; font-weight: 500; color: #ccc; padding: 5px 12px; border-bottom: 1px solid #E2E0DA; text-align: right; white-space: nowrap; }
+  thead tr:nth-child(2) th.bl { border-left: 1px solid #E2E0DA; }
+  thead tr:nth-child(2) th.sbl { border-left: 0.5px solid #E2E0DA; }
+
+  td { padding: 9px 12px; border-bottom: 0.5px solid #F0EDE6; text-align: right; color: #333; vertical-align: middle; }
+  td.left { text-align: left; font-weight: 500; color: #111; }
+  td.bl { border-left: 1px solid #F0EDE6; }
+  td.sbl { border-left: 0.5px solid #F0EDE6; }
+  tr:last-child td { border-bottom: none; }
+  tr.total td { background: #F9F8F6; font-weight: 600; border-top: 1px solid #E2E0DA; }
+
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 99px; font-size: 11px; font-weight: 500; }
+  .bg { background: #D1FAE5; color: #065F46; }
+  .bb { background: #DBEAFE; color: #1E40AF; }
+  .ba { background: #FEF3C7; color: #92400E; }
+  .br { background: #FEE2E2; color: #991B1B; }
+  .bn { background: #F3F4F6; color: #6B7280; }
+  .bz { color: #CCC; }
+
+  .footer { margin-top: 32px; padding-top: 14px; border-top: 0.5px solid #E2E0DA; font-size: 10.5px; color: #bbb; }
+</style>
+</head>
+<body>
+<div class="page">
+  <div class="header">
+    <h1>ICC → Application Timeline — Supervisor View</h1>
+    <div class="meta">Last 7 days &nbsp;&middot;&nbsp; <span id="date-range"></span> &nbsp;&middot;&nbsp; Generated <span id="generated-at"></span></div>
+  </div>
+
+  <div class="cards" id="cards"></div>
+
+  <div class="tbl-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th class="left" rowspan="2">Supervisor</th>
+          <th class="grp" rowspan="2" style="border-left:1px solid #E2E0DA;">Total ICC</th>
+          <th class="grp" colspan="5">Applied (days after ICC date)</th>
+          <th class="grp" rowspan="2" style="border-left:1px solid #E2E0DA;">Not applied yet</th>
+        </tr>
+        <tr>
+          <th class="bl">Same day</th>
+          <th class="sbl">1–2 days</th>
+          <th class="sbl">3–4 days</th>
+          <th class="sbl">4–5 days</th>
+          <th class="sbl">5+ days</th>
+        </tr>
+      </thead>
+      <tbody id="tbody"></tbody>
+    </table>
+  </div>
+
+  <div class="footer">DegreeFYD · online_lms · Base = ICC'd leads from last 7 days · % out of total ICC per supervisor · All times IST</div>
+</div>
+
+<script>
+const data = [
+  {to:'Prashant Mishra', icc:69,  sd:0,  sd_p:0.0,  d12:0,  d12_p:0.0, d34:0, d34_p:0.0, d45:0, d45_p:0.0, d5:0, d5_p:0.0,  na:69,  na_p:100.0},
+  {to:'Siddarth Kumar',  icc:69,  sd:3,  sd_p:4.3,  d12:3,  d12_p:4.3, d34:3, d34_p:4.3, d45:0, d45_p:0.0, d5:0, d5_p:0.0,  na:60,  na_p:87.0},
+  {to:'Sunil',           icc:121, sd:9,  sd_p:7.4,  d12:2,  d12_p:1.7, d34:0, d34_p:0.0, d45:1, d45_p:0.8, d5:0, d5_p:0.0,  na:109, na_p:90.1},
+  {to:'Vartika Thakur',  icc:126, sd:7,  sd_p:5.6,  d12:2,  d12_p:1.6, d34:0, d34_p:0.0, d45:1, d45_p:0.8, d5:0, d5_p:0.0,  na:116, na_p:92.1},
+  {to:'Varun',           icc:48,  sd:6,  sd_p:12.5, d12:0,  d12_p:0.0, d34:0, d34_p:0.0, d45:0, d45_p:0.0, d5:1, d5_p:2.1,  na:41,  na_p:85.4},
+];
+
+function pb(n, p) {
+  if (n === 0) return '<span class="bz">—</span>';
+  const cls = p >= 15 ? 'bg' : p >= 5 ? 'bb' : 'ba';
+  return `<span class="badge ${cls}">${n} <span style="opacity:.7">(${parseFloat(p).toFixed(1)}%)</span></span>`;
+}
+function nab(n, p) {
+  if (n === 0) return '<span class="bz">—</span>';
+  const cls = p >= 90 ? 'br' : p >= 75 ? 'ba' : 'bn';
+  return `<span class="badge ${cls}">${n} <span style="opacity:.7">(${parseFloat(p).toFixed(1)}%)</span></span>`;
+}
+
+const tot = data.reduce((a,r) => ({
+  icc:a.icc+r.icc, sd:a.sd+r.sd, d12:a.d12+r.d12,
+  d34:a.d34+r.d34, d45:a.d45+r.d45, d5:a.d5+r.d5, na:a.na+r.na
+}), {icc:0,sd:0,d12:0,d34:0,d45:0,d5:0,na:0});
+const gp = v => tot.icc > 0 ? v/tot.icc*100 : 0;
+
+const rows = data.map(r => `<tr>
+  <td class="left">${r.to}</td>
+  <td class="bl">${r.icc}</td>
+  <td class="bl">${pb(r.sd, r.sd_p)}</td>
+  <td class="sbl">${pb(r.d12, r.d12_p)}</td>
+  <td class="sbl">${pb(r.d34, r.d34_p)}</td>
+  <td class="sbl">${pb(r.d45, r.d45_p)}</td>
+  <td class="sbl">${pb(r.d5, r.d5_p)}</td>
+  <td class="bl">${nab(r.na, r.na_p)}</td>
+</tr>`).join('');
+
+const totalRow = `<tr class="total">
+  <td class="left">Total</td>
+  <td class="bl">${tot.icc}</td>
+  <td class="bl">${pb(tot.sd, gp(tot.sd))}</td>
+  <td class="sbl">${pb(tot.d12, gp(tot.d12))}</td>
+  <td class="sbl">${pb(tot.d34, gp(tot.d34))}</td>
+  <td class="sbl">${pb(tot.d45, gp(tot.d45))}</td>
+  <td class="sbl">${pb(tot.d5, gp(tot.d5))}</td>
+  <td class="bl">${nab(tot.na, gp(tot.na))}</td>
+</tr>`;
+
+document.getElementById('tbody').innerHTML = rows + totalRow;
+
+const totalApplied = tot.sd+tot.d12+tot.d34+tot.d45+tot.d5;
+document.getElementById('cards').innerHTML = [
+  {label:'Total ICC',       val: tot.icc,        sub: 'last 7 days'},
+  {label:'Applied',         val: totalApplied,   sub: (totalApplied/tot.icc*100).toFixed(1)+'% of ICC'},
+  {label:'Same day',        val: tot.sd,         sub: (tot.sd/tot.icc*100).toFixed(1)+'% of ICC'},
+  {label:'Not applied yet', val: tot.na,         sub: (tot.na/tot.icc*100).toFixed(1)+'% of ICC'},
+].map(c => `<div class="card"><div class="card-label">${c.label}</div><div class="card-val">${c.val}</div><div class="card-sub">${c.sub}</div></div>`).join('');
+
+const now = new Date();
+const fmt = d => d.toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'});
+const end = new Date(now); end.setDate(end.getDate()-1);
+const start = new Date(now); start.setDate(start.getDate()-7);
+document.getElementById('date-range').textContent   = fmt(start)+' – '+fmt(end);
+document.getElementById('generated-at').textContent = now.toLocaleString('en-IN',{timeZone:'Asia/Kolkata',hour12:true});
+</script>
+</body>
+</html>

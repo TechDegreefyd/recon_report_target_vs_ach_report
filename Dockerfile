@@ -28,6 +28,7 @@ COPY server.py .
 COPY generate_outbound_report.py .
 COPY generate_inbound_report.py .
 COPY download_callinsight.py .
+COPY tat_reports.py .
 
 RUN mkdir -p \
     "Automation Cron Job/Target Report/local_fallback" \

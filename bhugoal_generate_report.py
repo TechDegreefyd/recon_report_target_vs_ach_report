@@ -369,6 +369,23 @@ def fetch_active_counsellor_remarks(token, df_cache=None):
     }
 
 
+_TODAY = _now.strftime('%Y-%m-%d')
+
+def _filter_today(table_data):
+    """Remove any rows from the API response that belong to today (partial data)."""
+    if not isinstance(table_data, list):
+        return table_data
+    today_variants = {
+        _TODAY,                                          # 2026-06-22
+        _now.strftime('%d/%m/%Y'),                       # 22/06/2026
+        _now.strftime('%-d/%-m/%Y') if hasattr(_now, 'strftime') else '',  # 22/6/2026
+        f"{_now.day}/{_now.month}/{_now.year}",         # 22/6/2026
+    }
+    def row_has_today(row):
+        return any(str(v) in today_variants for v in row.values()) if isinstance(row, dict) else False
+    return [r for r in table_data if not row_has_today(r)]
+
+
 # ─── FETCH ALL ───────────────────────────────────────────────────────────────
 def fetch_all_data():
     print("  Logging in to get auth token...")
@@ -433,7 +450,7 @@ def fetch_all_data():
             "summary":   ls_range["summary"],
         },
         "funnelDateWise": {
-            "tableData": funnel_date["data"]["tableData"],
+            "tableData": _filter_today(funnel_date["data"]["tableData"]),
             "summary":   funnel_date["summary"],
         },
         "funnelRange": {

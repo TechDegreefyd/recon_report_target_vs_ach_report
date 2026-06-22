@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ICC Flow — TAT Report</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #F4F3F0; color: #1a1a1a; font-size: 13px; }
+  .page { max-width: 1020px; margin: 0 auto; padding: 32px 20px 64px; }
+  .header { margin-bottom: 20px; }
+  .header h1 { font-size: 18px; font-weight: 600; color: #111; letter-spacing: -0.3px; }
+  .header .meta { font-size: 11px; color: #999; margin-top: 4px; }
+
+  .cards { display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; margin-bottom: 24px; }
+  .card { background: #fff; border: 0.5px solid #E2E0DA; border-radius: 8px; padding: 12px 14px; }
+  .card-label { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; color: #aaa; margin-bottom: 4px; }
+  .card-val { font-size: 20px; font-weight: 600; letter-spacing: -0.5px; color: #111; }
+  .card-sub { font-size: 11px; color: #bbb; margin-top: 2px; }
+
+  .tbl-wrap { border: 0.5px solid #E2E0DA; border-radius: 10px; overflow: hidden; background: #fff; }
+  table { width: 100%; border-collapse: collapse; font-size: 12px; }
+
+  thead tr:first-child th { background: #F9F8F6; font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; color: #aaa; padding: 8px 12px; border-bottom: 0.5px solid #E2E0DA; white-space: nowrap; text-align: right; }
+  thead tr:first-child th.left { text-align: left; }
+  thead tr:first-child th.grp { text-align: center; border-left: 1px solid #E2E0DA; }
+  thead tr:nth-child(2) th { background: #FAFAF8; font-size: 10px; font-weight: 500; color: #ccc; padding: 5px 12px; border-bottom: 1px solid #E2E0DA; text-align: right; white-space: nowrap; }
+  thead tr:nth-child(2) th.bl { border-left: 1px solid #E2E0DA; }
+  thead tr:nth-child(2) th.sbl { border-left: 0.5px solid #E2E0DA; }
+
+  tr.to-row td { background: #F2F0EC; font-size: 11px; font-weight: 600; color: #444; padding: 7px 12px; border-top: 1px solid #E2E0DA; border-bottom: 0.5px solid #E2E0DA; text-align: right; }
+  tr.to-row td.left { text-align: left; }
+  tr.to-row td.bl { border-left: 1px solid #E2E0DA; }
+  tr.to-row td.sbl { border-left: 0.5px solid #E2E0DA; }
+
+  tr.l2-row td { padding: 7px 12px 7px 24px; border-bottom: 0.5px solid #F5F3EF; text-align: right; color: #333; }
+  tr.l2-row td.left { text-align: left; color: #555; padding-left: 24px; }
+  tr.l2-row td.bl { border-left: 1px solid #F0EDE6; }
+  tr.l2-row td.sbl { border-left: 0.5px solid #F0EDE6; }
+
+  tr.to-total td { background: #ECEAE5; font-weight: 600; font-size: 11px; color: #333; padding: 7px 12px; border-top: 1px solid #E2E0DA; border-bottom: 1px solid #D8D5CE; text-align: right; }
+  tr.to-total td.left { text-align: left; padding-left: 24px; }
+  tr.to-total td.bl { border-left: 1px solid #E2E0DA; }
+  tr.to-total td.sbl { border-left: 0.5px solid #E2E0DA; }
+
+  tr.grand-total td { background: #E8E5DF; font-weight: 700; font-size: 12px; color: #111; padding: 9px 12px; border-top: 2px solid #C8C5BE; text-align: right; }
+  tr.grand-total td.left { text-align: left; }
+  tr.grand-total td.bl { border-left: 1px solid #D8D5CE; }
+  tr.grand-total td.sbl { border-left: 0.5px solid #D8D5CE; }
+  tr:last-child td { border-bottom: none; }
+
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 99px; font-size: 11px; font-weight: 500; }
+  .bg  { background: #D1FAE5; color: #065F46; }
+  .bb  { background: #DBEAFE; color: #1E40AF; }
+  .ba  { background: #FEF3C7; color: #92400E; }
+  .br  { background: #FEE2E2; color: #991B1B; }
+  .bz  { color: #CCC; }
+  .tat-fast { color: #065F46; font-weight: 600; }
+  .tat-mid  { color: #92400E; font-weight: 600; }
+  .tat-slow { color: #991B1B; font-weight: 600; }
+
+  .footer { margin-top: 32px; padding-top: 14px; border-top: 0.5px solid #E2E0DA; font-size: 10.5px; color: #bbb; }
+</style>
+</head>
+<body>
+<div class="page">
+  <div class="header">
+    <h1>ICC Flow — Funnel & TAT Report</h1>
+    <div class="meta">Last 7 days &nbsp;&middot;&nbsp; <span id="date-range"></span> &nbsp;&middot;&nbsp; Generated <span id="generated-at"></span></div>
+  </div>
+
+  <div class="cards" id="cards"></div>
+
+  <div class="tbl-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th class="left" rowspan="2">Supervisor / Counsellor</th>
+          <th class="grp" colspan="1">Stage 1</th>
+          <th class="grp" colspan="3">Stage 2 — ICC → App</th>
+          <th class="grp" colspan="3">Stage 3 — App → Adm</th>
+        </tr>
+        <tr>
+          <th class="bl">ICC</th>
+          <th class="bl">App</th><th class="sbl">I2F%</th><th class="sbl">Avg TAT (days)</th>
+          <th class="bl">Adm</th><th class="sbl">F2A%</th><th class="sbl">Avg TAT (days)</th>
+        </tr>
+      </thead>
+      <tbody id="tbody"></tbody>
+    </table>
+  </div>
+
+  <div class="footer">DegreeFYD · online_lms · ICC flow only — direct apps excluded · Partial payments excluded · All times IST</div>
+</div>
+
+<script>
+const raw = [
+  {to:'Prashant Mishra', l2:'Abhishek Dubey',      icc:15, app:0,  i2f:0.0,   i2f_tat:null, adm:0, f2a:null,  f2a_tat:null},
+  {to:'Prashant Mishra', l2:'Divya Kawatra Oberoi', icc:5,  app:0,  i2f:0.0,   i2f_tat:null, adm:0, f2a:null,  f2a_tat:null},
+  {to:'Prashant Mishra', l2:'MOHD UZAIF',           icc:6,  app:0,  i2f:0.0,   i2f_tat:null, adm:0, f2a:null,  f2a_tat:null},
+  {to:'Prashant Mishra', l2:'Mohit Singh',          icc:12, app:0,  i2f:0.0,   i2f_tat:null, adm:0, f2a:null,  f2a_tat:null},
+  {to:'Prashant Mishra', l2:'Puneet Kumar Bajpai',  icc:13, app:0,  i2f:0.0,   i2f_tat:null, adm:0, f2a:null,  f2a_tat:null},
+  {to:'Prashant Mishra', l2:'Roshni',               icc:7,  app:0,  i2f:0.0,   i2f_tat:null, adm:0, f2a:null,  f2a_tat:null},
+  {to:'Prashant Mishra', l2:'Swapnil Chunar',       icc:11, app:0,  i2f:0.0,   i2f_tat:null, adm:0, f2a:null,  f2a_tat:null},
+
+  {to:'Siddarth Kumar',  l2:'Laxminaryan',          icc:9,  app:1,  i2f:11.1,  i2f_tat:3.0,  adm:1, f2a:100.0, f2a_tat:0.0},
+  {to:'Siddarth Kumar',  l2:'Suhani Raj Gupta',     icc:27, app:5,  i2f:18.5,  i2f_tat:1.9,  adm:2, f2a:40.0,  f2a_tat:0.1},
+  {to:'Siddarth Kumar',  l2:'Tanya Singh',           icc:17, app:2,  i2f:11.8,  i2f_tat:0.2,  adm:1, f2a:50.0,  f2a_tat:3.0},
+  {to:'Siddarth Kumar',  l2:'Virat kumar singh',     icc:14, app:1,  i2f:7.1,   i2f_tat:2.1,  adm:1, f2a:100.0, f2a_tat:2.0},
+
+  {to:'Sunil',           l2:'Akshay Saxena',         icc:11, app:1,  i2f:9.1,   i2f_tat:1.2,  adm:0, f2a:0.0,   f2a_tat:null},
+  {to:'Sunil',           l2:'Avneet',                icc:15, app:3,  i2f:20.0,  i2f_tat:1.4,  adm:2, f2a:66.7,  f2a_tat:0.2},
+  {to:'Sunil',           l2:'Himanshi',              icc:14, app:1,  i2f:7.1,   i2f_tat:0.0,  adm:1, f2a:100.0, f2a_tat:1.1},
+  {to:'Sunil',           l2:'Navneet Singh',         icc:26, app:0,  i2f:0.0,   i2f_tat:null, adm:0, f2a:null,  f2a_tat:null},
+  {to:'Sunil',           l2:'Neha Kumari',           icc:17, app:0,  i2f:0.0,   i2f_tat:null, adm:0, f2a:null,  f2a_tat:null},
+  {to:'Sunil',           l2:'Preeti Lohiya',         icc:11, app:3,  i2f:27.3,  i2f_tat:1.3,  adm:0, f2a:0.0,   f2a_tat:null},
+  {to:'Sunil',           l2:'Vikas',                 icc:12, app:3,  i2f:25.0,  i2f_tat:0.3,  adm:2, f2a:66.7,  f2a_tat:0.5},
+  {to:'Sunil',           l2:'Vishwajeet',            icc:13, app:1,  i2f:7.7,   i2f_tat:0.6,  adm:0, f2a:0.0,   f2a_tat:null},
+
+  {to:'Vartika Thakur',  l2:'Abhishek Kamat',        icc:15, app:2,  i2f:13.3,  i2f_tat:1.6,  adm:1, f2a:50.0,  f2a_tat:0.9},
+  {to:'Vartika Thakur',  l2:'Aditya Kumar',          icc:20, app:1,  i2f:5.0,   i2f_tat:0.2,  adm:0, f2a:0.0,   f2a_tat:null},
+  {to:'Vartika Thakur',  l2:'Arnav Upadhyay',        icc:6,  app:0,  i2f:0.0,   i2f_tat:null, adm:0, f2a:null,  f2a_tat:null},
+  {to:'Vartika Thakur',  l2:'Nitin kumar',           icc:19, app:2,  i2f:10.5,  i2f_tat:2.1,  adm:1, f2a:50.0,  f2a_tat:0.2},
+  {to:'Vartika Thakur',  l2:'Sagar tanwar',          icc:33, app:3,  i2f:9.1,   i2f_tat:0.7,  adm:1, f2a:33.3,  f2a_tat:0.7},
+  {to:'Vartika Thakur',  l2:'sanjay verma',          icc:16, app:2,  i2f:12.5,  i2f_tat:0.4,  adm:1, f2a:50.0,  f2a_tat:0.2},
+  {to:'Vartika Thakur',  l2:'Shiv Aggarwal',         icc:16, app:0,  i2f:0.0,   i2f_tat:null, adm:0, f2a:null,  f2a_tat:null},
+
+  {to:'Varun',           l2:'Abhishek Sikarwar',     icc:3,  app:0,  i2f:0.0,   i2f_tat:null, adm:0, f2a:null,  f2a_tat:null},
+  {to:'Varun',           l2:'Anshika Dwivedi',       icc:6,  app:0,  i2f:0.0,   i2f_tat:null, adm:0, f2a:null,  f2a_tat:null},
+  {to:'Varun',           l2:'Divya Goyal',           icc:8,  app:0,  i2f:0.0,   i2f_tat:null, adm:0, f2a:null,  f2a_tat:null},
+  {to:'Varun',           l2:'Om Sharma',             icc:8,  app:2,  i2f:25.0,  i2f_tat:0.1,  adm:2, f2a:100.0, f2a_tat:0.6},
+  {to:'Varun',           l2:'Prashant',              icc:6,  app:2,  i2f:33.3,  i2f_tat:0.1,  adm:1, f2a:50.0,  f2a_tat:0.2},
+  {to:'Varun',           l2:'Prerna Sharma',         icc:15, app:2,  i2f:13.3,  i2f_tat:0.1,  adm:0, f2a:0.0,   f2a_tat:null},
+  {to:'Varun',           l2:'Tanisha Kulshrestha',   icc:2,  app:0,  i2f:0.0,   i2f_tat:null, adm:0, f2a:null,  f2a_tat:null},
+];
+
+const TO_ORDER = ['Prashant Mishra','Siddarth Kumar','Sunil','Vartika Thakur','Varun'];
+
+function pctBadge(p) {
+  if (p === null || p === undefined) return '<span class="bz">—</span>';
+  const v = parseFloat(p);
+  const cls = v >= 50 ? 'bg' : v >= 20 ? 'bb' : v > 0 ? 'ba' : 'br';
+  return `<span class="badge ${cls}">${v.toFixed(1)}%</span>`;
+}
+function tatCell(v) {
+  if (v === null || v === undefined) return '<span class="bz">—</span>';
+  const d = parseFloat(v);
+  const cls = d <= 1 ? 'tat-fast' : d <= 3 ? 'tat-mid' : 'tat-slow';
+  return `<span class="${cls}">${d.toFixed(1)}d</span>`;
+}
+function n(v) { return (v === 0 || v === null) ? '<span class="bz">—</span>' : v; }
+
+function toTotals(rows) {
+  const t = rows.reduce((a,r) => ({
+    icc: a.icc+r.icc, app: a.app+r.app, adm: a.adm+r.adm,
+    i2f_sum: a.i2f_sum + (r.i2f_tat !== null && r.app > 0 ? r.i2f_tat * r.app : 0),
+    f2a_sum: a.f2a_sum + (r.f2a_tat !== null && r.adm > 0 ? r.f2a_tat * r.adm : 0),
+  }), {icc:0,app:0,adm:0,i2f_sum:0,f2a_sum:0});
+  return {
+    ...t,
+    i2f: t.icc > 0 ? (t.app/t.icc*100).toFixed(1) : null,
+    i2f_tat: t.app > 0 ? (t.i2f_sum/t.app).toFixed(1) : null,
+    f2a: t.app > 0 ? (t.adm/t.app*100).toFixed(1) : null,
+    f2a_tat: t.adm > 0 ? (t.f2a_sum/t.adm).toFixed(1) : null,
+  };
+}
+
+let html = '';
+let grand = {icc:0,app:0,adm:0,i2f_sum:0,f2a_sum:0};
+
+TO_ORDER.forEach(to => {
+  const rows = raw.filter(r => r.to === to);
+  const tot  = toTotals(rows);
+  grand.icc += tot.icc; grand.app += tot.app; grand.adm += tot.adm;
+  grand.i2f_sum += parseFloat(tot.i2f_tat||0) * tot.app;
+  grand.f2a_sum += parseFloat(tot.f2a_tat||0) * tot.adm;
+
+  html += `<tr class="to-row">
+    <td class="left">${to}</td>
+    <td class="bl">${tot.icc}</td>
+    <td class="bl">${n(tot.app)}</td><td class="sbl">${pctBadge(tot.i2f)}</td><td class="sbl">${tatCell(tot.i2f_tat)}</td>
+    <td class="bl">${n(tot.adm)}</td><td class="sbl">${pctBadge(tot.f2a)}</td><td class="sbl">${tatCell(tot.f2a_tat)}</td>
+  </tr>`;
+
+  rows.forEach(r => {
+    html += `<tr class="l2-row">
+      <td class="left">${r.l2}</td>
+      <td class="bl">${r.icc}</td>
+      <td class="bl">${n(r.app)}</td><td class="sbl">${pctBadge(r.i2f)}</td><td class="sbl">${tatCell(r.i2f_tat)}</td>
+      <td class="bl">${n(r.adm)}</td><td class="sbl">${pctBadge(r.f2a)}</td><td class="sbl">${tatCell(r.f2a_tat)}</td>
+    </tr>`;
+  });
+
+  html += `<tr class="to-total">
+    <td class="left">Total — ${to}</td>
+    <td class="bl">${tot.icc}</td>
+    <td class="bl">${n(tot.app)}</td><td class="sbl">${pctBadge(tot.i2f)}</td><td class="sbl">${tatCell(tot.i2f_tat)}</td>
+    <td class="bl">${n(tot.adm)}</td><td class="sbl">${pctBadge(tot.f2a)}</td><td class="sbl">${tatCell(tot.f2a_tat)}</td>
+  </tr>`;
+});
+
+const g_i2f = grand.icc > 0 ? (grand.app/grand.icc*100).toFixed(1) : null;
+const g_i2f_tat = grand.app > 0 ? (grand.i2f_sum/grand.app).toFixed(1) : null;
+const g_f2a = grand.app > 0 ? (grand.adm/grand.app*100).toFixed(1) : null;
+const g_f2a_tat = grand.adm > 0 ? (grand.f2a_sum/grand.adm).toFixed(1) : null;
+
+html += `<tr class="grand-total">
+  <td class="left">Grand Total</td>
+  <td class="bl">${grand.icc}</td>
+  <td class="bl">${grand.app}</td><td class="sbl">${pctBadge(g_i2f)}</td><td class="sbl">${tatCell(g_i2f_tat)}</td>
+  <td class="bl">${grand.adm}</td><td class="sbl">${pctBadge(g_f2a)}</td><td class="sbl">${tatCell(g_f2a_tat)}</td>
+</tr>`;
+
+document.getElementById('tbody').innerHTML = html;
+
+// Summary cards
+document.getElementById('cards').innerHTML = [
+  {label:'Total ICC',       val: grand.icc,  sub: 'last 7 days'},
+  {label:'Total Apps',      val: grand.app,  sub: `${g_i2f}% of ICC`},
+  {label:'Avg ICC→App TAT', val: g_i2f_tat ? g_i2f_tat+'d' : '—', sub: 'avg days to application'},
+  {label:'Total Adm',       val: grand.adm,  sub: `${g_f2a}% of apps`},
+  {label:'Avg App→Adm TAT', val: g_f2a_tat ? g_f2a_tat+'d' : '—', sub: 'avg days to admission'},
+].map(c => `<div class="card"><div class="card-label">${c.label}</div><div class="card-val">${c.val}</div><div class="card-sub">${c.sub}</div></div>`).join('');
+
+const now = new Date();
+const fmt = d => d.toLocaleDateString('en-IN', {day:'2-digit', month:'short', year:'numeric'});
+const end = new Date(now); end.setDate(end.getDate()-1);
+const start = new Date(now); start.setDate(start.getDate()-7);
+document.getElementById('date-range').textContent   = fmt(start)+' – '+fmt(end);
+document.getElementById('generated-at').textContent = now.toLocaleString('en-IN',{timeZone:'Asia/Kolkata',hour12:true});
+</script>
+</body>
+</html>
