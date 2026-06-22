@@ -40,7 +40,7 @@ if os.getenv('REPORT_DATE'):
     _ref = datetime.strptime(os.getenv('REPORT_DATE'), '%Y-%m-%d')
 else:
     _now_ist = datetime.now(UTC) + timedelta(hours=5, minutes=30)
-    _ref     = _now_ist - timedelta(days=1) if _now_ist.hour < 6 else _now_ist
+    _ref     = _now_ist - timedelta(days=1) if _now_ist.hour < 11 else _now_ist
 
 WINDOW_END   = _ref.strftime('%Y-%m-%d')
 WINDOW_START = (_ref - timedelta(days=7)).strftime('%Y-%m-%d')
