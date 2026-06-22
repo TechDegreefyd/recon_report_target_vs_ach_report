@@ -99,7 +99,8 @@ SELECT
   mgr.counsellor_name AS to_name,
   COUNT(DISTINCT i.student_id) AS total_icc,
   COUNT(DISTINCT CASE WHEN i.days_to_app IS NOT NULL                      THEN i.student_id END) AS total_applied,
-  COUNT(DISTINCT CASE WHEN i.days_to_app < 2                              THEN i.student_id END) AS app_1_to_2,
+  COUNT(DISTINCT CASE WHEN i.days_to_app < 1                              THEN i.student_id END) AS app_same_day,
+  COUNT(DISTINCT CASE WHEN i.days_to_app >= 1 AND i.days_to_app < 2      THEN i.student_id END) AS app_1_to_2,
   COUNT(DISTINCT CASE WHEN i.days_to_app >= 2 AND i.days_to_app < 3      THEN i.student_id END) AS app_2_to_3,
   COUNT(DISTINCT CASE WHEN i.days_to_app >= 3 AND i.days_to_app < 4      THEN i.student_id END) AS app_3_to_4,
   COUNT(DISTINCT CASE WHEN i.days_to_app >= 4 AND i.days_to_app < 5      THEN i.student_id END) AS app_4_to_5,
@@ -190,6 +191,45 @@ WHERE c."first_Icc_Date" IS NULL OR c."first_Icc_Date" > fa.first_app_at
 ORDER BY mgr.counsellor_name, l2.counsellor_name;
 """
 
+_LEAD_TO_ICC_SQL = """
+WITH cohort AS (
+  SELECT
+    s.student_id,
+    s.created_at AS lead_created_at,
+    s."first_Icc_Date",
+    s.assigned_counsellor_id
+  FROM students s
+  WHERE s.created_at >= '{ws}'::date - INTERVAL '5 hours 30 minutes'
+    AND s.created_at <  '{we}'::date + INTERVAL '1 day' - INTERVAL '5 hours 30 minutes'
+),
+lead_to_icc AS (
+  SELECT
+    c.student_id,
+    c.assigned_counsellor_id,
+    CASE
+      WHEN c."first_Icc_Date" IS NULL THEN NULL
+      ELSE EXTRACT(EPOCH FROM (c."first_Icc_Date" - c.lead_created_at)) / 86400
+    END AS days_to_icc
+  FROM cohort c
+)
+SELECT
+  mgr.counsellor_name AS to_name,
+  COUNT(DISTINCT i.student_id)                                                              AS total_leads,
+  COUNT(DISTINCT CASE WHEN i.days_to_icc IS NOT NULL THEN i.student_id END)                AS total_icc,
+  COUNT(DISTINCT CASE WHEN i.days_to_icc < 1 THEN i.student_id END)                         AS icc_same_day,
+  COUNT(DISTINCT CASE WHEN i.days_to_icc >= 1 AND i.days_to_icc < 2 THEN i.student_id END) AS icc_1_to_2,
+  COUNT(DISTINCT CASE WHEN i.days_to_icc >= 2 AND i.days_to_icc < 3 THEN i.student_id END) AS icc_2_to_3,
+  COUNT(DISTINCT CASE WHEN i.days_to_icc >= 3 AND i.days_to_icc < 4 THEN i.student_id END) AS icc_3_to_4,
+  COUNT(DISTINCT CASE WHEN i.days_to_icc >= 4 AND i.days_to_icc < 5 THEN i.student_id END) AS icc_4_to_5,
+  COUNT(DISTINCT CASE WHEN i.days_to_icc >= 5 THEN i.student_id END)                       AS icc_5_plus,
+  COUNT(DISTINCT CASE WHEN i.days_to_icc IS NULL THEN i.student_id END)                    AS no_icc_yet
+FROM lead_to_icc i
+JOIN counsellors l2  ON i.assigned_counsellor_id = l2.counsellor_id AND l2.role = 'l2'
+JOIN counsellors mgr ON l2.assigned_to = mgr.counsellor_id          AND mgr.role = 'to'
+GROUP BY mgr.counsellor_name
+ORDER BY mgr.counsellor_name;
+"""
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # DATA FETCH
@@ -198,11 +238,13 @@ ORDER BY mgr.counsellor_name, l2.counsellor_name;
 async def fetch_all():
     conn = await asyncpg.connect(**ONLINE_DB)
     fmt  = {'ws': WINDOW_START, 'we': WINDOW_END}
+    r_l2i  = await conn.fetch(_LEAD_TO_ICC_SQL.format(**fmt))
     r_sup  = await conn.fetch(_ICC_SUPERVISOR_SQL.format(**fmt))
     r_icc  = await conn.fetch(_ICC_FLOW_SQL.format(**fmt))
     r_dir  = await conn.fetch(_DIRECT_FLOW_SQL.format(**fmt))
     await conn.close()
-    return [dict(r) for r in r_sup], [dict(r) for r in r_icc], [dict(r) for r in r_dir]
+    return ([dict(r) for r in r_l2i], [dict(r) for r in r_sup],
+            [dict(r) for r in r_icc], [dict(r) for r in r_dir])
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -447,16 +489,113 @@ def _kpis(items):
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# HTML REPORT 1 — ICC → App Timeline (Supervisor bucket view)
+# HTML REPORT 1 — Lead Gen → ICC Timeline (Supervisor bucket view)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def gen_html_lead_to_icc(l2i_rows):
+    tot = {'leads': 0, 'icc': 0, 'dsd': 0, 'd12': 0, 'd23': 0, 'd34': 0, 'd45': 0, 'd5': 0, 'no_icc': 0}
+    tbody = ''
+
+    for r in l2i_rows:
+        leads  = int(r['total_leads'])
+        icc    = int(r['total_icc'])
+        dsd    = int(r['icc_same_day'])
+        d12    = int(r['icc_1_to_2'])
+        d23    = int(r['icc_2_to_3'])
+        d34    = int(r['icc_3_to_4'])
+        d45    = int(r['icc_4_to_5'])
+        d5     = int(r['icc_5_plus'])
+        no_icc = int(r['no_icc_yet'])
+
+        for k, v in [('leads', leads), ('icc', icc), ('dsd', dsd), ('d12', d12), ('d23', d23),
+                     ('d34', d34), ('d45', d45), ('d5', d5), ('no_icc', no_icc)]:
+            tot[k] += v
+
+        tbody += (
+            f'<tr>'
+            f'<td class="left">{e(r["to_name"])}</td>'
+            f'<td class="bl num">{leads}</td>'
+            f'<td class="bl">{_applied_total_cell(icc, leads)}</td>'
+            f'<td class="bl">{_pct_of_applied(dsd,  icc)}</td>'
+            f'<td class="sbl">{_pct_of_applied(d12,  icc)}</td>'
+            f'<td class="sbl">{_pct_of_applied(d23,  icc)}</td>'
+            f'<td class="sbl">{_pct_of_applied(d34,  icc)}</td>'
+            f'<td class="sbl">{_pct_of_applied(d45,  icc)}</td>'
+            f'<td class="sbl">{_pct_of_applied(d5,   icc)}</td>'
+            f'<td class="bl">{_na_cell(no_icc, leads)}</td>'
+            f'</tr>\n'
+        )
+
+    tbody += (
+        f'<tr class="total-row">'
+        f'<td class="left">Grand Total</td>'
+        f'<td class="bl num">{tot["leads"]}</td>'
+        f'<td class="bl">{_applied_total_cell(tot["icc"], tot["leads"])}</td>'
+        f'<td class="bl">{_pct_of_applied(tot["dsd"], tot["icc"])}</td>'
+        f'<td class="sbl">{_pct_of_applied(tot["d12"], tot["icc"])}</td>'
+        f'<td class="sbl">{_pct_of_applied(tot["d23"], tot["icc"])}</td>'
+        f'<td class="sbl">{_pct_of_applied(tot["d34"], tot["icc"])}</td>'
+        f'<td class="sbl">{_pct_of_applied(tot["d45"], tot["icc"])}</td>'
+        f'<td class="sbl">{_pct_of_applied(tot["d5"],  tot["icc"])}</td>'
+        f'<td class="bl">{_na_cell(tot["no_icc"], tot["leads"])}</td>'
+        f'</tr>\n'
+    )
+
+    icc_pct    = round(tot['icc']    / tot['leads'] * 100, 1) if tot['leads'] else 0
+    no_icc_pct = round(tot['no_icc'] / tot['leads'] * 100, 1) if tot['leads'] else 0
+    sd_pct     = round(tot['dsd']    / tot['icc']   * 100, 1) if tot['icc']   else 0
+
+    body = (
+        _kpis([
+            ('Total Leads',       tot['leads'],  'new leads · last 7 days'),
+            ('ICC\'d Leads',      tot['icc'],    f'{icc_pct}% of leads ICC\'d'),
+            ('ICC\'d Same Day',   tot['dsd'],    f'{sd_pct}% of ICC\'d leads'),
+            ('No ICC Yet',        tot['no_icc'], f'{no_icc_pct}% still pending'),
+        ]) +
+        '<div class="slabel">Supervisor — Lead Generation to ICC Breakdown</div>'
+        '<div class="note" style="margin-bottom:14px">💡 <strong>ICC\'d Leads %</strong> = ICC\'d ÷ Total Leads &nbsp;·&nbsp; <strong>Bucket %</strong> = count ÷ Total ICC\'d &nbsp;·&nbsp; <strong>No ICC Yet %</strong> = No ICC ÷ Total Leads &nbsp;·&nbsp; Buckets are mutually exclusive</div>'
+        '<div class="tbl-wrap"><table>'
+        '<thead>'
+        '<tr>'
+        '<th class="left" rowspan="2">Supervisor</th>'
+        '<th class="bl" rowspan="2">Total Leads</th>'
+        '<th class="bl" rowspan="2">ICC\'d Leads</th>'
+        '<th class="bl" colspan="6">ICC\'d — days after lead creation</th>'
+        '<th class="bl" rowspan="2">No ICC Yet</th>'
+        '</tr>'
+        '<tr>'
+        '<th class="bl">Same Day</th>'
+        '<th class="sbl">1–2 days</th>'
+        '<th class="sbl">2–3 days</th>'
+        '<th class="sbl">3–4 days</th>'
+        '<th class="sbl">4–5 days</th>'
+        '<th class="sbl">5+ days</th>'
+        '</tr>'
+        '</thead>'
+        f'<tbody>{tbody}</tbody>'
+        '</table></div>'
+        '<div class="note">Base = all leads with creation date in last 7 days &nbsp;·&nbsp; Bucket % denominator = Total ICC\'d leads &nbsp;·&nbsp; All times IST</div>'
+    )
+
+    return _html_shell(
+        'Lead Gen → ICC Timeline',
+        'Supervisor Bucket View — how fast leads receive their first ICC',
+        WINDOW_LABEL, body
+    )
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# HTML REPORT 2 — ICC → App Timeline (Supervisor bucket view)
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def gen_html_supervisor(sup_rows):
-    tot = {'icc': 0, 'applied': 0, 'd12': 0, 'd23': 0, 'd34': 0, 'd45': 0, 'd5': 0, 'na': 0}
+    tot = {'icc': 0, 'applied': 0, 'dsd': 0, 'd12': 0, 'd23': 0, 'd34': 0, 'd45': 0, 'd5': 0, 'na': 0}
     tbody = ''
 
     for r in sup_rows:
         icc     = int(r['total_icc'])
         applied = int(r['total_applied'])
+        dsd     = int(r['app_same_day'])
         d12     = int(r['app_1_to_2'])
         d23     = int(r['app_2_to_3'])
         d34     = int(r['app_3_to_4'])
@@ -464,7 +603,7 @@ def gen_html_supervisor(sup_rows):
         d5      = int(r['app_5_plus'])
         na      = int(r['not_applied'])
 
-        for k, v in [('icc', icc), ('applied', applied), ('d12', d12), ('d23', d23),
+        for k, v in [('icc', icc), ('applied', applied), ('dsd', dsd), ('d12', d12), ('d23', d23),
                      ('d34', d34), ('d45', d45), ('d5', d5), ('na', na)]:
             tot[k] += v
 
@@ -473,7 +612,8 @@ def gen_html_supervisor(sup_rows):
             f'<td class="left">{e(r["to_name"])}</td>'
             f'<td class="bl num">{icc}</td>'
             f'<td class="bl">{_applied_total_cell(applied, icc)}</td>'
-            f'<td class="bl">{_pct_of_applied(d12, applied)}</td>'
+            f'<td class="bl">{_pct_of_applied(dsd, applied)}</td>'
+            f'<td class="sbl">{_pct_of_applied(d12, applied)}</td>'
             f'<td class="sbl">{_pct_of_applied(d23, applied)}</td>'
             f'<td class="sbl">{_pct_of_applied(d34, applied)}</td>'
             f'<td class="sbl">{_pct_of_applied(d45, applied)}</td>'
@@ -487,7 +627,8 @@ def gen_html_supervisor(sup_rows):
         f'<td class="left">Grand Total</td>'
         f'<td class="bl num">{tot["icc"]}</td>'
         f'<td class="bl">{_applied_total_cell(tot["applied"], tot["icc"])}</td>'
-        f'<td class="bl">{_pct_of_applied(tot["d12"], tot["applied"])}</td>'
+        f'<td class="bl">{_pct_of_applied(tot["dsd"], tot["applied"])}</td>'
+        f'<td class="sbl">{_pct_of_applied(tot["d12"], tot["applied"])}</td>'
         f'<td class="sbl">{_pct_of_applied(tot["d23"], tot["applied"])}</td>'
         f'<td class="sbl">{_pct_of_applied(tot["d34"], tot["applied"])}</td>'
         f'<td class="sbl">{_pct_of_applied(tot["d45"], tot["applied"])}</td>'
@@ -498,14 +639,14 @@ def gen_html_supervisor(sup_rows):
 
     app_pct  = round(tot['applied'] / tot['icc'] * 100, 1) if tot['icc'] else 0
     na_pct   = round(tot['na']      / tot['icc'] * 100, 1) if tot['icc'] else 0
-    d12_pct  = round(tot['d12'] / tot['applied'] * 100, 1) if tot['applied'] else 0
+    sd_pct   = round(tot['dsd'] / tot['applied'] * 100, 1) if tot['applied'] else 0
 
     body = (
         _kpis([
-            ('Total ICC',       tot['icc'],     'ICC\'d leads · last 7 days'),
-            ('Total Applied',   tot['applied'], f'{app_pct}% of ICC leads applied'),
-            ('Applied 0–2 days', tot['d12'],   f'{d12_pct}% of applied'),
-            ('Not Applied Yet', tot['na'],      f'{na_pct}% still pending'),
+            ('Total ICC',          tot['icc'],     'ICC\'d leads · last 7 days'),
+            ('Total Applied',      tot['applied'], f'{app_pct}% of ICC leads applied'),
+            ('Applied Same Day',   tot['dsd'],     f'{sd_pct}% of applied'),
+            ('Not Applied Yet',    tot['na'],       f'{na_pct}% still pending'),
         ]) +
         '<div class="slabel">Supervisor — ICC to Application Breakdown</div>'
         '<div class="note" style="margin-bottom:14px">💡 <strong>Total Applied %</strong> = Applied ÷ Total ICC &nbsp;·&nbsp; <strong>Bucket %</strong> (same day / 1–2d / etc.) = count ÷ Total Applied &nbsp;·&nbsp; <strong>Not Applied Yet %</strong> = Not Applied ÷ Total ICC &nbsp;·&nbsp; Buckets are mutually exclusive</div>'
@@ -515,11 +656,12 @@ def gen_html_supervisor(sup_rows):
         '<th class="left" rowspan="2">Supervisor</th>'
         '<th class="bl" rowspan="2">Total ICC</th>'
         '<th class="bl" rowspan="2">Total Applied</th>'
-        '<th class="bl" colspan="5">Applied — days after ICC date</th>'
+        '<th class="bl" colspan="6">Applied — days after ICC date</th>'
         '<th class="bl" rowspan="2">Not Applied Yet</th>'
         '</tr>'
         '<tr>'
-        '<th class="bl">0–2 days</th>'
+        '<th class="bl">Same Day</th>'
+        '<th class="sbl">1–2 days</th>'
         '<th class="sbl">2–3 days</th>'
         '<th class="sbl">3–4 days</th>'
         '<th class="sbl">4–5 days</th>'
@@ -747,13 +889,14 @@ def gen_html_direct_flow(direct_rows, to_order):
 # GENERATE ALL HTML FILES
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def generate_all_html(sup_rows, icc_rows, direct_rows):
+def generate_all_html(l2i_rows, sup_rows, icc_rows, direct_rows):
     order = _to_order(sup_rows, icc_rows, direct_rows)
 
     files = [
-        ('TAT_1_ICC_Supervisor',  gen_html_supervisor(sup_rows)),
-        ('TAT_2_ICC_Flow',        gen_html_icc_flow(icc_rows, order)),
-        ('TAT_3_Direct_Flow',     gen_html_direct_flow(direct_rows, order)),
+        ('TAT_1_Lead_to_ICC',     gen_html_lead_to_icc(l2i_rows)),
+        ('TAT_2_ICC_Supervisor',  gen_html_supervisor(sup_rows)),
+        ('TAT_3_ICC_Flow',        gen_html_icc_flow(icc_rows, order)),
+        ('TAT_4_Direct_Flow',     gen_html_direct_flow(direct_rows, order)),
     ]
 
     paths = []
@@ -853,29 +996,31 @@ def send_via_whapi(file_path, caption, group_id):
 
 async def main():
     print("=" * 60)
-    print("📊 TAT REPORTS — ICC · Direct Flow · Supervisor Timeline")
+    print("📊 TAT REPORTS — Lead→ICC · ICC→App · Direct Flow · Supervisor Timeline")
     print("=" * 60)
     print(f"   Window: {WINDOW_LABEL}")
     print()
 
     # Step 1 — fetch ──────────────────────────────────────────────────────────
     print("─── Step 1/3: Fetching data from Online LMS DB ─────────────────────")
-    sup_rows, icc_rows, direct_rows = await fetch_all()
-    print(f"  ✅ ICC Supervisor rows : {len(sup_rows)} supervisors")
-    print(f"  ✅ ICC Flow students   : {len(icc_rows)}")
-    print(f"  ✅ Direct Flow students: {len(direct_rows)}")
+    l2i_rows, sup_rows, icc_rows, direct_rows = await fetch_all()
+    print(f"  ✅ Lead→ICC Supervisor rows: {len(l2i_rows)} supervisors")
+    print(f"  ✅ ICC Supervisor rows     : {len(sup_rows)} supervisors")
+    print(f"  ✅ ICC Flow students       : {len(icc_rows)}")
+    print(f"  ✅ Direct Flow students    : {len(direct_rows)}")
     print()
 
     # Step 2 — generate HTMLs ─────────────────────────────────────────────────
     print("─── Step 2/3: Generating HTML reports ───────────────────────────────")
-    html_paths = generate_all_html(sup_rows, icc_rows, direct_rows)
+    html_paths = generate_all_html(l2i_rows, sup_rows, icc_rows, direct_rows)
     print()
 
     # Step 3 — screenshot + send ──────────────────────────────────────────────
     print("─── Step 3/3: Screenshot + WhatsApp Delivery ────────────────────────")
 
-    NAMES    = ['ICC_Supervisor_Timeline', 'ICC_Flow_TAT',     'Direct_Flow_TAT']
+    NAMES    = ['Lead_to_ICC_Timeline', 'ICC_Supervisor_Timeline', 'ICC_Flow_TAT', 'Direct_Flow_TAT']
     CAPTIONS = [
+        f'Lead Gen → ICC Timeline — Supervisor Bucket View | {WINDOW_LABEL}',
         f'ICC → App Timeline — Supervisor Bucket View | {WINDOW_LABEL}',
         f'ICC Flow — Funnel & TAT (Supervisor + Counsellor) | {WINDOW_LABEL}',
         f'Direct Flow — Funnel & TAT (no ICC path) | {WINDOW_LABEL}',

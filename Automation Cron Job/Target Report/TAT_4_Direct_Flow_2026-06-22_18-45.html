@@ -1,0 +1,119 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Direct Flow — Funnel &amp; TAT Report</title>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --navy:#0d1b2a;--navy2:#1b2e45;
+  --teal:#0097a7;
+  --white:#fff;--bg:#f4f6f9;--bg2:#eef2f7;
+  --bdr:#dce3ed;--bdr2:#b8c4d4;
+  --ink:#0d1b2a;--ink2:#4a5568;--ink3:#8896a8;
+  --green:#1a7f4b;--green-bg:#e3f5ec;
+  --amber:#b45309;--amber-bg:#fef3c7;
+  --red:#b91c1c;--red-bg:#fee2e2;
+  --blue:#1d4ed8;--blue-bg:#dbeafe;
+  --purple:#5b21b6;--purple-bg:#ede9fe;
+  --gray:#6b7280;--gray-bg:#f3f4f6;
+  --r:6px
+}
+body{background:var(--bg);font-family:'Segoe UI',-apple-system,BlinkMacSystemFont,Helvetica,Arial,sans-serif;color:var(--ink);font-size:15px;font-weight:500}
+.page{max-width:1180px;margin:0 auto;padding:32px 28px 64px}
+/* header */
+.hdr{background:var(--navy);padding:26px 28px 22px;border-radius:8px;margin-bottom:22px;border-left:5px solid var(--teal)}
+.hdr-row{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px}
+.brand{font-size:11px;letter-spacing:.2em;text-transform:uppercase;color:var(--teal);margin-bottom:6px;font-weight:700}
+.htitle{font-size:clamp(18px,3vw,26px);font-weight:800;color:#fff;line-height:1.2}
+.badge-live{display:inline-block;background:var(--teal);color:#fff;font-size:10px;letter-spacing:.1em;text-transform:uppercase;padding:4px 12px;border-radius:20px;margin-bottom:5px;font-weight:700}
+.date-meta{font-size:13px;color:rgba(255,255,255,.55);text-align:right;font-weight:500}
+/* section label */
+.slabel{font-size:13px;font-weight:800;letter-spacing:.07em;text-transform:uppercase;color:var(--navy2);margin:20px 0 14px;padding:0 0 8px;border-bottom:2px solid var(--teal)}
+/* kpi cards */
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:14px;margin-bottom:22px}
+.card{background:var(--white);border:1px solid var(--bdr);border-radius:var(--r);padding:18px 20px;border-top:4px solid var(--teal)}
+.card:nth-child(2){border-top-color:#1a7f4b}.card:nth-child(3){border-top-color:#b45309}
+.card:nth-child(4){border-top-color:#b91c1c}.card:nth-child(5){border-top-color:#5b21b6}
+.card-lbl{font-size:11px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ink3);margin-bottom:5px}
+.card-val{font-size:28px;font-weight:800;color:var(--ink);letter-spacing:-.02em;line-height:1.15}
+.card-sub{font-size:13px;color:var(--ink3);margin-top:4px;font-weight:500}
+/* alert box */
+.alert{background:#fffbeb;border:1px solid #fde68a;border-radius:var(--r);padding:12px 16px;margin-bottom:18px;font-size:14px;color:#92400e;line-height:1.6;font-weight:500}
+/* note bar */
+.note{margin-top:14px;font-size:13px;color:var(--ink3);padding:9px 14px;background:var(--bg2);border-radius:var(--r);border-left:3px solid var(--teal);font-weight:500;line-height:1.6}
+/* table */
+.tbl-wrap{overflow-x:auto;border-radius:var(--r);border:1px solid var(--bdr2);background:var(--white)}
+table{width:100%;border-collapse:collapse;font-size:14px}
+thead th{background:var(--navy);color:#fff;padding:13px 14px;text-align:center;font-weight:700;font-size:12px;letter-spacing:.05em;border-right:1px solid rgba(255,255,255,.08)}
+thead th:last-child{border-right:none}
+thead th.left{text-align:left;padding-left:16px}
+thead th.bl{border-left:2px solid rgba(255,255,255,.2)}
+thead th.sbl{border-left:1px solid rgba(255,255,255,.1)}
+td{padding:11px 14px;border-bottom:1px solid var(--bdr);text-align:right;color:var(--ink2);vertical-align:middle;white-space:nowrap;font-weight:500}
+td.left{text-align:left;font-weight:600;color:var(--ink);padding-left:16px}
+td.indent{padding-left:32px;color:var(--ink2)!important;font-weight:500!important}
+td.num{font-variant-numeric:tabular-nums;font-weight:700;color:var(--ink);font-size:15px}
+td.bl{border-left:2px solid var(--bdr)}
+td.sbl{border-left:1px solid var(--bdr)}
+tbody tr:nth-child(even) td{background:#fafcff}
+tbody tr:nth-child(odd)  td{background:var(--white)}
+tbody tr:hover td{background:#eef4ff}
+tr.to-row   td{background:#eef2f7!important;font-weight:800;color:var(--navy);border-top:2px solid var(--bdr2);font-size:14px}
+tr.to-total td{background:var(--bg2)!important;font-weight:700;border-top:1px solid var(--bdr2);color:var(--ink2);font-size:13.5px}
+tr.total-row td{background:var(--navy2)!important;color:#fff!important;font-weight:800!important;font-size:15px!important;border-top:2px solid var(--navy)!important}
+tr:last-child td{border-bottom:none}
+/* badges */
+.badge{display:inline-block;padding:3px 11px;border-radius:99px;font-size:13px;font-weight:700}
+.bg {background:var(--green-bg);color:var(--green)}
+.bb {background:var(--blue-bg);color:var(--blue)}
+.ba {background:var(--amber-bg);color:var(--amber)}
+.br {background:var(--red-bg);color:var(--red)}
+.bp {background:var(--purple-bg);color:var(--purple)}
+.bng{background:var(--gray-bg);color:var(--gray)}
+.bz {color:#adb5bd;font-size:13px;font-weight:600}
+/* TAT colouring */
+.tf{color:var(--green);font-weight:800;font-size:14px}
+.tm{color:var(--amber);font-weight:800;font-size:14px}
+.ts{color:var(--red);font-weight:800;font-size:14px}
+/* footer */
+.footer{margin-top:32px;padding:14px 0 4px;border-top:1px solid var(--bdr);font-size:12px;color:var(--ink3);text-align:center;font-weight:500}
+@media(max-width:640px){.cards{grid-template-columns:1fr 1fr}table{font-size:13px}}
+</style>
+</head>
+<body>
+<div class="page">
+  <header class="hdr">
+    <div class="hdr-row">
+      <div>
+        <div class="brand">Performance Intelligence · Online LMS</div>
+        <h1 class="htitle">Direct Flow — Funnel &amp; TAT Report</h1>
+        <div style="font-size:12px;color:rgba(255,255,255,.6);margin-top:4px">Lead → Application → Admission (no ICC path)</div>
+      </div>
+      <div style="text-align:right">
+        <div class="badge-live">Live Report</div>
+        <div class="date-meta">Last 7 days · 2026-06-15 – 2026-06-22</div>
+      </div>
+    </div>
+  </header>
+  <div class="cards"><div class="card"><div class="card-lbl">Direct Apps</div><div class="card-val">7</div><div class="card-sub">no ICC before application</div></div><div class="card"><div class="card-lbl">Admissions</div><div class="card-val">7</div><div class="card-sub">100.0% closure rate</div></div><div class="card"><div class="card-lbl">Avg Lead→App</div><div class="card-val">0.8d</div><div class="card-sub">lead entry to application</div></div><div class="card"><div class="card-lbl">Avg App→Adm</div><div class="card-val">1.3d</div><div class="card-sub">application to admission</div></div><div class="card"><div class="card-lbl">Avg Total TAT</div><div class="card-val">2.1d</div><div class="card-sub">lead to admission</div></div></div><div class="alert">⚠️ Direct flow = application marked with no ICC, or ICC marked <em>after</em> application. These are process anomalies — leads skipped the counselling stage.</div><div class="slabel">Supervisor + Counsellor Drilldown</div><div class="tbl-wrap"><table><thead><tr><th class="left" rowspan="2">Supervisor / Counsellor</th><th class="bl" colspan="3">Stage 1 — Lead → App</th><th class="bl" colspan="3">Stage 2 — App → Adm</th></tr><tr><th class="bl">Direct Apps</th><th class="sbl">Adm</th><th class="sbl">Closure %</th><th class="bl">Avg Lead→App</th><th class="sbl">Avg App→Adm</th><th class="sbl">Total TAT</th></tr></thead><tbody><tr class="to-row"><td class="left">Prashant Mishra</td><td class="bl num">1</td><td class="sbl num">1</td><td class="sbl"><span class="badge bp">100.0%</span></td><td class="bl"><span class="tf">0.1d</span></td><td class="sbl"><span class="ts">3.6d</span></td><td class="sbl"><span class="tm">3.7d</span></td></tr>
+<tr><td class="left indent">Swapnil Chunar</td><td class="bl num">1</td><td class="sbl num">1</td><td class="sbl"><span class="badge bp">100.0%</span></td><td class="bl"><span class="tf">0.1d</span></td><td class="sbl"><span class="ts">3.6d</span></td><td class="sbl"><span class="tm">3.7d</span></td></tr>
+<tr class="to-total"><td class="left indent">Total — Prashant Mishra</td><td class="bl num">1</td><td class="sbl num">1</td><td class="sbl"><span class="badge bp">100.0%</span></td><td class="bl"><span class="tf">0.1d</span></td><td class="sbl"><span class="ts">3.6d</span></td><td class="sbl"><span class="tm">3.7d</span></td></tr>
+<tr class="to-row"><td class="left">Siddarth Kumar</td><td class="bl num">1</td><td class="sbl num">1</td><td class="sbl"><span class="badge bp">100.0%</span></td><td class="bl"><span class="tf">0.0d</span></td><td class="sbl"><span class="tf">0.0d</span></td><td class="sbl"><span class="tf">0.0d</span></td></tr>
+<tr><td class="left indent">Tanya Singh</td><td class="bl num">1</td><td class="sbl num">1</td><td class="sbl"><span class="badge bp">100.0%</span></td><td class="bl"><span class="tf">0.0d</span></td><td class="sbl"><span class="tf">0.0d</span></td><td class="sbl"><span class="tf">0.0d</span></td></tr>
+<tr class="to-total"><td class="left indent">Total — Siddarth Kumar</td><td class="bl num">1</td><td class="sbl num">1</td><td class="sbl"><span class="badge bp">100.0%</span></td><td class="bl"><span class="tf">0.0d</span></td><td class="sbl"><span class="tf">0.0d</span></td><td class="sbl"><span class="tf">0.0d</span></td></tr>
+<tr class="to-row"><td class="left">Sunil</td><td class="bl" colspan="6" style="text-align:center;color:#8896a8;font-weight:400">No direct applications</td></tr>
+<tr class="to-row"><td class="left">Vartika Thakur</td><td class="bl num">2</td><td class="sbl num">2</td><td class="sbl"><span class="badge bp">100.0%</span></td><td class="bl"><span class="tm">1.2d</span></td><td class="sbl"><span class="tf">0.2d</span></td><td class="sbl"><span class="tf">1.4d</span></td></tr>
+<tr><td class="left indent">sanjay verma</td><td class="bl num">2</td><td class="sbl num">2</td><td class="sbl"><span class="badge bp">100.0%</span></td><td class="bl"><span class="tm">1.2d</span></td><td class="sbl"><span class="tf">0.2d</span></td><td class="sbl"><span class="tf">1.4d</span></td></tr>
+<tr class="to-total"><td class="left indent">Total — Vartika Thakur</td><td class="bl num">2</td><td class="sbl num">2</td><td class="sbl"><span class="badge bp">100.0%</span></td><td class="bl"><span class="tm">1.2d</span></td><td class="sbl"><span class="tf">0.2d</span></td><td class="sbl"><span class="tf">1.4d</span></td></tr>
+<tr class="to-row"><td class="left">Varun</td><td class="bl num">3</td><td class="sbl num">3</td><td class="sbl"><span class="badge bp">100.0%</span></td><td class="bl"><span class="tf">1.0d</span></td><td class="sbl"><span class="tm">1.7d</span></td><td class="sbl"><span class="tm">2.7d</span></td></tr>
+<tr><td class="left indent">Abhishek Sikarwar</td><td class="bl num">2</td><td class="sbl num">2</td><td class="sbl"><span class="badge bp">100.0%</span></td><td class="bl"><span class="tm">1.3d</span></td><td class="sbl"><span class="tf">0.6d</span></td><td class="sbl"><span class="tf">1.9d</span></td></tr>
+<tr><td class="left indent">Tanisha Kulshrestha</td><td class="bl num">1</td><td class="sbl num">1</td><td class="sbl"><span class="badge bp">100.0%</span></td><td class="bl"><span class="tf">0.4d</span></td><td class="sbl"><span class="ts">4.0d</span></td><td class="sbl"><span class="tm">4.4d</span></td></tr>
+<tr class="to-total"><td class="left indent">Total — Varun</td><td class="bl num">3</td><td class="sbl num">3</td><td class="sbl"><span class="badge bp">100.0%</span></td><td class="bl"><span class="tf">1.0d</span></td><td class="sbl"><span class="tm">1.7d</span></td><td class="sbl"><span class="tm">2.7d</span></td></tr>
+<tr class="total-row"><td class="left">Grand Total</td><td class="bl num">7</td><td class="sbl num">7</td><td class="sbl"><span class="badge bp">100.0%</span></td><td class="bl"><span class="tf">0.8d</span></td><td class="sbl"><span class="tm">1.3d</span></td><td class="sbl"><span class="tm">2.1d</span></td></tr>
+</tbody></table></div><div class="note">TAT measured from lead creation date &nbsp;·&nbsp; Partial payments excluded &nbsp;·&nbsp; TAT colour: green ≤1d · amber ≤3d · red >3d</div>
+  <footer class="footer">DegreeFYD · online_lms · 2026-06-15 – 2026-06-22 · All times IST</footer>
+</div>
+</body>
+</html>

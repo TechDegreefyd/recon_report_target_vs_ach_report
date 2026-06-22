@@ -1,0 +1,110 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>ICC → Application Timeline</title>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --navy:#0d1b2a;--navy2:#1b2e45;
+  --teal:#0097a7;
+  --white:#fff;--bg:#f4f6f9;--bg2:#eef2f7;
+  --bdr:#dce3ed;--bdr2:#b8c4d4;
+  --ink:#0d1b2a;--ink2:#4a5568;--ink3:#8896a8;
+  --green:#1a7f4b;--green-bg:#e3f5ec;
+  --amber:#b45309;--amber-bg:#fef3c7;
+  --red:#b91c1c;--red-bg:#fee2e2;
+  --blue:#1d4ed8;--blue-bg:#dbeafe;
+  --purple:#5b21b6;--purple-bg:#ede9fe;
+  --gray:#6b7280;--gray-bg:#f3f4f6;
+  --r:6px
+}
+body{background:var(--bg);font-family:'Segoe UI',-apple-system,BlinkMacSystemFont,Helvetica,Arial,sans-serif;color:var(--ink);font-size:15px;font-weight:500}
+.page{max-width:1180px;margin:0 auto;padding:32px 28px 64px}
+/* header */
+.hdr{background:var(--navy);padding:26px 28px 22px;border-radius:8px;margin-bottom:22px;border-left:5px solid var(--teal)}
+.hdr-row{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px}
+.brand{font-size:11px;letter-spacing:.2em;text-transform:uppercase;color:var(--teal);margin-bottom:6px;font-weight:700}
+.htitle{font-size:clamp(18px,3vw,26px);font-weight:800;color:#fff;line-height:1.2}
+.badge-live{display:inline-block;background:var(--teal);color:#fff;font-size:10px;letter-spacing:.1em;text-transform:uppercase;padding:4px 12px;border-radius:20px;margin-bottom:5px;font-weight:700}
+.date-meta{font-size:13px;color:rgba(255,255,255,.55);text-align:right;font-weight:500}
+/* section label */
+.slabel{font-size:13px;font-weight:800;letter-spacing:.07em;text-transform:uppercase;color:var(--navy2);margin:20px 0 14px;padding:0 0 8px;border-bottom:2px solid var(--teal)}
+/* kpi cards */
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:14px;margin-bottom:22px}
+.card{background:var(--white);border:1px solid var(--bdr);border-radius:var(--r);padding:18px 20px;border-top:4px solid var(--teal)}
+.card:nth-child(2){border-top-color:#1a7f4b}.card:nth-child(3){border-top-color:#b45309}
+.card:nth-child(4){border-top-color:#b91c1c}.card:nth-child(5){border-top-color:#5b21b6}
+.card-lbl{font-size:11px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ink3);margin-bottom:5px}
+.card-val{font-size:28px;font-weight:800;color:var(--ink);letter-spacing:-.02em;line-height:1.15}
+.card-sub{font-size:13px;color:var(--ink3);margin-top:4px;font-weight:500}
+/* alert box */
+.alert{background:#fffbeb;border:1px solid #fde68a;border-radius:var(--r);padding:12px 16px;margin-bottom:18px;font-size:14px;color:#92400e;line-height:1.6;font-weight:500}
+/* note bar */
+.note{margin-top:14px;font-size:13px;color:var(--ink3);padding:9px 14px;background:var(--bg2);border-radius:var(--r);border-left:3px solid var(--teal);font-weight:500;line-height:1.6}
+/* table */
+.tbl-wrap{overflow-x:auto;border-radius:var(--r);border:1px solid var(--bdr2);background:var(--white)}
+table{width:100%;border-collapse:collapse;font-size:14px}
+thead th{background:var(--navy);color:#fff;padding:13px 14px;text-align:center;font-weight:700;font-size:12px;letter-spacing:.05em;border-right:1px solid rgba(255,255,255,.08)}
+thead th:last-child{border-right:none}
+thead th.left{text-align:left;padding-left:16px}
+thead th.bl{border-left:2px solid rgba(255,255,255,.2)}
+thead th.sbl{border-left:1px solid rgba(255,255,255,.1)}
+td{padding:11px 14px;border-bottom:1px solid var(--bdr);text-align:right;color:var(--ink2);vertical-align:middle;white-space:nowrap;font-weight:500}
+td.left{text-align:left;font-weight:600;color:var(--ink);padding-left:16px}
+td.indent{padding-left:32px;color:var(--ink2)!important;font-weight:500!important}
+td.num{font-variant-numeric:tabular-nums;font-weight:700;color:var(--ink);font-size:15px}
+td.bl{border-left:2px solid var(--bdr)}
+td.sbl{border-left:1px solid var(--bdr)}
+tbody tr:nth-child(even) td{background:#fafcff}
+tbody tr:nth-child(odd)  td{background:var(--white)}
+tbody tr:hover td{background:#eef4ff}
+tr.to-row   td{background:#eef2f7!important;font-weight:800;color:var(--navy);border-top:2px solid var(--bdr2);font-size:14px}
+tr.to-total td{background:var(--bg2)!important;font-weight:700;border-top:1px solid var(--bdr2);color:var(--ink2);font-size:13.5px}
+tr.total-row td{background:var(--navy2)!important;color:#fff!important;font-weight:800!important;font-size:15px!important;border-top:2px solid var(--navy)!important}
+tr:last-child td{border-bottom:none}
+/* badges */
+.badge{display:inline-block;padding:3px 11px;border-radius:99px;font-size:13px;font-weight:700}
+.bg {background:var(--green-bg);color:var(--green)}
+.bb {background:var(--blue-bg);color:var(--blue)}
+.ba {background:var(--amber-bg);color:var(--amber)}
+.br {background:var(--red-bg);color:var(--red)}
+.bp {background:var(--purple-bg);color:var(--purple)}
+.bng{background:var(--gray-bg);color:var(--gray)}
+.bz {color:#adb5bd;font-size:13px;font-weight:600}
+/* TAT colouring */
+.tf{color:var(--green);font-weight:800;font-size:14px}
+.tm{color:var(--amber);font-weight:800;font-size:14px}
+.ts{color:var(--red);font-weight:800;font-size:14px}
+/* footer */
+.footer{margin-top:32px;padding:14px 0 4px;border-top:1px solid var(--bdr);font-size:12px;color:var(--ink3);text-align:center;font-weight:500}
+@media(max-width:640px){.cards{grid-template-columns:1fr 1fr}table{font-size:13px}}
+</style>
+</head>
+<body>
+<div class="page">
+  <header class="hdr">
+    <div class="hdr-row">
+      <div>
+        <div class="brand">Performance Intelligence · Online LMS</div>
+        <h1 class="htitle">ICC → Application Timeline</h1>
+        <div style="font-size:12px;color:rgba(255,255,255,.6);margin-top:4px">Supervisor Bucket View — how fast leads apply after ICC</div>
+      </div>
+      <div style="text-align:right">
+        <div class="badge-live">Live Report</div>
+        <div class="date-meta">Last 7 days · 2026-06-15 – 2026-06-22</div>
+      </div>
+    </div>
+  </header>
+  <div class="cards"><div class="card"><div class="card-lbl">Total ICC</div><div class="card-val">462</div><div class="card-sub">ICC'd leads · last 7 days</div></div><div class="card"><div class="card-lbl">Total Applied</div><div class="card-val">40</div><div class="card-sub">8.7% of ICC leads applied</div></div><div class="card"><div class="card-lbl">Applied Same Day</div><div class="card-val">27</div><div class="card-sub">67.5% of applied</div></div><div class="card"><div class="card-lbl">Not Applied Yet</div><div class="card-val">422</div><div class="card-sub">91.3% still pending</div></div></div><div class="slabel">Supervisor — ICC to Application Breakdown</div><div class="note" style="margin-bottom:14px">💡 <strong>Total Applied %</strong> = Applied ÷ Total ICC &nbsp;·&nbsp; <strong>Bucket %</strong> (same day / 1–2d / etc.) = count ÷ Total Applied &nbsp;·&nbsp; <strong>Not Applied Yet %</strong> = Not Applied ÷ Total ICC &nbsp;·&nbsp; Buckets are mutually exclusive</div><div class="tbl-wrap"><table><thead><tr><th class="left" rowspan="2">Supervisor</th><th class="bl" rowspan="2">Total ICC</th><th class="bl" rowspan="2">Total Applied</th><th class="bl" colspan="6">Applied — days after ICC date</th><th class="bl" rowspan="2">Not Applied Yet</th></tr><tr><th class="bl">Same Day</th><th class="sbl">1–2 days</th><th class="sbl">2–3 days</th><th class="sbl">3–4 days</th><th class="sbl">4–5 days</th><th class="sbl">5+ days</th></tr></thead><tbody><tr><td class="left">Prashant Mishra</td><td class="bl num">71</td><td class="bl"><span class="bz">0 (0%)</span></td><td class="bl"><span class="bz">—</span></td><td class="sbl"><span class="bz">—</span></td><td class="sbl"><span class="bz">—</span></td><td class="sbl"><span class="bz">—</span></td><td class="sbl"><span class="bz">—</span></td><td class="sbl"><span class="bz">—</span></td><td class="bl"><span class="badge br">71<span style="opacity:.65;font-weight:500"> (100.0%)</span></span></td></tr>
+<tr><td class="left">Siddarth Kumar</td><td class="bl num">74</td><td class="bl"><span class="badge bb">10<span style="opacity:.65;font-weight:500"> (13.5%)</span></span></td><td class="bl"><span class="badge bg">4<span style="opacity:.65;font-weight:600"> (40.0%)</span></span></td><td class="sbl"><span class="badge bb">2<span style="opacity:.65;font-weight:600"> (20.0%)</span></span></td><td class="sbl"><span class="badge ba">1<span style="opacity:.65;font-weight:600"> (10.0%)</span></span></td><td class="sbl"><span class="badge bb">3<span style="opacity:.65;font-weight:600"> (30.0%)</span></span></td><td class="sbl"><span class="bz">—</span></td><td class="sbl"><span class="bz">—</span></td><td class="bl"><span class="badge ba">64<span style="opacity:.65;font-weight:500"> (86.5%)</span></span></td></tr>
+<tr><td class="left">Sunil</td><td class="bl num">126</td><td class="bl"><span class="badge ba">12<span style="opacity:.65;font-weight:500"> (9.5%)</span></span></td><td class="bl"><span class="badge bg">9<span style="opacity:.65;font-weight:600"> (75.0%)</span></span></td><td class="sbl"><span class="badge ba">1<span style="opacity:.65;font-weight:600"> (8.3%)</span></span></td><td class="sbl"><span class="badge ba">1<span style="opacity:.65;font-weight:600"> (8.3%)</span></span></td><td class="sbl"><span class="bz">—</span></td><td class="sbl"><span class="badge ba">1<span style="opacity:.65;font-weight:600"> (8.3%)</span></span></td><td class="sbl"><span class="bz">—</span></td><td class="bl"><span class="badge br">114<span style="opacity:.65;font-weight:500"> (90.5%)</span></span></td></tr>
+<tr><td class="left">Vartika Thakur</td><td class="bl num">135</td><td class="bl"><span class="badge ba">10<span style="opacity:.65;font-weight:500"> (7.4%)</span></span></td><td class="bl"><span class="badge bg">7<span style="opacity:.65;font-weight:600"> (70.0%)</span></span></td><td class="sbl"><span class="badge ba">1<span style="opacity:.65;font-weight:600"> (10.0%)</span></span></td><td class="sbl"><span class="badge ba">1<span style="opacity:.65;font-weight:600"> (10.0%)</span></span></td><td class="sbl"><span class="bz">—</span></td><td class="sbl"><span class="badge ba">1<span style="opacity:.65;font-weight:600"> (10.0%)</span></span></td><td class="sbl"><span class="bz">—</span></td><td class="bl"><span class="badge br">125<span style="opacity:.65;font-weight:500"> (92.6%)</span></span></td></tr>
+<tr><td class="left">Varun</td><td class="bl num">56</td><td class="bl"><span class="badge bb">8<span style="opacity:.65;font-weight:500"> (14.3%)</span></span></td><td class="bl"><span class="badge bg">7<span style="opacity:.65;font-weight:600"> (87.5%)</span></span></td><td class="sbl"><span class="bz">—</span></td><td class="sbl"><span class="bz">—</span></td><td class="sbl"><span class="bz">—</span></td><td class="sbl"><span class="bz">—</span></td><td class="sbl"><span class="badge ba">1<span style="opacity:.65;font-weight:600"> (12.5%)</span></span></td><td class="bl"><span class="badge ba">48<span style="opacity:.65;font-weight:500"> (85.7%)</span></span></td></tr>
+<tr class="total-row"><td class="left">Grand Total</td><td class="bl num">462</td><td class="bl"><span class="badge ba">40<span style="opacity:.65;font-weight:500"> (8.7%)</span></span></td><td class="bl"><span class="badge bg">27<span style="opacity:.65;font-weight:600"> (67.5%)</span></span></td><td class="sbl"><span class="badge ba">4<span style="opacity:.65;font-weight:600"> (10.0%)</span></span></td><td class="sbl"><span class="badge ba">3<span style="opacity:.65;font-weight:600"> (7.5%)</span></span></td><td class="sbl"><span class="badge ba">3<span style="opacity:.65;font-weight:600"> (7.5%)</span></span></td><td class="sbl"><span class="badge ba">2<span style="opacity:.65;font-weight:600"> (5.0%)</span></span></td><td class="sbl"><span class="badge ba">1<span style="opacity:.65;font-weight:600"> (2.5%)</span></span></td><td class="bl"><span class="badge br">422<span style="opacity:.65;font-weight:500"> (91.3%)</span></span></td></tr>
+</tbody></table></div><div class="note">Base = ICC'd leads with lead creation date in last 7 days &nbsp;·&nbsp; All times IST</div>
+  <footer class="footer">DegreeFYD · online_lms · 2026-06-15 – 2026-06-22 · All times IST</footer>
+</div>
+</body>
+</html>
