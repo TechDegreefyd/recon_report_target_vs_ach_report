@@ -49,6 +49,7 @@ os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 WHAPI_TOKEN = os.getenv('WHAPI_TOKEN_PAID')
 WHATSAPP_GROUP = os.getenv('WHATSAPP_GROUP', '120363426619711887@g.us')
+WHATSAPP_GROUP_REGULAR = os.getenv('WHATSAPP_GROUP_REGULAR_LMS', '120363425975112074@g.us')
 
 # ─── Date logic ──────────────────────────────────────────────────────────────
 if args.date:
@@ -88,23 +89,55 @@ SIM_MAP = {
     '6357725431': ('Kuldeep',          'Sid Team'),
     '6357724433': ('Om',               'Varun Team'),
     '6357725418': ('Abhishek Dubey',   'Prashant Team'),
-    '6357725434': ('Mohit',            'Prashant Team'),
+    '6357725434': ('Mohit',            'Prashant Team'), 
     '6357724430': ('Abhishek Kamat',   'Vartika Team'),
     '6357725429': ('Neha',             'Sunil Team'),
     '6357725421': ('Navneet',          'Sunil Team'),
     '6357725426': ('Akshay',           'Sunil Team'),
     '6357725415': ('Abhishek Sikarwar','Varun Team'),
     '6357725416': ('Divya Goel',       'Varun Team'),
+    '6357725427': ('Prerna',           'Varun Team'),
+    # Amity (Guruvinder)
+    '6357725408': ('Kriti',            'Amity'),
+    '6357725446': ('Adarsh',           'Amity'),
+    '6357725441': ('Aastha',           'Amity'),
+    '6357725409': ('Abhishek',         'Amity'),
+    '6357725437': ('Paras',            'Amity'),
+    '6357725448': ('Rakhi Chauhan',    'Amity'),
+    '6357725436': ('Rahul',            'Amity'),
+    '6357725414': ('Ankita Shah',      'Amity'),
+    '6357725442': ('Kiran Gautam',     'Amity'),
+    '6357725438': ('Gayatari',         'Amity'),
+    '6357725413': ('khushi yadav',     'Amity'),
+    '6357725412': ('Sahil',            'Amity'),
+    '6357725443': ('Anupam',           'Amity'),
+    '6357725410': ('Neha Prajapati',   'Amity'),
+    # Punjab (Guruvinder)
+    '6357725407': ('Sourav M',         'Punjab'),
+    '6357725411': ('Sourav L',         'Punjab'),
+    '6357725406': ('Rahul Kumar Yadav','Punjab'),
+    '6357725440': ('Kanika',           'Punjab'),
+    '6357725445': ('Sakshi Kaamra',    'Punjab'),
+    '6357725439': ('Pooja Singh',      'Punjab'),
 }
 
-TEAM_ORDER = ['Vartika Team', 'Sunil Team', 'Sid Team', 'Varun Team', 'Prashant Team']
+TEAM_ORDER = ['Vartika Team', 'Sunil Team', 'Sid Team', 'Varun Team', 'Prashant Team', 'Amity', 'Punjab']
 TEAM_COLORS = {
     'Vartika Team':  '#8b5cf6',
     'Sunil Team':    '#0ea5e9',
     'Sid Team':      '#f59e0b',
     'Varun Team':    '#10b981',
     'Prashant Team': '#ec4899',
+    'Amity':         '#0891b2',
+    'Punjab':        '#b45309',
 }
+
+REGULAR_TEAMS = ['Amity', 'Punjab']
+
+# SIMs belonging to the regular (non-core) floor — used as a flag elsewhere
+REGULAR_SIMS = frozenset(
+    sim for sim, (_, team) in SIM_MAP.items() if team in REGULAR_TEAMS
+)
 
 # ─── CallInsight download ─────────────────────────────────────────────────────
 CALLINSIGHT_URL  = 'https://app.callinsight.io'
@@ -270,7 +303,8 @@ def fmt_avg(secs: int) -> str:
     return f'{m}m {s:02d}s' if m else f'{s}s'
 
 
-def build_html(stats: dict, date_label: str, csv_source: str = '', time_window: str = '') -> str:
+def build_html(stats: dict, date_label: str, csv_source: str = '', time_window: str = '', team_order: list = None) -> str:
+    effective_team_order = team_order if team_order is not None else TEAM_ORDER
     # Global totals
     all_c    = list(stats.values())
     g_total        = sum(c['total']     for c in all_c)
@@ -293,8 +327,8 @@ def build_html(stats: dict, date_label: str, csv_source: str = '', time_window: 
         cls = 'cg' if pct >= 45 else ('co' if pct >= 30 else 'cr')
         return f'<span class="chip {cls}">{pct}%</span>'
 
-    left_teams  = [t for t in TEAM_ORDER if t in teams and TEAM_ORDER.index(t) < 3]
-    right_teams = [t for t in TEAM_ORDER if t in teams and TEAM_ORDER.index(t) >= 3]
+    left_teams  = [t for t in effective_team_order if t in teams and effective_team_order.index(t) < 3]
+    right_teams = [t for t in effective_team_order if t in teams and effective_team_order.index(t) >= 3]
 
     def team_card(team_name):
         members = sorted(teams.get(team_name, []), key=lambda x: -x['talk_secs'])
@@ -359,7 +393,7 @@ def build_html(stats: dict, date_label: str, csv_source: str = '', time_window: 
     # ── Supervisor summary table ──────────────────────────────────────────────
     sup_rows_html = ''
     gt_tc = gt_ta = gt_tt = gt_tr = 0
-    for team_name in TEAM_ORDER:
+    for team_name in effective_team_order:
         members = teams.get(team_name, [])
         if not members:
             continue
@@ -671,62 +705,78 @@ async def main():
     total_ans   = sum(s['answered'] for s in stats.values())
     log(f'Parsed: {total_calls} outbound calls, {total_ans} connected, {active} active counsellors')
 
-    # Build HTML
-    log('Building HTML report ...')
-    html_content  = build_html(stats, eff_label, csv_source=args.csv or 'CallInsight', time_window=time_window)
-    slug          = f'_{(from_time or "").replace(":", "")}-{(to_time or "").replace(":", "")}' if from_time or to_time else ''
-    html_filename = f'Outbound_Report_{eff_stamp}{slug}.html'
-    html_path     = os.path.join(OUTPUT_DIR, html_filename)
-    with open(html_path, 'w', encoding='utf-8') as f:
-        f.write(html_content)
-    log(f'HTML saved → {html_path}')
+    CORE_TEAMS = [t for t in TEAM_ORDER if t not in REGULAR_TEAMS]
+
+    slug         = f'_{(from_time or "").replace(":", "")}-{(to_time or "").replace(":", "")}' if from_time or to_time else ''
+    report_type  = 'Cumulative' if (not from_time or from_time == '09:30') else 'Last 2 Hours'
+    target_group = args.group or os.getenv('WHATSAPP_GROUP_CALL_REPORTS', WHATSAPP_GROUP)
+
+    async def build_and_send(label_suffix: str, team_order: list, group_id: str):
+        filt_stats   = {n: s for n, s in stats.items() if s['team'] in team_order}
+        tc           = sum(s['total']    for s in filt_stats.values())
+        ta           = sum(s['answered'] for s in filt_stats.values())
+        html_content = build_html(filt_stats, eff_label,
+                                  csv_source=args.csv or 'CallInsight',
+                                  time_window=time_window,
+                                  team_order=team_order)
+        html_filename = f'Outbound_Report_{eff_stamp}{slug}{label_suffix}.html'
+        html_path     = os.path.join(OUTPUT_DIR, html_filename)
+        with open(html_path, 'w', encoding='utf-8') as f:
+            f.write(html_content)
+        log(f'HTML saved → {html_path}')
+
+        if LOCAL_MODE:
+            png_base = html_path.replace('.html', '.png')
+            await take_screenshots(html_path, png_base)
+            return
+
+        cap1 = (
+            f'📞 Outbound Report — {report_type}'
+            + f'\n📅 {eff_label}'
+            + (f'\n⏱ {time_window}' if time_window else '')
+            + f'\n✅ {ta}/{tc} connected'
+            + f'\n1/2 — Supervisor Summary & KPIs'
+        )
+        cap2 = (
+            f'📞 Outbound Report — {report_type}'
+            + f'\n📅 {eff_label}'
+            + (f'\n⏱ {time_window}' if time_window else '')
+            + f'\n2/2 — Team Breakdown'
+        )
+
+        log(f'Taking screenshots [{label_suffix or "core"}] ...')
+        png_base = html_path.replace('.html', '.png')
+        png1, png2 = await take_screenshots(html_path, png_base)
+
+        log(f'Sending 1/2 → {group_id}')
+        try:
+            send_whatsapp_image(png1, cap1, group_id, WHAPI_TOKEN)
+        except Exception as e:
+            log(f'  ⚠️  Image 1/2 send failed: {e}')
+
+        log(f'Sending 2/2 → {group_id}')
+        try:
+            send_whatsapp_image(png2, cap2, group_id, WHAPI_TOKEN)
+        except Exception as e:
+            log(f'  ⚠️  Image 2/2 send failed: {e}')
+
+        log('Cleaning up ...')
+        for f in [html_path, png1, png2]:
+            try:
+                if os.path.exists(f):
+                    os.remove(f)
+            except Exception as e:
+                log(f'  ⚠️  Could not remove {f}: {e}')
 
     if LOCAL_MODE:
-        log('--local mode: taking screenshots (no WhatsApp send)')
-        png_base = html_path.replace('.html', '.png')
-        await take_screenshots(html_path, png_base)
-        log('=== Done (local mode) ===')
-        return
+        log('--local mode: building both reports (no WhatsApp send)')
 
-    target_group = args.group or os.getenv('WHATSAPP_GROUP_CALL_REPORTS', WHATSAPP_GROUP)
-    report_type  = 'Cumulative' if (not from_time or from_time == '09:30') else 'Last 2 Hours'
-    caption1 = (
-        f'📞 Outbound Report — {report_type}'
-        + f'\n📅 {eff_label}'
-        + (f'\n⏱ {time_window}' if time_window else '')
-        + f'\n✅ {total_ans}/{total_calls} connected'
-        + f'\n1/2 — Supervisor Summary & KPIs'
-    )
-    caption2 = (
-        f'📞 Outbound Report — {report_type}'
-        + f'\n📅 {eff_label}'
-        + (f'\n⏱ {time_window}' if time_window else '')
-        + f'\n2/2 — Team Breakdown'
-    )
+    log('=== Core teams report ===')
+    await build_and_send('', CORE_TEAMS, target_group)
 
-    log('Taking screenshots ...')
-    png_base = html_path.replace('.html', '.png')
-    png1, png2 = await take_screenshots(html_path, png_base)
+    log('=== Regular (Guruvinder) report ===')
+    await build_and_send('_regular', REGULAR_TEAMS, WHATSAPP_GROUP_REGULAR)
 
-    log(f'Sending image 1/2 to WhatsApp group {target_group} ...')
-    try:
-        send_whatsapp_image(png1, caption1, target_group, WHAPI_TOKEN)
-    except Exception as e:
-        log(f'  ⚠️  Image 1/2 send failed: {e}')
-
-    log(f'Sending image 2/2 to WhatsApp group {target_group} ...')
-    try:
-        send_whatsapp_image(png2, caption2, target_group, WHAPI_TOKEN)
-    except Exception as e:
-        log(f'  ⚠️  Image 2/2 send failed: {e}')
-
-    log('Cleaning up local files ...')
-    for f in [html_path, png1, png2]:
-        try:
-            if os.path.exists(f):
-                os.remove(f)
-        except Exception as e:
-            log(f'  ⚠️  Could not remove {f}: {e}')
     log('=== Done ===')
 
 

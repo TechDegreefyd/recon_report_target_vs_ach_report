@@ -29,13 +29,16 @@ COPY generate_outbound_report.py .
 COPY generate_inbound_report.py .
 COPY download_callinsight.py .
 COPY tat_reports.py .
+COPY generate_greeter_report.py .
 
 RUN mkdir -p \
     "Automation Cron Job/Target Report/local_fallback" \
     "Automation Cron Job/Recon Data" \
     "Automation Cron Job/Outbound Report" \
     "Automation Cron Job/Inbound Report" \
-    "callinsight_downloads"
+    "Automation Cron Job/Greeter Report" \
+    "callinsight_downloads" \
+    "greeter_downloads"
 
 EXPOSE 8000
 

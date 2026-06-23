@@ -77,7 +77,8 @@ def _lms_yesterday():
 
 
 # ─── Call Report helpers ──────────────────────────────────────────────────────
-_CALL_GROUP = os.getenv('WHATSAPP_GROUP_ONLINE_LOB', '120363424062745706@g.us')
+_CALL_GROUP    = os.getenv('WHATSAPP_GROUP_ONLINE_LOB', '120363424062745706@g.us')
+_GREETER_GROUP = os.getenv('WHATSAPP_GROUP_GREETER',    '120363426619711887@g.us')
 
 def _call_cumulative_ob():
     """Outbound: shift start (9:30 AM) → now."""
@@ -104,6 +105,19 @@ def _call_last_hour_ib():
     from_dt  = now_ist - timedelta(hours=2)
     return ['--from-time', from_dt.strftime('%H:%M'), '--to-time', now_ist.strftime('%H:%M'),
             '--group', _CALL_GROUP]
+
+def _greeter_cumulative():
+    """Greeter: shift start (9:30 AM) → now, cumulative."""
+    now_ist = datetime.now(IST)
+    return ['--from-time', '09:30', '--to-time', now_ist.strftime('%H:%M'),
+            '--group', _GREETER_GROUP]
+
+def _greeter_last_2hr():
+    """Greeter: last 2-hour window."""
+    now_ist = datetime.now(IST)
+    from_dt = now_ist - timedelta(hours=2)
+    return ['--from-time', from_dt.strftime('%H:%M'), '--to-time', now_ist.strftime('%H:%M'),
+            '--group', _GREETER_GROUP]
 
 
 # IST 10 AM – 9 PM = UTC 04:30 – 15:30  →  UTC hours 4–15, every 2 hours
@@ -135,6 +149,18 @@ for _utc_h in _CALL_HOURS_UTC:
          f"Outbound Last 2hrs  — {_ist_h:02d}:{_ist_m:02d} IST", _call_last_hour_ob),
     ]
 
+# Greeter report: same 2-hour cadence as outbound (cumulative + last 2hrs)
+GREETER_SCHEDULE = []
+for _utc_h in _CALL_HOURS_UTC:
+    _ist_h = (_utc_h + 5) % 24
+    _ist_m = 30
+    GREETER_SCHEDULE += [
+        (_utc_h, 34, "generate_greeter_report.py",
+         f"Greeter Cumulative — {_ist_h:02d}:{_ist_m:02d} IST", _greeter_cumulative),
+        (_utc_h, 36, "generate_greeter_report.py",
+         f"Greeter Last 2hrs  — {_ist_h:02d}:{_ist_m:02d} IST", _greeter_last_2hr),
+    ]
+
 
 def ist_now():
     return datetime.now(IST)
@@ -144,7 +170,9 @@ def cleanup_old_reports(max_age_days=2):
     dirs = [
         os.path.join(BASE_DIR, 'Automation Cron Job', 'Outbound Report'),
         os.path.join(BASE_DIR, 'Automation Cron Job', 'Inbound Report'),
+        os.path.join(BASE_DIR, 'Automation Cron Job', 'Greeter Report'),
         os.path.join(BASE_DIR, 'callinsight_downloads'),
+        os.path.join(BASE_DIR, 'greeter_downloads'),
     ]
     cutoff = datetime.now().timestamp() - max_age_days * 86400
     deleted = 0
@@ -234,6 +262,14 @@ def main():
             id=label,
         )
 
+    for hour, minute, script, label, args_fn in GREETER_SCHEDULE:
+        scheduler.add_job(
+            run_script,
+            trigger=CronTrigger(hour=hour, minute=minute),
+            args=[script, label, args_fn],
+            id=label,
+        )
+
     scheduler.add_job(
         cleanup_old_reports,
         trigger=CronTrigger(hour=18, minute=30),  # midnight IST
@@ -247,7 +283,7 @@ def main():
     print(f"  Server time (IST): {datetime.now(IST).strftime('%Y-%m-%d %H:%M:%S %Z')}\n", flush=True)
 
     print("  SCHEDULE:", flush=True)
-    for h, m, _, label, _ in SCHEDULE + CALL_SCHEDULE:
+    for h, m, _, label, _ in SCHEDULE + CALL_SCHEDULE + GREETER_SCHEDULE:
         ist_h = (h + 5) % 24
         ist_m = m + 30
         if ist_m >= 60:
@@ -283,6 +319,8 @@ def main():
         run_script("generate_all_recon_reports.py",  "SMOKE TEST — Recon Report (yesterday full day)",       _yesterday_full, extra_env=_smoke_env)
         run_script("bhugoal_generate_report.py",     "SMOKE TEST — Bhugoal Daily Report (admin group only)", None,            extra_env=_smoke_env)
         run_script("generate_outbound_report.py",    "SMOKE TEST — Outbound Cumulative (admin group only)",
+                   lambda: ['--from-time', _smoke_from, '--to-time', _smoke_to, '--group', _SMOKE_GROUP], extra_env=_smoke_env)
+        run_script("generate_greeter_report.py",     "SMOKE TEST — Greeter Cumulative (admin group only)",
                    lambda: ['--from-time', _smoke_from, '--to-time', _smoke_to, '--group', _SMOKE_GROUP], extra_env=_smoke_env)
         print("=" * 70, flush=True)
         print("  SMOKE TEST COMPLETE — Admin group notified. Scheduler is live.\n", flush=True)
