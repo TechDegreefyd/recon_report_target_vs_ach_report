@@ -65,6 +65,9 @@ _date_arg = args.date or 'today'
 if _date_arg == 'today':
     report_dt      = now_ist
     date_btn_label = 'Today'
+elif _date_arg == 'yesterday':
+    report_dt      = now_ist - timedelta(days=1)
+    date_btn_label = 'Yesterday'
 else:
     report_dt      = datetime.strptime(_date_arg, '%d/%m/%Y')
     date_btn_label = 'Today'

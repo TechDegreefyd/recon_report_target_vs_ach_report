@@ -35,7 +35,9 @@ parser.add_argument('--date',       default=None,  help='DD/MM/YYYY')
 parser.add_argument('--csv',        default=None,  help='Path to existing CSV (skips download)')
 parser.add_argument('--from-time',  default=None,  dest='from_time', help='HH:MM — filter calls from this time')
 parser.add_argument('--to-time',    default=None,  dest='to_time',   help='HH:MM — filter calls up to this time (exclusive)')
-parser.add_argument('--group',      default=None,  help='Override WhatsApp group ID')
+parser.add_argument('--group',        default=None,  help='Override WhatsApp group ID')
+parser.add_argument('--only-regular', action='store_true', dest='only_regular', help='Send only regular (Amity/Punjab) report, skip core')
+parser.add_argument('--only-core',    action='store_true', dest='only_core',    help='Send only core (online LOB) report, skip regular')
 args, _ = parser.parse_known_args()
 
 LOCAL_MODE = args.local
@@ -771,11 +773,13 @@ async def main():
     if LOCAL_MODE:
         log('--local mode: building both reports (no WhatsApp send)')
 
-    log('=== Core teams report ===')
-    await build_and_send('', CORE_TEAMS, target_group)
+    if not args.only_regular:
+        log('=== Core teams report ===')
+        await build_and_send('', CORE_TEAMS, target_group)
 
-    log('=== Regular (Guruvinder) report ===')
-    await build_and_send('_regular', REGULAR_TEAMS, WHATSAPP_GROUP_REGULAR)
+    if not args.only_core:
+        log('=== Regular (Guruvinder) report ===')
+        await build_and_send('_regular', REGULAR_TEAMS, WHATSAPP_GROUP_REGULAR)
 
     log('=== Done ===')
 

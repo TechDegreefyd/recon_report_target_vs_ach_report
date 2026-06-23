@@ -81,17 +81,17 @@ _CALL_GROUP    = os.getenv('WHATSAPP_GROUP_ONLINE_LOB', '120363424062745706@g.us
 _GREETER_GROUP = os.getenv('WHATSAPP_GROUP_GREETER',    '120363426619711887@g.us')
 
 def _call_cumulative_ob():
-    """Outbound: shift start (9:30 AM) → now."""
+    """Outbound core only: shift start (9:30 AM) → now."""
     now_ist = datetime.now(IST)
     return ['--from-time', '09:30', '--to-time', now_ist.strftime('%H:%M'),
-            '--group', _CALL_GROUP]
+            '--group', _CALL_GROUP, '--only-core']
 
 def _call_last_hour_ob():
-    """Outbound: last 2-hour window (schedule fires every 2h)."""
+    """Outbound core only: last 2-hour window (schedule fires every 2h)."""
     now_ist  = datetime.now(IST)
     from_dt  = now_ist - timedelta(hours=2)
     return ['--from-time', from_dt.strftime('%H:%M'), '--to-time', now_ist.strftime('%H:%M'),
-            '--group', _CALL_GROUP]
+            '--group', _CALL_GROUP, '--only-core']
 
 def _call_cumulative_ib():
     """Inbound: shift start (9:30 AM) → now."""
@@ -119,9 +119,29 @@ def _greeter_last_2hr():
     return ['--from-time', from_dt.strftime('%H:%M'), '--to-time', now_ist.strftime('%H:%M'),
             '--group', _GREETER_GROUP]
 
+# ─── Regular outbound helpers (new schedule: 9:30 AM yesterday, then 2-hr cumulative) ─
+def _regular_ob_yesterday():
+    """Regular outbound: yesterday's full day data (sent at 9:30 AM IST)."""
+    now_ist = datetime.now(IST)
+    yesterday = (now_ist - timedelta(days=1)).strftime('%d/%m/%Y')
+    return ['--date', yesterday, '--only-regular']
+
+def _regular_ob_cumulative():
+    """Regular outbound: shift start (9:30 AM) → now, cumulative."""
+    now_ist = datetime.now(IST)
+    return ['--from-time', '09:30', '--to-time', now_ist.strftime('%H:%M'), '--only-regular']
+
+# ─── Greeter helpers (new schedule: 9:30 AM yesterday, then 2-hr cumulative) ──────────
+def _greeter_yesterday():
+    """Greeter: yesterday's full day data (sent at 9:30 AM IST)."""
+    return ['--date', 'yesterday', '--group', _GREETER_GROUP]
+
 
 # IST 10 AM – 9 PM = UTC 04:30 – 15:30  →  UTC hours 4–15, every 2 hours
 _CALL_HOURS_UTC = list(range(4, 16, 2))   # 4,6,8,10,12,14 → IST 9:30,11:30,13:30,15:30,17:30,19:30
+
+# IST 9:30 AM – 7:30 PM = UTC 04:00 – 14:00  →  new schedule for regular + greeter
+_NEW_HOURS_UTC = list(range(4, 15, 2))    # 4,6,8,10,12,14 → IST 9:30,11:30,13:30,15:30,17:30,19:30
 
 SCHEDULE = [
     (4,  30, "generate_all_recon_reports.py",  "Recon — Yesterday (full day)",               _yesterday_full),
@@ -149,17 +169,32 @@ for _utc_h in _CALL_HOURS_UTC:
          f"Outbound Last 2hrs  — {_ist_h:02d}:{_ist_m:02d} IST", _call_last_hour_ob),
     ]
 
-# Greeter report: same 2-hour cadence as outbound (cumulative + last 2hrs)
+# ─── Regular outbound + Greeter: 9:30 AM yesterday, then every 2h cumulative ──
+# UTC 4:00 = IST 9:30 → yesterday full day
+# UTC 6:00, 8:00, 10:00, 12:00, 14:00 = IST 11:30, 13:30, 15:30, 17:30, 19:30 → cumulative today
+REGULAR_OUTBOUND_SCHEDULE = []
 GREETER_SCHEDULE = []
-for _utc_h in _CALL_HOURS_UTC:
+for _i, _utc_h in enumerate(_NEW_HOURS_UTC):
     _ist_h = (_utc_h + 5) % 24
     _ist_m = 30
-    GREETER_SCHEDULE += [
-        (_utc_h, 34, "generate_greeter_report.py",
-         f"Greeter Cumulative — {_ist_h:02d}:{_ist_m:02d} IST", _greeter_cumulative),
-        (_utc_h, 36, "generate_greeter_report.py",
-         f"Greeter Last 2hrs  — {_ist_h:02d}:{_ist_m:02d} IST", _greeter_last_2hr),
-    ]
+    if _i == 0:  # 9:30 AM IST → yesterday full day
+        REGULAR_OUTBOUND_SCHEDULE.append(
+            (_utc_h, 0, "generate_outbound_report.py",
+             f"Regular Outbound Yesterday — {_ist_h:02d}:{_ist_m:02d} IST", _regular_ob_yesterday)
+        )
+        GREETER_SCHEDULE.append(
+            (_utc_h, 2, "generate_greeter_report.py",
+             f"Greeter Yesterday — {_ist_h:02d}:{_ist_m:02d} IST", _greeter_yesterday)
+        )
+    else:  # 11:30, 13:30, 15:30, 17:30, 19:30 IST → cumulative today
+        REGULAR_OUTBOUND_SCHEDULE.append(
+            (_utc_h, 0, "generate_outbound_report.py",
+             f"Regular Outbound Cumulative — {_ist_h:02d}:{_ist_m:02d} IST", _regular_ob_cumulative)
+        )
+        GREETER_SCHEDULE.append(
+            (_utc_h, 2, "generate_greeter_report.py",
+             f"Greeter Cumulative — {_ist_h:02d}:{_ist_m:02d} IST", _greeter_cumulative)
+        )
 
 
 def ist_now():
@@ -262,6 +297,14 @@ def main():
             id=label,
         )
 
+    for hour, minute, script, label, args_fn in REGULAR_OUTBOUND_SCHEDULE:
+        scheduler.add_job(
+            run_script,
+            trigger=CronTrigger(hour=hour, minute=minute),
+            args=[script, label, args_fn],
+            id=label,
+        )
+
     for hour, minute, script, label, args_fn in GREETER_SCHEDULE:
         scheduler.add_job(
             run_script,
@@ -283,7 +326,7 @@ def main():
     print(f"  Server time (IST): {datetime.now(IST).strftime('%Y-%m-%d %H:%M:%S %Z')}\n", flush=True)
 
     print("  SCHEDULE:", flush=True)
-    for h, m, _, label, _ in SCHEDULE + CALL_SCHEDULE + GREETER_SCHEDULE:
+    for h, m, _, label, _ in SCHEDULE + CALL_SCHEDULE + REGULAR_OUTBOUND_SCHEDULE + GREETER_SCHEDULE:
         ist_h = (h + 5) % 24
         ist_m = m + 30
         if ist_m >= 60:
