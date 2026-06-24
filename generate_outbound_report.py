@@ -99,7 +99,7 @@ SIM_MAP = {
     '6357725415': ('Abhishek Sikarwar','Varun Team'),
     '6357725416': ('Divya Goel',       'Varun Team'),
     '6357725427': ('Prerna',           'Varun Team'),
-    # Amity (Guruvinder)
+    # Regular Amity (Guruvinder)
     '6357725408': ('Kriti',            'Amity'),
     '6357725446': ('Adarsh',           'Amity'),
     '6357725441': ('Aastha',           'Amity'),
@@ -114,7 +114,7 @@ SIM_MAP = {
     '6357725412': ('Sahil',            'Amity'),
     '6357725443': ('Anupam',           'Amity'),
     '6357725410': ('Neha Prajapati',   'Amity'),
-    # Punjab (Guruvinder)
+    # Regular Punjab (Guruvinder)
     '6357725407': ('Sourav M',         'Punjab'),
     '6357725411': ('Sourav L',         'Punjab'),
     '6357725406': ('Rahul Kumar Yadav','Punjab'),

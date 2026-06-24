@@ -121,7 +121,14 @@ async def scrape_greeter(target_date_str: str, date_btn: str, explore: bool = Fa
 
         # ── Navigate to Call Log ───────────────────────────────────────────────
         log(f'Navigating to {CALL_LOG_URL} …')
-        await page.goto(CALL_LOG_URL, wait_until='networkidle', timeout=30_000)
+        for _attempt in range(3):
+            try:
+                await page.goto(CALL_LOG_URL, wait_until='domcontentloaded', timeout=60_000)
+                await page.wait_for_load_state('networkidle', timeout=30_000)
+                break
+            except Exception as _e:
+                log(f'  goto attempt {_attempt+1} failed: {_e!s:.120} — retrying …')
+                await page.wait_for_timeout(150_000)
         await page.wait_for_timeout(2000)
         log(f'Call Log page loaded → {page.url}')
 
