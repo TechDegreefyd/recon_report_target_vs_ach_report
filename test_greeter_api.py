@@ -4,6 +4,9 @@ Usage: python test_greeter_api.py
 """
 import os
 import requests
+from dotenv import load_dotenv
+
+load_dotenv(os.path.join(os.path.dirname(__file__), '.env'))
 
 USERNAME = os.getenv('GREETER_USERNAME')
 PASSWORD = os.getenv('GREETER_PASSWORD')
@@ -47,18 +50,43 @@ if 'login' in r.url.lower():
 
 print('Logged in successfully.')
 
-# Step 3: Hit the export endpoint
-print(f'Fetching {EXPORT_URL} …')
-r = session.get(EXPORT_URL, timeout=60, stream=True)
+# Step 3: Hit the export endpoint via POST (405 on GET)
+import datetime
+today = datetime.date.today().strftime('%Y-%m-%d')
+
+payload = {
+    'start_date': today,
+    'end_date':   today,
+}
+print(f'  POST payload: {payload}')
+
+# grab a fresh CSRF for the export form
+r2 = session.get('https://greeter.co.in/reseller/call_log', timeout=30)
+csrf2 = None
+import re
+for line in r2.text.splitlines():
+    if 'csrf' in line.lower() and 'value' in line.lower():
+        m = re.search(r'value=["\']([^"\']{20,})["\']', line)
+        if m:
+            csrf2 = m.group(1)
+            break
+if csrf2:
+    payload['csrfmiddlewaretoken'] = csrf2
+    session.headers.update({'Referer': 'https://greeter.co.in/reseller/call_log'})
+    print(f'  CSRF for export: {csrf2[:20]}…')
+
+print(f'POSTing {EXPORT_URL} …')
+r = session.post(EXPORT_URL, data=payload, timeout=60, stream=True)
 print(f'  Status: {r.status_code}')
 print(f'  Content-Type: {r.headers.get("Content-Type")}')
 print(f'  Content-Disposition: {r.headers.get("Content-Disposition")}')
 
-if r.status_code == 200 and 'spreadsheet' in r.headers.get('Content-Type', ''):
+ct = r.headers.get('Content-Type', '')
+if r.status_code == 200 and ('spreadsheet' in ct or 'octet-stream' in ct or 'excel' in ct):
     out = 'greeter_test_export.xlsx'
     with open(out, 'wb') as f:
         for chunk in r.iter_content(8192):
             f.write(chunk)
     print(f'  Saved → {out}')
 else:
-    print(f'  Response (first 500 chars):\n{r.text[:500]}')
+    print(f'  Response (first 800 chars):\n{r.text[:800]}')

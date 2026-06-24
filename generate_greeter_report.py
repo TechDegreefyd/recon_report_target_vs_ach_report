@@ -16,7 +16,7 @@ import argparse
 import time
 from datetime import datetime, timedelta, UTC
 from dotenv import load_dotenv
-from playwright.async_api import async_playwright, TimeoutError as PWTimeout
+from playwright.async_api import async_playwright
 import requests
 import openpyxl
 
@@ -77,130 +77,74 @@ date_label      = report_dt.strftime('%#d %B %Y') if sys.platform == 'win32' els
 RUN_STAMP       = now_ist.strftime('%d%m%Y_%H%M')
 
 
-# ─── Greeter scraper ──────────────────────────────────────────────────────────
+# ─── Greeter scraper (requests-based) ────────────────────────────────────────
 
 CALL_LOG_URL = 'https://greeter.co.in/reseller/call_log'
+EXPORT_URL   = 'https://greeter.co.in/export_call_log_data/xlsx'
 
 
-async def scrape_greeter(target_date_str: str, date_btn: str, explore: bool = False) -> str:
-    """
-    Login → navigate directly to /reseller/call_log → click date button → scrape table.
-    """
-    log('Launching browser …')
-    async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=not explore)
-        ctx     = await browser.new_context(viewport={'width': 1600, 'height': 900})
-        page    = await ctx.new_page()
+def _extract_csrf(html: str) -> str:
+    for line in html.splitlines():
+        if 'csrf' in line.lower() and 'value' in line.lower():
+            m = re.search(r'value=["\']([^"\']{20,})["\']', line)
+            if m:
+                return m.group(1)
+    return ''
 
-        # ── Login ─────────────────────────────────────────────────────────────
-        log(f'Opening login page …')
-        await page.goto(GREETER_URL, wait_until='domcontentloaded', timeout=60_000)
-        await page.wait_for_timeout(800)
 
-        log('Filling login form …')
-        await page.wait_for_selector('input[name="username"]', timeout=15_000)
-        await page.fill('input[name="username"]', GREETER_USERNAME)
-        await page.fill('input[name="password"]', GREETER_PASSWORD)
-        await page.wait_for_timeout(500)
+def fetch_greeter_xlsx(target_date_str: str) -> str:
+    """Fresh session each call: login → fetch CSRF → POST export → save XLSX."""
+    dt       = datetime.strptime(target_date_str, '%d/%m/%Y')
+    api_date = dt.strftime('%Y-%m-%d')
 
-        # Click whichever login button is present
-        for btn_sel in ['button:has-text("Login")', 'button:has-text("Sign in")',
-                        'input[type="submit"]', 'button[type="submit"]']:
-            try:
-                el = page.locator(btn_sel).first
-                if await el.is_visible(timeout=2000):
-                    await el.click()
-                    log(f'  Clicked: {btn_sel}')
-                    break
-            except Exception:
-                continue
+    session = requests.Session()
+    session.headers.update({'User-Agent': 'Mozilla/5.0'})
 
-        await page.wait_for_load_state('networkidle', timeout=30_000)
-        await page.wait_for_timeout(1500)
-        log(f'Logged in → {page.url}')
+    # Step 1: GET login page → CSRF token
+    log('Fetching login page …')
+    r = session.get(GREETER_URL, timeout=30)
+    csrf = _extract_csrf(r.text)
+    if csrf:
+        log(f'  CSRF: {csrf[:20]}…')
 
-        # ── Navigate to Call Log ───────────────────────────────────────────────
-        log(f'Navigating to {CALL_LOG_URL} …')
-        for _attempt in range(3):
-            try:
-                await page.goto(CALL_LOG_URL, wait_until='domcontentloaded', timeout=60_000)
-                await page.wait_for_load_state('networkidle', timeout=30_000)
-                break
-            except Exception as _e:
-                log(f'  goto attempt {_attempt+1} failed: {_e!s:.120} — retrying …')
-                await page.wait_for_timeout(150_000)
-        await page.wait_for_timeout(2000)
-        log(f'Call Log page loaded → {page.url}')
+    # Step 2: POST login (fresh credentials, no cached session)
+    log('Logging in …')
+    login_payload = {'username': GREETER_USERNAME, 'password': GREETER_PASSWORD}
+    if csrf:
+        login_payload['csrfmiddlewaretoken'] = csrf
+    session.headers.update({'Referer': GREETER_URL})
+    r = session.post(GREETER_URL, data=login_payload, timeout=30, allow_redirects=True)
+    if 'login' in r.url.lower():
+        raise RuntimeError(f'Login failed — still on {r.url}')
+    log(f'Logged in → {r.url}')
 
-        if explore:
-            await _save_explore(page, 'greeter_explore_calllog_before_date')
+    # Step 3: GET call_log page → fresh CSRF for the export form
+    log('Fetching call log page for export CSRF …')
+    r2   = session.get(CALL_LOG_URL, timeout=30)
+    csrf2 = _extract_csrf(r2.text)
+    if csrf2:
+        log(f'  Export CSRF: {csrf2[:20]}…')
 
-        # ── Click the date range button (Yesterday / Today / etc.) ────────────
-        date_button_selectors = [
-            f'button:has-text("{date_btn}")',
-            f'a:has-text("{date_btn}")',
-            f'input[value="{date_btn}"]',
-            f'[class*="btn"]:has-text("{date_btn}")',
-            f'span:has-text("{date_btn}")',
-        ]
+    # Step 4: POST export endpoint
+    export_payload = {'start_date': api_date, 'end_date': api_date}
+    if csrf2:
+        export_payload['csrfmiddlewaretoken'] = csrf2
+    session.headers.update({'Referer': CALL_LOG_URL})
 
-        date_clicked = False
-        for sel in date_button_selectors:
-            try:
-                el = page.locator(sel).first
-                if await el.is_visible(timeout=3000):
-                    log(f'Clicking date button: {sel!r}')
-                    await el.click()
-                    await page.wait_for_load_state('networkidle', timeout=20_000)
-                    await page.wait_for_timeout(2500)
-                    date_clicked = True
-                    break
-            except Exception:
-                continue
+    log(f'Downloading XLSX for {api_date} …')
+    r3 = session.post(EXPORT_URL, data=export_payload, timeout=60, stream=True)
+    ct = r3.headers.get('Content-Type', '')
+    if r3.status_code != 200 or not any(k in ct for k in ('spreadsheet', 'octet-stream', 'excel')):
+        raise RuntimeError(f'Export failed: {r3.status_code} {ct}\n{r3.text[:300]}')
 
-        if not date_clicked:
-            log(f'WARNING: Could not click "{date_btn}" button — reading current data')
-
-        # ── Wait for DataTable to finish loading after date button click ─────
-        log('Waiting for table to finish loading …')
-        try:
-            # DataTables shows a "Processing…" div while loading — wait for it to hide
-            await page.wait_for_selector('#Call_log_table_processing',
-                                         state='hidden', timeout=20_000)
-        except Exception:
-            await page.wait_for_timeout(3000)
-
-        if explore:
-            await _save_explore(page, 'greeter_explore_calllog_after_date', full_page=True)
-            log('[EXPLORE] Done — inspect greeter_explore_calllog_after_date.html')
-
-        # ── Click Export and capture the download ──────────────────────────────
-        DOWNLOAD_DIR = os.path.join(_DIR, 'greeter_downloads')
-        os.makedirs(DOWNLOAD_DIR, exist_ok=True)
-        xlsx_path = os.path.join(DOWNLOAD_DIR, f'greeter_{RUN_STAMP}.xlsx')
-
-        log('Clicking Export button …')
-        await page.wait_for_selector('button#nofilter', state='visible', timeout=10_000)
-        async with page.expect_download(timeout=60_000) as dl_info:
-            await page.click('button#nofilter')
-
-        download = await dl_info.value
-        await download.save_as(xlsx_path)
-        log(f'Downloaded → {xlsx_path}  ({os.path.getsize(xlsx_path):,} bytes)')
-
-        await browser.close()
-
+    DOWNLOAD_DIR = os.path.join(_DIR, 'greeter_downloads')
+    os.makedirs(DOWNLOAD_DIR, exist_ok=True)
+    xlsx_path = os.path.join(DOWNLOAD_DIR, f'greeter_{RUN_STAMP}.xlsx')
+    with open(xlsx_path, 'wb') as f:
+        for chunk in r3.iter_content(8192):
+            f.write(chunk)
+    log(f'Downloaded → {xlsx_path}  ({os.path.getsize(xlsx_path):,} bytes)')
     return xlsx_path
-
-
-async def _save_explore(page, name: str, full_page: bool = False):
-    html = await page.content()
-    html_path = os.path.join(_DIR, f'{name}.html')
-    png_path  = os.path.join(_DIR, f'{name}.png')
-    with open(html_path, 'w', encoding='utf-8') as f:
-        f.write(html)
-    await page.screenshot(path=png_path, full_page=full_page)
-    log(f'[EXPLORE] Saved → {html_path}  {png_path}')
 
 
 def _clean_agent_name(raw: str) -> str:
@@ -685,11 +629,7 @@ async def main():
     if not args.nocleanup:
         cleanup_old_files()
 
-    xlsx_path = await scrape_greeter(report_date_str, date_btn_label, explore=args.explore)
-
-    if args.explore:
-        log('Explore mode complete. XLSX downloaded, HTML snapshots saved.')
-        return
+    xlsx_path = fetch_greeter_xlsx(report_date_str)
 
     rows = parse_xlsx(xlsx_path)
 
