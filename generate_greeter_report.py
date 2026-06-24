@@ -452,7 +452,7 @@ def build_html(stats: dict, date_label: str, raw_rows: list[dict] = None, time_w
   }}
   tbody td {{
     padding: 8px 12px; text-align: right;
-    color: #121212; font-size: .92rem; font-weight: 500;
+    color: #121212; font-size: .92rem; font-weight: 900;
     border-bottom: 1px solid #f3f4f6;
     font-variant-numeric: tabular-nums;
   }}

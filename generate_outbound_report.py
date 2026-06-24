@@ -252,7 +252,7 @@ def process_csv(csv_text: str, target_date: str, from_time: str = None, to_time:
     for sim, (name, team) in SIM_MAP.items():
         stats[name] = {
             'team': team, 'total': 0, 'answered': 0, 'talk_secs': 0, 'ring_secs': 0,
-            'inbound_total': 0, 'inbound_ring_secs': 0,
+            'inbound_total': 0, 'inbound_ring_secs': 0, 'inbound_talk_secs': 0,
         }
 
     reader = csv.DictReader(io.StringIO(csv_text))
@@ -288,8 +288,9 @@ def process_csv(csv_text: str, target_date: str, from_time: str = None, to_time:
             stats[name]['talk_secs'] += dur_secs
             stats[name]['ring_secs'] += ring_secs
         else:  # INBOUND
-            stats[name]['inbound_total']     += 1
-            stats[name]['inbound_ring_secs'] += ring_secs
+            stats[name]['inbound_total']      += 1
+            stats[name]['inbound_ring_secs']  += ring_secs
+            stats[name]['inbound_talk_secs']  += dur_secs
 
     for name, s in stats.items():
         s['not_answered'] = s['total'] - s['answered']
@@ -358,7 +359,7 @@ def build_html(stats: dict, date_label: str, csv_source: str = '', time_window: 
         rows = ''
         for m in members:
             zero    = 'zero-row' if not m['total'] else ''
-            overall = m["talk_secs"] + m["ring_secs"] + m["inbound_ring_secs"]
+            overall = m["talk_secs"] + m["ring_secs"] + m["inbound_talk_secs"] + m["inbound_ring_secs"]
             rows += f'''<tr class="{zero}">
       <td>{m["name"]}</td>
       <td>{m["total"] or "0"}</td>
@@ -369,6 +370,7 @@ def build_html(stats: dict, date_label: str, csv_source: str = '', time_window: 
       <td>{fmt_avg(m["avg_secs"])}</td>
       <td>{fmt_talk(m["ring_secs"])}</td>
       <td class="ib-sep">{m["inbound_total"] or "0"}</td>
+      <td>{fmt_talk(m["inbound_talk_secs"])}</td>
       <td>{fmt_talk(m["inbound_ring_secs"])}</td>
       <td class="overall-col">{fmt_talk(overall)}</td>
     </tr>'''
@@ -390,13 +392,13 @@ def build_html(stats: dict, date_label: str, csv_source: str = '', time_window: 
         <th rowspan="2" style="text-align:left">Counsellor</th>
         <th colspan="4" class="grp-ob">Outbound</th>
         <th colspan="3" class="grp-ob">Outbound Time</th>
-        <th colspan="2" class="grp-ib">Inbound</th>
+        <th colspan="3" class="grp-ib">Inbound</th>
         <th rowspan="2" class="grp-overall">Overall</th>
       </tr>
       <tr>
         <th>Calls</th><th>Conn.</th><th>Not&nbsp;Conn.</th><th>Conn.&nbsp;%</th>
         <th>Talk&nbsp;Time</th><th>Avg&nbsp;/&nbsp;Call</th><th>Ring&nbsp;Time</th>
-        <th class="ib-sep">Calls</th><th>Ring&nbsp;Time</th>
+        <th class="ib-sep">Calls</th><th>Talk&nbsp;Time</th><th>Ring&nbsp;Time</th>
       </tr>
     </thead>
     <tbody>{rows}</tbody>
@@ -408,8 +410,9 @@ def build_html(stats: dict, date_label: str, csv_source: str = '', time_window: 
       <td>{fmt_avg(t_avg)}</td>
       <td>{fmt_talk(t_ring)}</td>
       <td class="ib-sep">{t_ib}</td>
+      <td>{fmt_talk(sum(m["inbound_talk_secs"] for m in members))}</td>
       <td>{fmt_talk(t_ib_ring)}</td>
-      <td class="overall-col">{fmt_talk(tt + t_ring + t_ib_ring)}</td>
+      <td class="overall-col">{fmt_talk(tt + t_ring + sum(m["inbound_talk_secs"] for m in members) + t_ib_ring)}</td>
     </tr></tfoot>
   </table>
 </div>'''
@@ -421,7 +424,7 @@ def build_html(stats: dict, date_label: str, csv_source: str = '', time_window: 
 
     # ── Supervisor summary table ──────────────────────────────────────────────
     sup_rows_html = ''
-    gt_tc = gt_ta = gt_tt = gt_tr = gt_ib = gt_ib_ring = 0
+    gt_tc = gt_ta = gt_tt = gt_tr = gt_ib = gt_ib_talk = gt_ib_ring = 0
     for team_name in effective_team_order:
         members = teams.get(team_name, [])
         if not members:
@@ -430,7 +433,8 @@ def build_html(stats: dict, date_label: str, csv_source: str = '', time_window: 
         ta      = sum(m['answered']         for m in members)
         tt      = sum(m['talk_secs']        for m in members)
         tr_     = sum(m['ring_secs']        for m in members)
-        t_ib    = sum(m['inbound_total']    for m in members)
+        t_ib    = sum(m['inbound_total']      for m in members)
+        t_ib_t  = sum(m['inbound_talk_secs'] for m in members)
         t_ib_r  = sum(m['inbound_ring_secs'] for m in members)
         rate    = round(ta / tc * 100) if tc else 0
         avg     = round(tt / ta)       if ta else 0
@@ -438,7 +442,7 @@ def build_html(stats: dict, date_label: str, csv_source: str = '', time_window: 
         tpa     = round(tt / a5) if a5 else 0
         color   = TEAM_COLORS.get(team_name, '#6b7280')
         gt_tc += tc; gt_ta += ta; gt_tt += tt; gt_tr += tr_
-        gt_ib += t_ib; gt_ib_ring += t_ib_r
+        gt_ib += t_ib; gt_ib_talk += t_ib_t; gt_ib_ring += t_ib_r
         sup_rows_html += f'''<tr>
       <td class="sup-name-cell" style="border-left:3px solid {color};">{team_name}</td>
       <td>{len(members)}</td><td>{tc}</td><td>{ta}</td><td>{tc - ta}</td>
@@ -448,8 +452,9 @@ def build_html(stats: dict, date_label: str, csv_source: str = '', time_window: 
       <td>{fmt_talk(tpa)}</td>
       <td>{fmt_talk(tr_)}</td>
       <td class="ib-sep">{t_ib}</td>
+      <td>{fmt_talk(t_ib_t)}</td>
       <td>{fmt_talk(t_ib_r)}</td>
-      <td class="overall-col">{fmt_talk(tt + tr_ + t_ib_r)}</td>
+      <td class="overall-col">{fmt_talk(tt + tr_ + t_ib_t + t_ib_r)}</td>
     </tr>'''
     gt_rate = round(gt_ta / gt_tc * 100) if gt_tc else 0
     gt_avg  = round(gt_tt / gt_ta)       if gt_ta else 0
@@ -463,8 +468,9 @@ def build_html(stats: dict, date_label: str, csv_source: str = '', time_window: 
       <td>{fmt_talk(gt_tpa)}<span class="act-badge">{gt_a5}</span></td>
       <td>{fmt_talk(gt_tr)}</td>
       <td class="ib-sep">{gt_ib}</td>
+      <td>{fmt_talk(gt_ib_talk)}</td>
       <td>{fmt_talk(gt_ib_ring)}</td>
-      <td class="overall-col">{fmt_talk(gt_tt + gt_tr + gt_ib_ring)}</td>
+      <td class="overall-col">{fmt_talk(gt_tt + gt_tr + gt_ib_talk + gt_ib_ring)}</td>
     </tr>'''
 
     return f'''<!DOCTYPE html>
@@ -599,13 +605,13 @@ def build_html(stats: dict, date_label: str, csv_source: str = '', time_window: 
         <th rowspan="2">Counsellors</th>
         <th colspan="4" class="grp-ob">Outbound</th>
         <th colspan="4" class="grp-ob">Outbound Time</th>
-        <th colspan="2" class="grp-ib">Inbound</th>
+        <th colspan="3" class="grp-ib">Inbound</th>
         <th rowspan="2" class="grp-overall">Overall</th>
       </tr>
       <tr>
         <th>Calls</th><th>Conn.</th><th>Not&nbsp;Conn.</th><th>Conn.&nbsp;%</th>
         <th>Talk&nbsp;Time</th><th>Avg&nbsp;/&nbsp;Call</th><th>Talk&nbsp;/&nbsp;Active</th><th>Ring&nbsp;Time</th>
-        <th class="ib-sep">Calls</th><th>Ring&nbsp;Time</th>
+        <th class="ib-sep">Calls</th><th>Talk&nbsp;Time</th><th>Ring&nbsp;Time</th>
       </tr>
     </thead>
     <tbody>{sup_rows_html}</tbody>
@@ -638,7 +644,7 @@ async def take_screenshots(html_path: str, base_path: str):
     log('Screenshot browser launching ...')
     async with async_playwright() as p:
         browser  = await p.chromium.launch(headless=True)
-        page     = await browser.new_page(viewport={'width': 2200, 'height': 900}, device_scale_factor=2)
+        page     = await browser.new_page(viewport={'width': 2800, 'height': 900}, device_scale_factor=2)
         file_url = 'file:///' + html_path.replace('\\', '/')
         log(f'Loading HTML for screenshot: {file_url}')
         await page.goto(file_url, wait_until='domcontentloaded')
@@ -646,7 +652,7 @@ async def take_screenshots(html_path: str, base_path: str):
 
         full_height = await page.evaluate('document.body.scrollHeight')
         log(f'Page height: {full_height}px — resizing viewport ...')
-        await page.set_viewport_size({'width': 2200, 'height': full_height})
+        await page.set_viewport_size({'width': 2800, 'height': full_height})
         await page.wait_for_timeout(300)
 
         layout_box  = await page.locator('.layout').bounding_box()
@@ -656,9 +662,9 @@ async def take_screenshots(html_path: str, base_path: str):
         png1 = base_path.replace('.png', '_1.png')
         png2 = base_path.replace('.png', '_2.png')
 
-        await page.screenshot(path=png1, clip={'x': 0, 'y': 0,       'width': 2200, 'height': split_y})
+        await page.screenshot(path=png1, clip={'x': 0, 'y': 0,       'width': 2800, 'height': split_y})
         log(f'Screenshot 1 saved → {png1}')
-        await page.screenshot(path=png2, clip={'x': 0, 'y': split_y, 'width': 2200, 'height': full_height - split_y})
+        await page.screenshot(path=png2, clip={'x': 0, 'y': split_y, 'width': 2800, 'height': full_height - split_y})
         log(f'Screenshot 2 saved → {png2}')
 
         await browser.close()
