@@ -375,6 +375,30 @@ def sync_regular_dates(month_start: str, month_end: str, week_start: str, week_e
     print(f"  [sync] Regular_Targets dates updated: month {month_start} -> {month_end}, week {week_start} -> {week_end}")
 
 
+# ─── Outbound SIM Map ───────────────────────────────────────────────────────────
+
+def load_outbound_sim_map() -> dict:
+    """
+    Read SIM → (Name, Team) mapping from Outbound_SIM_Map tab.
+
+    Sheet layout (A:C, row 1 = header):
+      A: SIM (10-digit number stored as text)   B: Name   C: Team
+
+    Returns {sim_str: (name, team), ...}
+    """
+    rows = _read_range('Outbound_SIM_Map!A2:C2000')
+    sim_map = {}
+    for row in rows:
+        if len(row) < 3 or not row[0].strip():
+            continue
+        sim  = row[0].strip()
+        name = row[1].strip()
+        team = row[2].strip()
+        if sim and name and team:
+            sim_map[sim] = (name, team)
+    return sim_map
+
+
 # ─── Report Logs ────────────────────────────────────────────────────────────────
 
 def log_report(date_str, report_name, grand_total_summary, whatsapp_sent):

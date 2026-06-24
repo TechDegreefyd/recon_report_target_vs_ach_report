@@ -18,6 +18,7 @@ from datetime import datetime, timedelta, UTC
 from dotenv import load_dotenv
 from playwright.async_api import async_playwright
 import requests
+from sheets_config import load_outbound_sim_map
 
 _START = time.perf_counter()
 
@@ -65,66 +66,9 @@ else:
 date_label = report_dt.strftime('%#d %B %Y') if sys.platform == 'win32' else report_dt.strftime('%-d %B %Y')
 RUN_STAMP  = report_dt.strftime('%d%m%Y_%H%M')
 
-# ─── Counsellor → SIM → Team mapping ────────────────────────────────────────
-SIM_MAP = {
-    '6357928504': ('Vishwajeet',   'Sunil Team'),
-    '6357928508': ('Arnav',        'Vartika Team'),
-    '6357928515': ('Avneet',       'Sunil Team'),   # Avneet is Sunil Team
-    '6357725447': ('Himanshi',     'Sunil Team'),
-    '6357928509': ('Vikas',        'Sunil Team'),
-    '6357928511': ('Abhishek',     'Sunil Team'),
-    '6357928505': ('Preeti',        'Sunil Team'),
-    '6357928506': ('Prashant',     'Varun Team'),
-    '6357928502': ('Anshika',      'Varun Team'),
-    '6357928513': ('Tanisha',      'Varun Team'),
-    '6357928518': ('Virat',        'Sid Team'),
-    '6357928517': ('LaxmiNarayan', 'Sid Team'),
-    '6357928512': ('Sanjay',       'Vartika Team'),
-    '6357928501': ('Shiv',         'Vartika Team'),
-    '6357928516': ('Sagar',        'Vartika Team'),
-    '6357928519': ('Nitin',        'Vartika Team'),
-    '6357928514': ('Aditya',       'Vartika Team'),
-    '6357928510': ('Swapnil',          'Prashant Team'),
-    '6357928507': ('Divya',            'Prashant Team'),
-    '6357725435': ('Tanya',            'Sid Team'),
-    '6357725419': ('Suhani',           'Sid Team'),
-    '6357725431': ('Kuldeep',          'Sid Team'),
-    '6357724433': ('Om',               'Varun Team'),
-    '6357725418': ('Abhishek Dubey',   'Prashant Team'),
-    '6357725434': ('Mohit',            'Prashant Team'),
-    '6337725427': ('Radha',            'Prashant Team'),
-    '6357724430': ('Abhishek Kamat',   'Vartika Team'),
-    '6357725429': ('Neha',             'Sunil Team'),
-    '6357725421': ('Navneet',          'Sunil Team'),
-    '6357725426': ('Akshay',           'Sunil Team'),
-    '6357725415': ('Abhishek Sikarwar','Varun Team'),
-    '6357725416': ('Divya Goel',       'Varun Team'),
-    '6357725427': ('Prerna',           'Varun Team'),
-    '6357725425': ('Jakiee',           'Varun Team'),
-    '6357725424': ('Neeraj',           'Varun Team'),
-    # Regular Amity (Guruvinder)
-    '6357725408': ('Kriti',            'Amity'),
-    '6357725446': ('Adarsh',           'Amity'),
-    '6357725441': ('Aastha',           'Amity'),
-    '6357725409': ('Abhishek',         'Amity'),
-    '6357725437': ('Paras',            'Amity'),
-    '6357725448': ('Rakhi Chauhan',    'Amity'),
-    '6357725436': ('Rahul',            'Amity'),
-    '6357725414': ('Ankita Shah',      'Amity'),
-    '6357725442': ('Kiran Gautam',     'Amity'),
-    '6357725438': ('Gayatari',         'Amity'),
-    '6357725413': ('khushi yadav',     'Amity'),
-    '6357725412': ('Sahil',            'Amity'),
-    '6357725443': ('Anupam',           'Amity'),
-    '6357725410': ('Neha Prajapati',   'Amity'),
-    # Regular Punjab (Guruvinder)
-    '6357725407': ('Sourav M',         'Punjab'),
-    '6357725411': ('Sourav L',         'Punjab'),
-    '6357725406': ('Rahul Kumar Yadav','Punjab'),
-    '6357725440': ('Kanika',           'Punjab'),
-    '6357725445': ('Sakshi Kaamra',    'Punjab'),
-    '6357725439': ('Pooja Singh',      'Punjab'),
-}
+log('Loading SIM map from Google Sheet …')
+SIM_MAP = load_outbound_sim_map()
+log(f'  Loaded {len(SIM_MAP)} SIM entries from sheet')
 
 TEAM_ORDER = ['Vartika Team', 'Sunil Team', 'Sid Team', 'Varun Team', 'Prashant Team', 'Amity', 'Punjab']
 TEAM_COLORS = {
