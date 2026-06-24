@@ -99,6 +99,8 @@ SIM_MAP = {
     '6357725415': ('Abhishek Sikarwar','Varun Team'),
     '6357725416': ('Divya Goel',       'Varun Team'),
     '6357725427': ('Prerna',           'Varun Team'),
+    '6357725425': ('Jakiee',           'Varun Team'),
+    '6357725424': ('Neeraj',           'Varun Team'),
     # Regular Amity (Guruvinder)
     '6357725408': ('Kriti',            'Amity'),
     '6357725446': ('Adarsh',           'Amity'),
@@ -248,14 +250,19 @@ def process_csv(csv_text: str, target_date: str, from_time: str = None, to_time:
     """
     stats = {}
     for sim, (name, team) in SIM_MAP.items():
-        stats[name] = {'team': team, 'total': 0, 'answered': 0, 'talk_secs': 0, 'ring_secs': 0}
+        stats[name] = {
+            'team': team, 'total': 0, 'answered': 0, 'talk_secs': 0, 'ring_secs': 0,
+            'inbound_total': 0, 'inbound_ring_secs': 0,
+        }
 
     reader = csv.DictReader(io.StringIO(csv_text))
     for row in reader:
         date_val = parse_date_cell(row.get('Date', ''))
         if date_val != target_date:
             continue
-        if row.get('Call Type', '').strip().upper() != 'OUTBOUND':
+
+        call_type = row.get('Call Type', '').strip().upper()
+        if call_type not in ('OUTBOUND', 'INBOUND'):
             continue
 
         row_time = row.get('Time', '').strip()[:5]  # HH:MM
@@ -264,8 +271,8 @@ def process_csv(csv_text: str, target_date: str, from_time: str = None, to_time:
         if to_time and row_time >= to_time:
             continue
 
-        sim_raw  = row.get('SIM Number', '')
-        sim_no   = extract_sim(sim_raw)
+        sim_raw = row.get('SIM Number', '')
+        sim_no  = extract_sim(sim_raw)
         if sim_no not in SIM_MAP:
             continue
 
@@ -274,16 +281,20 @@ def process_csv(csv_text: str, target_date: str, from_time: str = None, to_time:
         dur_secs  = duration_to_secs(row.get('Call Duration', '0:0:0'))
         ring_secs = duration_to_secs(row.get('Ring Duration', '0:0:0'))
 
-        stats[name]['total'] += 1
-        if status == 'Answered':
-            stats[name]['answered'] += 1
-        stats[name]['talk_secs'] += dur_secs
-        stats[name]['ring_secs'] += ring_secs
+        if call_type == 'OUTBOUND':
+            stats[name]['total'] += 1
+            if status == 'Answered':
+                stats[name]['answered'] += 1
+            stats[name]['talk_secs'] += dur_secs
+            stats[name]['ring_secs'] += ring_secs
+        else:  # INBOUND
+            stats[name]['inbound_total']     += 1
+            stats[name]['inbound_ring_secs'] += ring_secs
 
     for name, s in stats.items():
-        s['not_answered']  = s['total'] - s['answered']
-        s['connect_pct']   = round(s['answered'] / s['total'] * 100, 1) if s['total'] else 0.0
-        s['avg_secs']      = round(s['talk_secs'] / s['answered']) if s['answered'] else 0
+        s['not_answered'] = s['total'] - s['answered']
+        s['connect_pct']  = round(s['answered'] / s['total'] * 100, 1) if s['total'] else 0.0
+        s['avg_secs']     = round(s['talk_secs'] / s['answered']) if s['answered'] else 0
 
     return stats
 
@@ -342,10 +353,12 @@ def build_html(stats: dict, date_label: str, csv_source: str = '', time_window: 
         t_avg   = round(tt / ta)       if ta else 0
 
         t_ring = sum(m['ring_secs'] for m in members)
+        t_ib       = sum(m['inbound_total']     for m in members)
+        t_ib_ring  = sum(m['inbound_ring_secs'] for m in members)
         rows = ''
         for m in members:
-            zero = 'zero-row' if not m['total'] else ''
-            overall = m["talk_secs"] + m["ring_secs"]
+            zero    = 'zero-row' if not m['total'] else ''
+            overall = m["talk_secs"] + m["ring_secs"] + m["inbound_ring_secs"]
             rows += f'''<tr class="{zero}">
       <td>{m["name"]}</td>
       <td>{m["total"] or "0"}</td>
@@ -355,7 +368,9 @@ def build_html(stats: dict, date_label: str, csv_source: str = '', time_window: 
       <td>{fmt_talk(m["talk_secs"])}</td>
       <td>{fmt_avg(m["avg_secs"])}</td>
       <td>{fmt_talk(m["ring_secs"])}</td>
-      <td>{fmt_talk(overall)}</td>
+      <td class="ib-sep">{m["inbound_total"] or "0"}</td>
+      <td>{fmt_talk(m["inbound_ring_secs"])}</td>
+      <td class="overall-col">{fmt_talk(overall)}</td>
     </tr>'''
 
         return f'''<div class="tcard">
@@ -370,10 +385,20 @@ def build_html(stats: dict, date_label: str, csv_source: str = '', time_window: 
     </div>
   </div>
   <table>
-    <thead><tr>
-      <th>Counsellor</th><th>Calls</th><th>Connected</th><th>Not&nbsp;Connected</th>
-      <th>Connect&nbsp;%</th><th>Talk&nbsp;Time</th><th>Avg&nbsp;/&nbsp;Call</th><th>Ring&nbsp;Time</th><th>Overall&nbsp;Time</th>
-    </tr></thead>
+    <thead>
+      <tr class="grp-row">
+        <th rowspan="2" style="text-align:left">Counsellor</th>
+        <th colspan="4" class="grp-ob">Outbound</th>
+        <th colspan="3" class="grp-ob">Outbound Time</th>
+        <th colspan="2" class="grp-ib">Inbound</th>
+        <th rowspan="2" class="grp-overall">Overall</th>
+      </tr>
+      <tr>
+        <th>Calls</th><th>Conn.</th><th>Not&nbsp;Conn.</th><th>Conn.&nbsp;%</th>
+        <th>Talk&nbsp;Time</th><th>Avg&nbsp;/&nbsp;Call</th><th>Ring&nbsp;Time</th>
+        <th class="ib-sep">Calls</th><th>Ring&nbsp;Time</th>
+      </tr>
+    </thead>
     <tbody>{rows}</tbody>
     <tfoot><tr>
       <td>Team Total</td>
@@ -382,7 +407,9 @@ def build_html(stats: dict, date_label: str, csv_source: str = '', time_window: 
       <td>{fmt_talk(tt)}</td>
       <td>{fmt_avg(t_avg)}</td>
       <td>{fmt_talk(t_ring)}</td>
-      <td>{fmt_talk(tt + t_ring)}</td>
+      <td class="ib-sep">{t_ib}</td>
+      <td>{fmt_talk(t_ib_ring)}</td>
+      <td class="overall-col">{fmt_talk(tt + t_ring + t_ib_ring)}</td>
     </tr></tfoot>
   </table>
 </div>'''
@@ -394,21 +421,24 @@ def build_html(stats: dict, date_label: str, csv_source: str = '', time_window: 
 
     # ── Supervisor summary table ──────────────────────────────────────────────
     sup_rows_html = ''
-    gt_tc = gt_ta = gt_tt = gt_tr = 0
+    gt_tc = gt_ta = gt_tt = gt_tr = gt_ib = gt_ib_ring = 0
     for team_name in effective_team_order:
         members = teams.get(team_name, [])
         if not members:
             continue
-        tc   = sum(m['total']     for m in members)
-        ta   = sum(m['answered']  for m in members)
-        tt   = sum(m['talk_secs'] for m in members)
-        tr_  = sum(m['ring_secs'] for m in members)
-        rate = round(ta / tc * 100) if tc else 0
-        avg  = round(tt / ta)       if ta else 0
-        a5   = sum(1 for m in members if m['total'] > 5)
-        tpa  = round(tt / a5) if a5 else 0
-        color = TEAM_COLORS.get(team_name, '#6b7280')
+        tc      = sum(m['total']            for m in members)
+        ta      = sum(m['answered']         for m in members)
+        tt      = sum(m['talk_secs']        for m in members)
+        tr_     = sum(m['ring_secs']        for m in members)
+        t_ib    = sum(m['inbound_total']    for m in members)
+        t_ib_r  = sum(m['inbound_ring_secs'] for m in members)
+        rate    = round(ta / tc * 100) if tc else 0
+        avg     = round(tt / ta)       if ta else 0
+        a5      = sum(1 for m in members if m['total'] > 5)
+        tpa     = round(tt / a5) if a5 else 0
+        color   = TEAM_COLORS.get(team_name, '#6b7280')
         gt_tc += tc; gt_ta += ta; gt_tt += tt; gt_tr += tr_
+        gt_ib += t_ib; gt_ib_ring += t_ib_r
         sup_rows_html += f'''<tr>
       <td class="sup-name-cell" style="border-left:3px solid {color};">{team_name}</td>
       <td>{len(members)}</td><td>{tc}</td><td>{ta}</td><td>{tc - ta}</td>
@@ -417,7 +447,9 @@ def build_html(stats: dict, date_label: str, csv_source: str = '', time_window: 
       <td>{fmt_avg(avg)}</td>
       <td>{fmt_talk(tpa)}</td>
       <td>{fmt_talk(tr_)}</td>
-      <td>{fmt_talk(tt + tr_)}</td>
+      <td class="ib-sep">{t_ib}</td>
+      <td>{fmt_talk(t_ib_r)}</td>
+      <td class="overall-col">{fmt_talk(tt + tr_ + t_ib_r)}</td>
     </tr>'''
     gt_rate = round(gt_ta / gt_tc * 100) if gt_tc else 0
     gt_avg  = round(gt_tt / gt_ta)       if gt_ta else 0
@@ -430,7 +462,9 @@ def build_html(stats: dict, date_label: str, csv_source: str = '', time_window: 
       <td>{fmt_avg(gt_avg)}</td>
       <td>{fmt_talk(gt_tpa)}<span class="act-badge">{gt_a5}</span></td>
       <td>{fmt_talk(gt_tr)}</td>
-      <td>{fmt_talk(gt_tt + gt_tr)}</td>
+      <td class="ib-sep">{gt_ib}</td>
+      <td>{fmt_talk(gt_ib_ring)}</td>
+      <td class="overall-col">{fmt_talk(gt_tt + gt_tr + gt_ib_ring)}</td>
     </tr>'''
 
     return f'''<!DOCTYPE html>
@@ -534,6 +568,13 @@ def build_html(stats: dict, date_label: str, csv_source: str = '', time_window: 
   .act-badge {{ display:inline-block; margin-left:6px; padding:2px 7px; border-radius:4px; font-size:.7rem; font-weight:700; background:#fef3c7; color:#92400e; border:1px solid #fde68a; }}
   .sup-total td {{ background:#f5f6f8; font-weight:700; border-top:2px solid #e5e7eb; }}
   .sup-total td:first-child {{ font-size:.72rem; text-transform:uppercase; letter-spacing:.6px; color:#4b5563; }}
+  .grp-row th {{ padding:5px 10px; font-size:.72rem; font-weight:800; text-transform:uppercase; letter-spacing:.6px; text-align:center; border-bottom:1px solid #e5e7eb; }}
+  .grp-ob {{ background:#fffbeb; color:#92400e; border:1px solid #fde68a; }}
+  .grp-ib {{ background:#eff6ff; color:#1d4ed8; border:1px solid #bfdbfe; }}
+  .ib-sep {{ border-left:2px solid #bfdbfe !important; background:#eff6ff !important; color:#1d4ed8 !important; }}
+  thead th.ib-sep {{ background:#eff6ff; color:#1d4ed8; border-left:2px solid #bfdbfe; }}
+  .grp-overall {{ background:#f0fdf4 !important; color:#15803d !important; border:1px solid #bbf7d0 !important; font-weight:800 !important; }}
+  .overall-col {{ border-left:2px solid #bbf7d0 !important; background:#f0fdf4 !important; color:#15803d !important; font-weight:800 !important; }}
 </style>
 </head>
 <body>
@@ -552,12 +593,21 @@ def build_html(stats: dict, date_label: str, csv_source: str = '', time_window: 
 <div class="sup-table-wrap">
   <div class="sup-table-head">Supervisor Summary</div>
   <table>
-    <thead><tr>
-      <th style="text-align:left">Supervisor</th>
-      <th>Counsellors</th><th>Calls</th><th>Connected</th><th>Not&nbsp;Connected</th>
-      <th>Connect&nbsp;%</th><th>Talk&nbsp;Time</th><th>Avg&nbsp;/&nbsp;Call</th>
-      <th>Talk&nbsp;/&nbsp;Active&nbsp;(5+)</th><th>Ring&nbsp;Time</th><th>Overall&nbsp;Time</th>
-    </tr></thead>
+    <thead>
+      <tr class="grp-row">
+        <th rowspan="2" style="text-align:left">Supervisor</th>
+        <th rowspan="2">Counsellors</th>
+        <th colspan="4" class="grp-ob">Outbound</th>
+        <th colspan="4" class="grp-ob">Outbound Time</th>
+        <th colspan="2" class="grp-ib">Inbound</th>
+        <th rowspan="2" class="grp-overall">Overall</th>
+      </tr>
+      <tr>
+        <th>Calls</th><th>Conn.</th><th>Not&nbsp;Conn.</th><th>Conn.&nbsp;%</th>
+        <th>Talk&nbsp;Time</th><th>Avg&nbsp;/&nbsp;Call</th><th>Talk&nbsp;/&nbsp;Active</th><th>Ring&nbsp;Time</th>
+        <th class="ib-sep">Calls</th><th>Ring&nbsp;Time</th>
+      </tr>
+    </thead>
     <tbody>{sup_rows_html}</tbody>
   </table>
 </div>
@@ -733,14 +783,14 @@ async def main():
             return
 
         cap1 = (
-            f'📞 Outbound Report — {report_type}'
+            f'📞 Overall Talk Time Report — {report_type}'
             + f'\n📅 {eff_label}'
             + (f'\n⏱ {time_window}' if time_window else '')
             + f'\n✅ {ta}/{tc} connected'
             + f'\n1/2 — Supervisor Summary & KPIs'
         )
         cap2 = (
-            f'📞 Outbound Report — {report_type}'
+            f'📞 Overall Talk Time Report — {report_type}'
             + f'\n📅 {eff_label}'
             + (f'\n⏱ {time_window}' if time_window else '')
             + f'\n2/2 — Team Breakdown'
