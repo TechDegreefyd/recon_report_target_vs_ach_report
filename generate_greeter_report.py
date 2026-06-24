@@ -94,7 +94,7 @@ async def scrape_greeter(target_date_str: str, date_btn: str, explore: bool = Fa
 
         # ── Login ─────────────────────────────────────────────────────────────
         log(f'Opening login page …')
-        await page.goto(GREETER_URL, wait_until='networkidle', timeout=60_000)
+        await page.goto(GREETER_URL, wait_until='domcontentloaded', timeout=60_000)
         await page.wait_for_timeout(800)
 
         log('Filling login form …')
