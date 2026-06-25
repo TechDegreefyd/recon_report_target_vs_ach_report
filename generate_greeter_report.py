@@ -14,6 +14,7 @@ import sys
 import re
 import argparse
 import time
+import csv
 from datetime import datetime, timedelta, UTC
 from dotenv import load_dotenv
 from playwright.async_api import async_playwright
@@ -38,6 +39,7 @@ parser.add_argument('--group',     default=None,        help='Override WhatsApp 
 parser.add_argument('--from-time', default=None,        dest='from_time', help='HH:MM — filter calls from this time')
 parser.add_argument('--to-time',   default=None,        dest='to_time',   help='HH:MM — filter calls up to this time (exclusive)')
 parser.add_argument('--nocleanup', action='store_true', help='Skip auto-cleanup of old downloads and reports')
+parser.add_argument('--file',      default=None,        help='Path to local XLSX or CSV — skip login/scrape entirely')
 args, _ = parser.parse_known_args()
 
 LOCAL_MODE = args.local
@@ -92,64 +94,176 @@ def _extract_csrf(html: str) -> str:
     return ''
 
 
-def fetch_greeter_xlsx(target_date_str: str) -> str:
-    """Fresh session each call: login → fetch CSRF → POST export → save XLSX."""
-    dt       = datetime.strptime(target_date_str, '%d/%m/%Y')
-    api_date = dt.strftime('%Y-%m-%d')
-
-    session = requests.Session()
-    session.headers.update({'User-Agent': 'Mozilla/5.0'})
-
-    # Step 1: GET login page → CSRF token
-    log('Fetching login page …')
-    r = session.get(GREETER_URL, timeout=30)
-    csrf = _extract_csrf(r.text)
-    if csrf:
-        log(f'  CSRF: {csrf[:20]}…')
-
-    # Step 2: POST login (fresh credentials, no cached session)
-    log('Logging in …')
-    login_payload = {'username': GREETER_USERNAME, 'password': GREETER_PASSWORD}
-    if csrf:
-        login_payload['csrfmiddlewaretoken'] = csrf
-    session.headers.update({'Referer': GREETER_URL})
-    r = session.post(GREETER_URL, data=login_payload, timeout=30, allow_redirects=True)
-    if 'login' in r.url.lower():
-        raise RuntimeError(f'Login failed — still on {r.url}')
-    log(f'Logged in → {r.url}')
-
-    # Step 3: GET call_log page → fresh CSRF for the export form
-    log('Fetching call log page for export CSRF …')
-    r2   = session.get(CALL_LOG_URL, timeout=30)
-    csrf2 = _extract_csrf(r2.text)
-    if csrf2:
-        log(f'  Export CSRF: {csrf2[:20]}…')
-
-    # Step 4: POST export endpoint
-    export_payload = {'start_date': api_date, 'end_date': api_date}
-    if csrf2:
-        export_payload['csrfmiddlewaretoken'] = csrf2
-    session.headers.update({'Referer': CALL_LOG_URL})
-
-    log(f'Downloading XLSX for {api_date} …')
-    r3 = session.post(EXPORT_URL, data=export_payload, timeout=60, stream=True)
-    ct = r3.headers.get('Content-Type', '')
-    if r3.status_code != 200 or not any(k in ct for k in ('spreadsheet', 'octet-stream', 'excel')):
-        raise RuntimeError(f'Export failed: {r3.status_code} {ct}\n{r3.text[:300]}')
+async def fetch_greeter_xlsx_playwright(target_date_str: str, explore: bool = False) -> str:
+    """
+    Use Playwright to login, set the date range picker to target_date_str (DD/MM/YYYY),
+    and download the XLSX. Works for any date including historical dates.
+    """
+    dt         = datetime.strptime(target_date_str, '%d/%m/%Y')
+    # Greeter date picker uses DD/MM/YYYY format in its input fields
+    date_input = dt.strftime('%d/%m/%Y')   # e.g. 24/06/2026
+    api_date   = dt.strftime('%Y-%m-%d')
 
     DOWNLOAD_DIR = os.path.join(_DIR, 'greeter_downloads')
     os.makedirs(DOWNLOAD_DIR, exist_ok=True)
     xlsx_path = os.path.join(DOWNLOAD_DIR, f'greeter_{RUN_STAMP}.xlsx')
-    with open(xlsx_path, 'wb') as f:
-        for chunk in r3.iter_content(8192):
-            f.write(chunk)
-    log(f'Downloaded → {xlsx_path}  ({os.path.getsize(xlsx_path):,} bytes)')
+
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        ctx     = await browser.new_context(accept_downloads=True)
+        page    = await ctx.new_page()
+
+        # ── Login ────────────────────────────────────────────────────────────
+        log('Playwright: navigating to login …')
+        await page.goto(GREETER_URL, wait_until='networkidle')
+        await page.fill('input[name="username"]', GREETER_USERNAME)
+        await page.fill('input[name="password"]', GREETER_PASSWORD)
+        async with page.expect_navigation(wait_until='networkidle'):
+            await page.click('button[type="submit"], input[type="submit"]')
+        log(f'Playwright: logged in → {page.url}')
+
+        # ── Navigate to call log ─────────────────────────────────────────────
+        log('Playwright: navigating to call log …')
+        await page.goto(CALL_LOG_URL, wait_until='networkidle')
+        await page.wait_for_timeout(1500)
+
+        if explore:
+            html = await page.content()
+            explore_path = os.path.join(_DIR, 'explore_dump.html')
+            with open(explore_path, 'w', encoding='utf-8') as f:
+                f.write(html)
+            log(f'EXPLORE: page HTML dumped → {explore_path}')
+            await browser.close()
+            return ''
+
+        # ── Set date range ───────────────────────────────────────────────────
+        # Try common date range input selectors used by Greeter
+        log(f'Playwright: setting date range to {date_input} …')
+
+        # Many Django/Bootstrap date range pickers use inputs with id containing "start"/"end" or "from"/"to"
+        # Try filling start_date and end_date inputs
+        for sel in ['#start_date', 'input[name="start_date"]', 'input[placeholder*="Start"]',
+                    'input[placeholder*="From"]', 'input[placeholder*="start"]']:
+            try:
+                loc = page.locator(sel)
+                if await loc.count() > 0:
+                    await loc.first.triple_click()
+                    await loc.first.fill(date_input)
+                    log(f'  Filled start date via {sel}')
+                    break
+            except Exception:
+                pass
+
+        for sel in ['#end_date', 'input[name="end_date"]', 'input[placeholder*="End"]',
+                    'input[placeholder*="To"]', 'input[placeholder*="end"]']:
+            try:
+                loc = page.locator(sel)
+                if await loc.count() > 0:
+                    await loc.first.triple_click()
+                    await loc.first.fill(date_input)
+                    log(f'  Filled end date via {sel}')
+                    break
+            except Exception:
+                pass
+
+        # Press Enter or click a filter/submit button
+        for sel in ['button[type="submit"]', 'input[type="submit"]',
+                    'button:has-text("Filter")', 'button:has-text("Search")',
+                    'button:has-text("Apply")', '#filter_btn', '#search_btn']:
+            try:
+                loc = page.locator(sel)
+                if await loc.count() > 0:
+                    await loc.first.click()
+                    log(f'  Clicked filter button via {sel}')
+                    break
+            except Exception:
+                pass
+
+        await page.wait_for_timeout(2000)
+
+        # ── Click export/download button ─────────────────────────────────────
+        log('Playwright: triggering XLSX export …')
+        downloaded = False
+        for sel in ['a:has-text("Export")', 'a:has-text("Download")', 'a:has-text("xlsx")',
+                    'a:has-text("Excel")', 'button:has-text("Export")', '#export_btn',
+                    'a[href*="export"]', 'a[href*="xlsx"]']:
+            try:
+                loc = page.locator(sel)
+                if await loc.count() > 0:
+                    async with page.expect_download(timeout=30000) as dl_info:
+                        await loc.first.click()
+                    download = await dl_info.value
+                    await download.save_as(xlsx_path)
+                    log(f'Downloaded via UI → {xlsx_path}  ({os.path.getsize(xlsx_path):,} bytes)')
+                    downloaded = True
+                    break
+            except Exception as e:
+                log(f'  Export selector {sel} failed: {e}')
+
+        if not downloaded:
+            # Fallback: POST the export URL directly using cookies from Playwright session
+            log('Playwright: falling back to cookie-based POST export …')
+            cookies = await ctx.cookies()
+            cookie_str = '; '.join(f'{c["name"]}={c["value"]}' for c in cookies)
+
+            # Get CSRF from page
+            csrf2 = ''
+            try:
+                csrf2 = await page.evaluate(
+                    "document.querySelector('input[name=csrfmiddlewaretoken]')?.value || ''"
+                )
+            except Exception:
+                pass
+            if not csrf2:
+                csrf2 = _extract_csrf(await page.content())
+
+            session = requests.Session()
+            session.headers.update({
+                'User-Agent': 'Mozilla/5.0',
+                'Cookie':     cookie_str,
+                'Referer':    CALL_LOG_URL,
+            })
+            export_payload = {'start_date': api_date, 'end_date': api_date}
+            if csrf2:
+                export_payload['csrfmiddlewaretoken'] = csrf2
+
+            r = session.post(EXPORT_URL, data=export_payload, timeout=60, stream=True)
+            ct = r.headers.get('Content-Type', '')
+            if r.status_code == 200 and any(k in ct for k in ('spreadsheet', 'octet-stream', 'excel')):
+                with open(xlsx_path, 'wb') as f:
+                    for chunk in r.iter_content(8192):
+                        f.write(chunk)
+                log(f'Downloaded via cookie POST → {xlsx_path}  ({os.path.getsize(xlsx_path):,} bytes)')
+            else:
+                raise RuntimeError(f'Export failed: {r.status_code} {ct}\n{r.text[:300]}')
+
+        await browser.close()
+
     return xlsx_path
+
+
+def fetch_greeter_xlsx(target_date_str: str) -> str:
+    """Sync wrapper kept for compatibility — delegates to Playwright version."""
+    return asyncio.get_event_loop().run_until_complete(
+        fetch_greeter_xlsx_playwright(target_date_str)
+    )
 
 
 def _clean_agent_name(raw: str) -> str:
     """'Tanya .' → 'Tanya',  'Khushi Mehta .' → 'Khushi Mehta'"""
     return ' '.join(raw.strip().rstrip('.').split())
+
+
+def parse_csv(csv_path: str) -> list[dict]:
+    log(f'Parsing CSV: {csv_path}')
+    with open(csv_path, newline='', encoding='utf-8-sig') as f:
+        reader = csv.DictReader(f)
+        data = [row for row in reader if any(v.strip() for v in row.values())]
+    log(f'CSV rows: {len(data)}')
+    if data:
+        log(f'CSV headers: {list(data[0].keys())}')
+        log(f'Sample: {data[0]}')
+    return data
 
 
 def parse_xlsx(xlsx_path: str) -> list[dict]:
@@ -629,12 +743,30 @@ async def main():
     if not args.nocleanup:
         cleanup_old_files()
 
-    xlsx_path = fetch_greeter_xlsx(report_date_str)
-
-    rows = parse_xlsx(xlsx_path)
+    if args.file:
+        log(f'Using local file: {args.file}')
+        if args.file.lower().endswith('.csv'):
+            rows = parse_csv(args.file)
+        else:
+            rows = parse_xlsx(args.file)
+    else:
+        xlsx_path = await fetch_greeter_xlsx_playwright(report_date_str, explore=args.explore)
+        if args.explore:
+            log('=== Explore done — check explore_dump.html ===')
+            return
+        rows = parse_xlsx(xlsx_path)
 
     if not rows:
         log('WARNING: No data rows found. The report will be empty.')
+
+    # Greeter's export API often ignores date params — filter client-side
+    target_api_date = report_dt.strftime('%Y-%m-%d')
+    rows_before = len(rows)
+    rows = [r for r in rows if r.get('Date', '').startswith(target_api_date)]
+    log(f'Date filter ({target_api_date}): {rows_before} → {len(rows)} rows')
+
+    if not rows:
+        log('WARNING: No rows matched target date after filtering.')
 
     log('Processing rows …')
     stats       = process_rows(rows)

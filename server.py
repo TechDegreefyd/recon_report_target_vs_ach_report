@@ -81,16 +81,18 @@ _CALL_GROUP    = os.getenv('WHATSAPP_GROUP_ONLINE_LOB', '120363424062745706@g.us
 _GREETER_GROUP = os.getenv('WHATSAPP_GROUP_GREETER',    '120363426619711887@g.us')
 
 def _call_cumulative_ob():
-    """Outbound core only: shift start (9:30 AM) → now."""
-    now_ist = datetime.now(IST)
-    return ['--from-time', '09:30', '--to-time', now_ist.strftime('%H:%M'),
+    """Outbound core only: shift start (9:30 AM) → now minus 15m API sync buffer."""
+    now_ist  = datetime.now(IST)
+    to_dt    = now_ist - timedelta(minutes=15)
+    return ['--from-time', '09:30', '--to-time', to_dt.strftime('%H:%M'),
             '--group', _CALL_GROUP, '--only-core']
 
 def _call_last_hour_ob():
-    """Outbound core only: last 2-hour window (schedule fires every 2h)."""
+    """Outbound core only: last 2-hour window minus 15m API sync buffer."""
     now_ist  = datetime.now(IST)
-    from_dt  = now_ist - timedelta(hours=2)
-    return ['--from-time', from_dt.strftime('%H:%M'), '--to-time', now_ist.strftime('%H:%M'),
+    to_dt    = now_ist - timedelta(minutes=15)
+    from_dt  = to_dt   - timedelta(hours=2)
+    return ['--from-time', from_dt.strftime('%H:%M'), '--to-time', to_dt.strftime('%H:%M'),
             '--group', _CALL_GROUP, '--only-core']
 
 def _call_cumulative_ib():
@@ -107,16 +109,18 @@ def _call_last_hour_ib():
             '--group', _CALL_GROUP]
 
 def _greeter_cumulative():
-    """Greeter: shift start (9:30 AM) → now, cumulative."""
+    """Greeter: shift start (9:30 AM) → now minus 15m API sync buffer."""
     now_ist = datetime.now(IST)
-    return ['--from-time', '09:30', '--to-time', now_ist.strftime('%H:%M'),
+    to_dt   = now_ist - timedelta(minutes=15)
+    return ['--from-time', '09:30', '--to-time', to_dt.strftime('%H:%M'),
             '--group', _GREETER_GROUP]
 
 def _greeter_last_2hr():
-    """Greeter: last 2-hour window."""
+    """Greeter: last 2-hour window minus 15m API sync buffer."""
     now_ist = datetime.now(IST)
-    from_dt = now_ist - timedelta(hours=2)
-    return ['--from-time', from_dt.strftime('%H:%M'), '--to-time', now_ist.strftime('%H:%M'),
+    to_dt   = now_ist - timedelta(minutes=15)
+    from_dt = to_dt   - timedelta(hours=2)
+    return ['--from-time', from_dt.strftime('%H:%M'), '--to-time', to_dt.strftime('%H:%M'),
             '--group', _GREETER_GROUP]
 
 # ─── Regular outbound helpers (new schedule: 9:30 AM yesterday, then 2-hr cumulative) ─
@@ -127,9 +131,10 @@ def _regular_ob_yesterday():
     return ['--date', yesterday, '--only-regular']
 
 def _regular_ob_cumulative():
-    """Regular outbound: shift start (9:30 AM) → now, cumulative."""
+    """Regular outbound: shift start (9:30 AM) → now minus 15m API sync buffer."""
     now_ist = datetime.now(IST)
-    return ['--from-time', '09:30', '--to-time', now_ist.strftime('%H:%M'), '--only-regular']
+    to_dt   = now_ist - timedelta(minutes=15)
+    return ['--from-time', '09:30', '--to-time', to_dt.strftime('%H:%M'), '--only-regular']
 
 # ─── Greeter helpers (new schedule: 9:30 AM yesterday, then 2-hr cumulative) ──────────
 def _greeter_yesterday():

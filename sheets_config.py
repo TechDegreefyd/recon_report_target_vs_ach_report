@@ -396,6 +396,8 @@ def load_outbound_sim_map() -> dict:
         team = row[2].strip()
         if sim and name and team:
             sim_map[sim] = (name, team)
+        elif sim or name:
+            print(f'  ⚠️  Outbound_SIM_Map: incomplete row skipped — SIM={sim!r} Name={name!r} Team={team!r}')
     return sim_map
 
 
