@@ -688,7 +688,10 @@ async def main():
 
     if LOCAL_MODE:
         png_base = html_path.replace('.html', '.png')
-        await take_screenshots(html_path, png_base)
+        try:
+            await take_screenshots(html_path, png_base)
+        except Exception as e:
+            log(f'⚠️  Screenshots failed: {e}')
         log('=== Done (local mode) ===')
         return
 
@@ -706,11 +709,20 @@ async def main():
     )
 
     png_base = html_path.replace('.html', '.png')
-    png1, png2 = await take_screenshots(html_path, png_base)
+    try:
+        png1, png2 = await take_screenshots(html_path, png_base)
+        screenshots_ok = True
+    except Exception as e:
+        log(f'⚠️  Screenshots failed (Playwright/Chromium may not be installed): {e}')
+        log('    Continuing — will send HTML report directly instead.')
+        screenshots_ok = False
 
     if WHAPI_TOKEN:
-        send_whatsapp_image(png1, caption1, target_group, WHAPI_TOKEN)
-        send_whatsapp_image(png2, caption2, target_group, WHAPI_TOKEN)
+        if screenshots_ok:
+            send_whatsapp_image(png1, caption1, target_group, WHAPI_TOKEN)
+            send_whatsapp_image(png2, caption2, target_group, WHAPI_TOKEN)
+        else:
+            log('⚠️  Skipping WhatsApp send — no screenshots available (install Playwright on server)')
     else:
         log('WHAPI_TOKEN not set — skipping WhatsApp send')
 
