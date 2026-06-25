@@ -343,8 +343,8 @@ def main():
     print("  Scheduler started. Waiting for jobs...\n", flush=True)
 
     # ── DEPLOYMENT SMOKE TEST ───────────────────────────────────────────
+    # Runs AFTER scheduler.start() so cron jobs are never missed.
     # Only runs when SMOKE_TEST=1 is set in the environment.
-    # Set it once at deploy time; unset for normal restarts.
     if os.getenv('SMOKE_TEST') == '1':
         _SMOKE_GROUP = "120363426619711887@g.us"
         _smoke_env = {
@@ -356,22 +356,29 @@ def main():
             "WHATSAPP_GROUP":               _SMOKE_GROUP,
             "WHATSAPP_GROUP_BHUGOAL":       _SMOKE_GROUP,
         }
-        _now_ist = datetime.now(IST)
-        _smoke_from = "09:30"
-        _smoke_to   = _now_ist.strftime('%H:%M')
-        print("=" * 70, flush=True)
-        print(f"  DEPLOY SMOKE TEST — Sending reports to admin group only ({_SMOKE_GROUP})...", flush=True)
-        print(f"  CallInsight creds: email={os.getenv('CALLINSIGHT_EMAIL', 'NOT SET')!r}  password_len={len((os.getenv('CALLINSIGHT_PASSWORD') or '').strip())}", flush=True)
-        print("=" * 70, flush=True)
-        run_script("generate_all_lms_reports.py",    "SMOKE TEST — LMS Reports (admin group only)",          None,            extra_env=_smoke_env)
-        run_script("generate_all_recon_reports.py",  "SMOKE TEST — Recon Report (yesterday full day)",       _yesterday_full, extra_env=_smoke_env)
-        run_script("bhugoal_generate_report.py",     "SMOKE TEST — Bhugoal Daily Report (admin group only)", None,            extra_env=_smoke_env)
-        run_script("generate_outbound_report.py",    "SMOKE TEST — Outbound Cumulative (admin group only)",
-                   lambda: ['--from-time', _smoke_from, '--to-time', _smoke_to, '--group', _SMOKE_GROUP], extra_env=_smoke_env)
-        run_script("generate_greeter_report.py",     "SMOKE TEST — Greeter Cumulative (admin group only)",
-                   lambda: ['--from-time', _smoke_from, '--to-time', _smoke_to, '--group', _SMOKE_GROUP], extra_env=_smoke_env)
-        print("=" * 70, flush=True)
-        print("  SMOKE TEST COMPLETE — Admin group notified. Scheduler is live.\n", flush=True)
+
+        def _run_smoke_test():
+            _now_ist = datetime.now(IST)
+            _smoke_from = "09:30"
+            _smoke_to   = (_now_ist - timedelta(minutes=15)).strftime('%H:%M')
+            print("=" * 70, flush=True)
+            print(f"  DEPLOY SMOKE TEST — Sending reports to admin group only ({_SMOKE_GROUP})...", flush=True)
+            print(f"  CallInsight creds: email={os.getenv('CALLINSIGHT_EMAIL', 'NOT SET')!r}  password_len={len((os.getenv('CALLINSIGHT_PASSWORD') or '').strip())}", flush=True)
+            print("=" * 70, flush=True)
+            run_script("generate_all_lms_reports.py",    "SMOKE TEST — LMS Reports (admin group only)",          None,            extra_env=_smoke_env)
+            run_script("generate_all_recon_reports.py",  "SMOKE TEST — Recon Report (yesterday full day)",       _yesterday_full, extra_env=_smoke_env)
+            run_script("bhugoal_generate_report.py",     "SMOKE TEST — Bhugoal Daily Report (admin group only)", None,            extra_env=_smoke_env)
+            run_script("generate_outbound_report.py",    "SMOKE TEST — Outbound Cumulative (admin group only)",
+                       lambda: ['--from-time', _smoke_from, '--to-time', _smoke_to, '--group', _SMOKE_GROUP], extra_env=_smoke_env)
+            run_script("generate_greeter_report.py",     "SMOKE TEST — Greeter Cumulative (admin group only)",
+                       lambda: ['--from-time', _smoke_from, '--to-time', _smoke_to, '--group', _SMOKE_GROUP], extra_env=_smoke_env)
+            print("=" * 70, flush=True)
+            print("  SMOKE TEST COMPLETE — Admin group notified. Scheduler is live.\n", flush=True)
+
+        from datetime import timezone
+        import threading
+        threading.Thread(target=_run_smoke_test, daemon=True).start()
+        print("  ℹ️  Smoke test running in background thread — scheduler is live.\n", flush=True)
     else:
         print("  ℹ️  Smoke test skipped (set SMOKE_TEST=1 to enable on deploy).\n", flush=True)
 
