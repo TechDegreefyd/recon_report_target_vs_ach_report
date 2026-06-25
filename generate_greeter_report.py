@@ -301,7 +301,7 @@ def process_rows(rows: list[dict], from_time: str = None, to_time: str = None) -
                 continue
 
         agent_raw = _clean_agent_name(row.get('Receiver Name', '') or '')
-        if not agent_raw or agent_raw == 'None':
+        if not agent_raw or agent_raw in ('None', 'NA', 'N/A', 'na', 'n/a', '-'):
             continue
 
         status       = (row.get('Status', '') or '').strip()

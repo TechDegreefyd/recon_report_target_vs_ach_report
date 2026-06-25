@@ -123,12 +123,12 @@ def _greeter_last_2hr():
     return ['--from-time', from_dt.strftime('%H:%M'), '--to-time', to_dt.strftime('%H:%M'),
             '--group', _GREETER_GROUP]
 
-# ─── Regular outbound helpers (new schedule: 9:30 AM yesterday, then 2-hr cumulative) ─
-def _regular_ob_yesterday():
-    """Regular outbound: yesterday's full day data (sent at 9:30 AM IST)."""
+# ─── Regular outbound helpers ─────────────────────────────────────────────────
+def _regular_ob_eod_today():
+    """Regular outbound: today's full day data (sent at 11:30 PM IST same day = UTC 18:00)."""
     now_ist = datetime.now(IST)
-    yesterday = (now_ist - timedelta(days=1)).strftime('%d/%m/%Y')
-    return ['--date', yesterday, '--only-regular']
+    today = now_ist.strftime('%d/%m/%Y')
+    return ['--date', today, '--only-regular']
 
 def _regular_ob_cumulative():
     """Regular outbound: shift start (9:30 AM) → now minus 15m API sync buffer."""
@@ -136,10 +136,10 @@ def _regular_ob_cumulative():
     to_dt   = now_ist - timedelta(minutes=15)
     return ['--from-time', '09:30', '--to-time', to_dt.strftime('%H:%M'), '--only-regular']
 
-# ─── Greeter helpers (new schedule: 9:30 AM yesterday, then 2-hr cumulative) ──────────
-def _greeter_yesterday():
-    """Greeter: yesterday's full day data (sent at 9:30 AM IST)."""
-    return ['--date', 'yesterday', '--group', _GREETER_GROUP]
+# ─── Greeter helpers (new schedule: 11:30 PM same-day EOD, then 2-hr cumulative) ───────
+def _greeter_eod_today():
+    """Greeter: today's full day data (sent at 11:30 PM IST same day = UTC 18:00)."""
+    return ['--date', 'today', '--group', _GREETER_GROUP]
 
 
 # IST 10 AM – 9 PM = UTC 04:30 – 15:30  →  UTC hours 4–15, every 2 hours
@@ -174,23 +174,17 @@ for _utc_h in _CALL_HOURS_UTC:
          f"Outbound Last 2hrs  — {_ist_h:02d}:{_ist_m:02d} IST", _call_last_hour_ob),
     ]
 
-# ─── Regular outbound + Greeter: 9:30 AM yesterday, then every 2h cumulative ──
-# UTC 4:00 = IST 9:30 → yesterday full day
-# UTC 6:00, 8:00, 10:00, 12:00, 14:00 = IST 11:30, 13:30, 15:30, 17:30, 19:30 → cumulative today
+# ─── Regular outbound + Greeter schedule ─────────────────────────────────────
+# Regular outbound: 9:30 AM IST → yesterday full day, then every 2h cumulative
+# Greeter:          11:30, 13:30, 15:30, 17:30, 19:30 IST → cumulative today
+#                   23:30 IST (UTC 18:00) → today's full day EOD report
 REGULAR_OUTBOUND_SCHEDULE = []
 GREETER_SCHEDULE = []
 for _i, _utc_h in enumerate(_NEW_HOURS_UTC):
     _ist_h = (_utc_h + 5) % 24
     _ist_m = 30
-    if _i == 0:  # 9:30 AM IST → yesterday full day
-        REGULAR_OUTBOUND_SCHEDULE.append(
-            (_utc_h, 0, "generate_outbound_report.py",
-             f"Regular Outbound Yesterday — {_ist_h:02d}:{_ist_m:02d} IST", _regular_ob_yesterday)
-        )
-        GREETER_SCHEDULE.append(
-            (_utc_h, 2, "generate_greeter_report.py",
-             f"Greeter Yesterday — {_ist_h:02d}:{_ist_m:02d} IST", _greeter_yesterday)
-        )
+    if _i == 0:  # 9:30 AM IST → cumulative only (EOD yesterday sent at 23:30 IST)
+        pass
     else:  # 11:30, 13:30, 15:30, 17:30, 19:30 IST → cumulative today
         REGULAR_OUTBOUND_SCHEDULE.append(
             (_utc_h, 0, "generate_outbound_report.py",
@@ -200,6 +194,16 @@ for _i, _utc_h in enumerate(_NEW_HOURS_UTC):
             (_utc_h, 2, "generate_greeter_report.py",
              f"Greeter Cumulative — {_ist_h:02d}:{_ist_m:02d} IST", _greeter_cumulative)
         )
+
+# UTC 18:00 = IST 23:30 → EOD full day reports (Regular Outbound + Greeter)
+REGULAR_OUTBOUND_SCHEDULE.append(
+    (18, 0, "generate_outbound_report.py",
+     "Regular Outbound EOD Today — 23:30 IST", _regular_ob_eod_today)
+)
+GREETER_SCHEDULE.append(
+    (18, 2, "generate_greeter_report.py",
+     "Greeter EOD Today — 23:30 IST", _greeter_eod_today)
+)
 
 
 def ist_now():
