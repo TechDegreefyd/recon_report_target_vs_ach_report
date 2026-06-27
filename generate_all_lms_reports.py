@@ -238,71 +238,30 @@ async def online_get_data():
     MTD_END_   = MTD_END
     FTD_DATE_  = FTD_DATE
 
-    # ── Counsellor MTD fee: dedup per student (keep highest deposit), sum per counsellor ──
-    couns_mtd_fee_query = f"""
-    WITH deduped AS (
-        SELECT DISTINCT ON (csj.student_id)
-            s.assigned_counsellor_id,
-            csj.deposit_amount
-        FROM course_status_journeys csj
-        JOIN students s ON s.student_id = csj.student_id
-        WHERE csj.course_status = 'Admission'
-          AND INITCAP(TRIM(csj.fee_type)) NOT IN ('Partial Paid', 'Partially Paid', 'Partial Done')
-          AND (csj.created_at AT TIME ZONE 'Asia/Kolkata')::date >= '{MTD_START_}'::date
-          AND (csj.created_at AT TIME ZONE 'Asia/Kolkata')::date <= '{MTD_END_}'::date
-        ORDER BY csj.student_id, csj.deposit_amount DESC
-    )
-    SELECT c.counsellor_name, COALESCE(SUM(d.deposit_amount), 0) AS mtd_fee
-    FROM deduped d
-    LEFT JOIN counsellors c ON c.counsellor_id = d.assigned_counsellor_id
-    GROUP BY c.counsellor_name;
-    """
-
-    # ── Counsellor FTD fee: same logic, single day ──
-    couns_ftd_fee_query = f"""
-    WITH deduped AS (
-        SELECT DISTINCT ON (csj.student_id)
-            s.assigned_counsellor_id,
-            csj.deposit_amount
-        FROM course_status_journeys csj
-        JOIN students s ON s.student_id = csj.student_id
-        WHERE csj.course_status = 'Admission'
-          AND INITCAP(TRIM(csj.fee_type)) NOT IN ('Partial Paid', 'Partially Paid', 'Partial Done')
-          AND (csj.created_at AT TIME ZONE 'Asia/Kolkata')::date = '{FTD_DATE_}'::date
-        ORDER BY csj.student_id, csj.deposit_amount DESC
-    )
-    SELECT c.counsellor_name, COALESCE(SUM(d.deposit_amount), 0) AS ftd_fee
-    FROM deduped d
-    LEFT JOIN counsellors c ON c.counsellor_id = d.assigned_counsellor_id
-    GROUP BY c.counsellor_name;
-    """
-
-    # ── Counsellor MTD admissions: distinct students per counsellor ──
-    couns_mtd_adm_query = f"""
-    SELECT c.counsellor_name, COUNT(DISTINCT csj.student_id) AS mtd_adm
+    # ── Single raw fetch — all YTD admission entries, one row per CSJ entry ────────
+    # Covers counsellor + college slices for all windows (FTD/MTD/last-MTD/YTD).
+    # LAST_MTD_START may predate YTD_START at year start — extend window to cover it.
+    _raw_start = min(YTD_START, LAST_MTD_START)
+    adm_raw_query = f"""
+    SELECT
+        csj.student_id,
+        csj.course_id,
+        c.counsellor_name,
+        uc.university_name,
+        csj.deposit_amount,
+        (csj.created_at AT TIME ZONE 'Asia/Kolkata')::date AS adm_date,
+        csj.created_at AT TIME ZONE 'Asia/Kolkata'         AS adm_ts
     FROM course_status_journeys csj
-    JOIN students s ON s.student_id = csj.student_id
+    JOIN students s   ON s.student_id  = csj.student_id
+    JOIN university_courses uc ON uc.course_id = csj.course_id
     LEFT JOIN counsellors c ON c.counsellor_id = s.assigned_counsellor_id
     WHERE csj.course_status = 'Admission'
       AND INITCAP(TRIM(csj.fee_type)) NOT IN ('Partial Paid', 'Partially Paid', 'Partial Done')
-      AND (csj.created_at AT TIME ZONE 'Asia/Kolkata')::date >= '{MTD_START_}'::date
-      AND (csj.created_at AT TIME ZONE 'Asia/Kolkata')::date <= '{MTD_END_}'::date
-    GROUP BY c.counsellor_name;
+      AND (csj.created_at AT TIME ZONE 'Asia/Kolkata')::date >= '{_raw_start}'::date
+    ORDER BY csj.student_id, csj.course_id, csj.created_at ASC
     """
 
-    # ── Counsellor FTD admissions ──
-    couns_ftd_adm_query = f"""
-    SELECT c.counsellor_name, COUNT(DISTINCT csj.student_id) AS ftd_adm
-    FROM course_status_journeys csj
-    JOIN students s ON s.student_id = csj.student_id
-    LEFT JOIN counsellors c ON c.counsellor_id = s.assigned_counsellor_id
-    WHERE csj.course_status = 'Admission'
-      AND INITCAP(TRIM(csj.fee_type)) NOT IN ('Partial Paid', 'Partially Paid', 'Partial Done')
-      AND (csj.created_at AT TIME ZONE 'Asia/Kolkata')::date = '{FTD_DATE_}'::date
-    GROUP BY c.counsellor_name;
-    """
-
-    # ── College performance: YTD + MTD + FTD forms and admissions, all from DB ──
+    # ── College forms only — admission counts come from df_adm slices ───────────
     college_query = f"""
     SELECT
         uc.university_name AS college_name,
@@ -311,30 +270,14 @@ async def online_get_data():
              AND csj.created_at < CURRENT_DATE + INTERVAL '1 day' - INTERVAL '5 hours 30 minutes'
             THEN csj.student_id || '_' || csj.course_id END) AS ytd_forms,
         COUNT(DISTINCT CASE
-            WHEN csj.course_status IN ('Admission', 'Enrolled')
-             AND INITCAP(TRIM(csj.fee_type)) NOT IN ('Partial Paid', 'Partially Paid', 'Partial Done')
-             AND csj.created_at < CURRENT_DATE + INTERVAL '1 day' - INTERVAL '5 hours 30 minutes'
-            THEN csj.student_id END) AS ytd_adm,
-        COUNT(DISTINCT CASE
             WHEN csj.course_status = 'Application'
              AND (csj.created_at AT TIME ZONE 'Asia/Kolkata')::date >= '{MTD_START_}'::date
              AND (csj.created_at AT TIME ZONE 'Asia/Kolkata')::date <= '{MTD_END_}'::date
             THEN csj.student_id || '_' || csj.course_id END) AS mtd_forms,
         COUNT(DISTINCT CASE
-            WHEN csj.course_status IN ('Admission', 'Enrolled')
-             AND INITCAP(TRIM(csj.fee_type)) NOT IN ('Partial Paid', 'Partially Paid', 'Partial Done')
-             AND (csj.created_at AT TIME ZONE 'Asia/Kolkata')::date >= '{MTD_START_}'::date
-             AND (csj.created_at AT TIME ZONE 'Asia/Kolkata')::date <= '{MTD_END_}'::date
-            THEN csj.student_id END) AS mtd_adm,
-        COUNT(DISTINCT CASE
             WHEN csj.course_status = 'Application'
              AND (csj.created_at AT TIME ZONE 'Asia/Kolkata')::date = '{FTD_DATE_}'::date
-            THEN csj.student_id || '_' || csj.course_id END) AS ftd_forms,
-        COUNT(DISTINCT CASE
-            WHEN csj.course_status IN ('Admission', 'Enrolled')
-             AND INITCAP(TRIM(csj.fee_type)) NOT IN ('Partial Paid', 'Partially Paid', 'Partial Done')
-             AND (csj.created_at AT TIME ZONE 'Asia/Kolkata')::date = '{FTD_DATE_}'::date
-            THEN csj.student_id END) AS ftd_adm
+            THEN csj.student_id || '_' || csj.course_id END) AS ftd_forms
     FROM course_status_journeys csj
     JOIN university_courses uc ON uc.course_id = csj.course_id
     WHERE csj.created_at < CURRENT_DATE + INTERVAL '1 day' - INTERVAL '5 hours 30 minutes'
@@ -346,160 +289,40 @@ async def online_get_data():
 
     last_activity_query = """
     WITH last_adm AS (
-      SELECT DISTINCT ON (attr_counsellor_id)
-        attr_counsellor_id AS counsellor_id,
-        MIN(created_at) AT TIME ZONE 'Asia/Kolkata' AS last_admission_date
-      FROM (
-        SELECT csj.created_at,
-          CASE WHEN mc.role = 'to' THEN s.assigned_counsellor_id
-               ELSE csj.counsellor_id
-          END AS attr_counsellor_id,
-          csj.student_id, csj.course_id
+        SELECT
+            s.assigned_counsellor_id AS counsellor_id,
+            MAX(csj.created_at AT TIME ZONE 'Asia/Kolkata')::DATE AS last_admission
         FROM course_status_journeys csj
         JOIN students s ON s.student_id = csj.student_id
-        JOIN counsellors mc ON mc.counsellor_id = csj.counsellor_id
         WHERE csj.course_status = 'Admission'
-          AND INITCAP(TRIM(csj.fee_type)) NOT IN ('Partial Paid','Partially Paid','Partial Done')
-      ) x
-      GROUP BY attr_counsellor_id, student_id, course_id
-      ORDER BY attr_counsellor_id, MIN(created_at) DESC
-    ),
-    last_adm_final AS (
-      SELECT counsellor_id, MAX(last_admission_date) AS last_admission
-      FROM last_adm GROUP BY counsellor_id
+          AND INITCAP(TRIM(csj.fee_type)) NOT IN ('Partial Paid', 'Partially Paid', 'Partial Done')
+        GROUP BY s.assigned_counsellor_id
     ),
     last_app AS (
-      SELECT DISTINCT ON (attr_counsellor_id)
-        attr_counsellor_id AS counsellor_id,
-        MIN(created_at) AT TIME ZONE 'Asia/Kolkata' AS last_app_date
-      FROM (
-        SELECT csj.created_at,
-          CASE WHEN mc.role = 'to' THEN s.assigned_counsellor_id
-               ELSE csj.counsellor_id
-          END AS attr_counsellor_id,
-          csj.student_id, csj.course_id
+        SELECT
+            s.assigned_counsellor_id AS counsellor_id,
+            MAX(csj.created_at AT TIME ZONE 'Asia/Kolkata')::DATE AS last_application
         FROM course_status_journeys csj
         JOIN students s ON s.student_id = csj.student_id
-        JOIN counsellors mc ON mc.counsellor_id = csj.counsellor_id
         WHERE csj.course_status = 'Application'
-      ) x
-      GROUP BY attr_counsellor_id, student_id, course_id
-      ORDER BY attr_counsellor_id, MIN(created_at) DESC
-    ),
-    last_app_final AS (
-      SELECT counsellor_id, MAX(last_app_date) AS last_application
-      FROM last_app GROUP BY counsellor_id
+        GROUP BY s.assigned_counsellor_id
     )
     SELECT
-      c.counsellor_name,
-      m.counsellor_name AS supervisor,
-      la.last_admission::DATE AS last_admission,
-      lap.last_application::DATE AS last_application
+        c.counsellor_name,
+        m.counsellor_name AS supervisor,
+        la.last_admission,
+        lap.last_application
     FROM counsellors c
     JOIN counsellors m ON c.assigned_to = m.counsellor_id
-    LEFT JOIN last_adm_final la ON c.counsellor_id = la.counsellor_id
-    LEFT JOIN last_app_final lap ON c.counsellor_id = lap.counsellor_id
+    LEFT JOIN last_adm  la  ON la.counsellor_id  = c.counsellor_id
+    LEFT JOIN last_app  lap ON lap.counsellor_id = c.counsellor_id
     WHERE c.role = 'l2'
     ORDER BY m.counsellor_name, c.counsellor_name;
     """
 
-    # ── Last month counsellor admissions (for MoM supervisor comparison) ──
-    couns_last_mtd_adm_query = f"""
-    SELECT c.counsellor_name, COUNT(DISTINCT csj.student_id) AS last_mtd_adm
-    FROM course_status_journeys csj
-    JOIN students s ON s.student_id = csj.student_id
-    LEFT JOIN counsellors c ON c.counsellor_id = s.assigned_counsellor_id
-    WHERE csj.course_status = 'Admission'
-      AND INITCAP(TRIM(csj.fee_type)) NOT IN ('Partial Paid', 'Partially Paid', 'Partial Done')
-      AND (csj.created_at AT TIME ZONE 'Asia/Kolkata')::date >= '{LAST_MTD_START}'::date
-      AND (csj.created_at AT TIME ZONE 'Asia/Kolkata')::date <= '{LAST_MTD_END}'::date
-    GROUP BY c.counsellor_name;
-    """
-
-    # ── Last month college admissions (for MoM university comparison) ──
-    college_last_mtd_query = f"""
-    SELECT
-        uc.university_name AS college_name,
-        COUNT(DISTINCT CASE
-            WHEN csj.course_status IN ('Admission', 'Enrolled')
-             AND INITCAP(TRIM(csj.fee_type)) NOT IN ('Partial Paid', 'Partially Paid', 'Partial Done')
-             AND (csj.created_at AT TIME ZONE 'Asia/Kolkata')::date >= '{LAST_MTD_START}'::date
-             AND (csj.created_at AT TIME ZONE 'Asia/Kolkata')::date <= '{LAST_MTD_END}'::date
-            THEN csj.student_id END) AS last_mtd_adm
-    FROM course_status_journeys csj
-    JOIN university_courses uc ON uc.course_id = csj.course_id
-    WHERE (csj.created_at AT TIME ZONE 'Asia/Kolkata')::date >= '{LAST_MTD_START}'::date
-      AND (csj.created_at AT TIME ZONE 'Asia/Kolkata')::date <= '{LAST_MTD_END}'::date
-    GROUP BY uc.university_name;
-    """
-
-    # ── This month college fee collected (for MoM university fee comparison) ──
-    college_mtd_fee_query = f"""
-    WITH deduped AS (
-        SELECT DISTINCT ON (csj.student_id, uc.university_name)
-            uc.university_name AS college_name,
-            csj.deposit_amount
-        FROM course_status_journeys csj
-        JOIN university_courses uc ON uc.course_id = csj.course_id
-        WHERE csj.course_status = 'Admission'
-          AND INITCAP(TRIM(csj.fee_type)) NOT IN ('Partial Paid', 'Partially Paid', 'Partial Done')
-          AND (csj.created_at AT TIME ZONE 'Asia/Kolkata')::date >= '{MTD_START_}'::date
-          AND (csj.created_at AT TIME ZONE 'Asia/Kolkata')::date <= '{MTD_END_}'::date
-        ORDER BY csj.student_id, uc.university_name, csj.deposit_amount DESC
-    )
-    SELECT college_name, COALESCE(SUM(deposit_amount), 0) AS mtd_fee
-    FROM deduped GROUP BY college_name;
-    """
-
-    # ── Last month college fee collected (for MoM university fee comparison) ──
-    college_last_mtd_fee_query = f"""
-    WITH deduped AS (
-        SELECT DISTINCT ON (csj.student_id, uc.university_name)
-            uc.university_name AS college_name,
-            csj.deposit_amount
-        FROM course_status_journeys csj
-        JOIN university_courses uc ON uc.course_id = csj.course_id
-        WHERE csj.course_status = 'Admission'
-          AND INITCAP(TRIM(csj.fee_type)) NOT IN ('Partial Paid', 'Partially Paid', 'Partial Done')
-          AND (csj.created_at AT TIME ZONE 'Asia/Kolkata')::date >= '{LAST_MTD_START}'::date
-          AND (csj.created_at AT TIME ZONE 'Asia/Kolkata')::date <= '{LAST_MTD_END}'::date
-        ORDER BY csj.student_id, uc.university_name, csj.deposit_amount DESC
-    )
-    SELECT college_name, COALESCE(SUM(deposit_amount), 0) AS last_mtd_fee
-    FROM deduped GROUP BY college_name;
-    """
-
-    # ── Last month counsellor fee collected (for MoM revenue comparison) ──
-    couns_last_mtd_fee_query = f"""
-    WITH deduped AS (
-        SELECT DISTINCT ON (csj.student_id)
-            s.assigned_counsellor_id,
-            csj.deposit_amount
-        FROM course_status_journeys csj
-        JOIN students s ON s.student_id = csj.student_id
-        WHERE csj.course_status = 'Admission'
-          AND INITCAP(TRIM(csj.fee_type)) NOT IN ('Partial Paid', 'Partially Paid', 'Partial Done')
-          AND (csj.created_at AT TIME ZONE 'Asia/Kolkata')::date >= '{LAST_MTD_START}'::date
-          AND (csj.created_at AT TIME ZONE 'Asia/Kolkata')::date <= '{LAST_MTD_END}'::date
-        ORDER BY csj.student_id, csj.deposit_amount DESC
-    )
-    SELECT c.counsellor_name, COALESCE(SUM(d.deposit_amount), 0) AS last_mtd_fee
-    FROM deduped d
-    LEFT JOIN counsellors c ON c.counsellor_id = d.assigned_counsellor_id
-    GROUP BY c.counsellor_name;
-    """
-
-    rows_mtd_fee              = await conn.fetch(couns_mtd_fee_query)
-    rows_ftd_fee              = await conn.fetch(couns_ftd_fee_query)
-    rows_mtd_adm              = await conn.fetch(couns_mtd_adm_query)
-    rows_ftd_adm              = await conn.fetch(couns_ftd_adm_query)
-    rows_college              = await conn.fetch(college_query)
-    rows_last_activity        = await conn.fetch(last_activity_query)
-    rows_last_mtd_adm         = await conn.fetch(couns_last_mtd_adm_query)
-    rows_college_last_mtd     = await conn.fetch(college_last_mtd_query)
-    rows_last_mtd_fee         = await conn.fetch(couns_last_mtd_fee_query)
-    rows_college_mtd_fee      = await conn.fetch(college_mtd_fee_query)
-    rows_college_last_mtd_fee = await conn.fetch(college_last_mtd_fee_query)
+    rows_adm_raw       = await conn.fetch(adm_raw_query)
+    rows_college       = await conn.fetch(college_query)
+    rows_last_activity = await conn.fetch(last_activity_query)
     await conn.close()
 
     def _norm_name(df, col):
@@ -513,27 +336,120 @@ async def online_get_data():
             return pd.DataFrame([dict(r) for r in rows])
         return pd.DataFrame(columns=columns)
 
-    df_couns_fee = _norm_name(_safe_df(rows_mtd_fee, ['counsellor_name', 'mtd_fee']), 'counsellor_name') \
-        .merge(_norm_name(_safe_df(rows_ftd_fee, ['counsellor_name', 'ftd_fee']), 'counsellor_name'),
+    # ── build_adm_df: one row per (student, course) ──────────────────────────────
+    # adm_date = first time that (student, course) got Admission status
+    # deposit_amount = highest fee logged on or after that first date
+    # counsellor_name = from the FIRST admission row (swap-safe attribution)
+    def build_adm_df(rows_raw):
+        if not rows_raw:
+            return pd.DataFrame(columns=[
+                'student_id', 'course_id', 'counsellor_name', 'university_name',
+                'deposit_amount', 'adm_date'
+            ])
+        df = pd.DataFrame([dict(r) for r in rows_raw])
+        df['counsellor_name'] = df['counsellor_name'].fillna('').apply(_norm)
+        df['university_name'] = df['university_name'].fillna('')
+        df['deposit_amount']  = pd.to_numeric(df['deposit_amount'], errors='coerce').fillna(0)
+        df['adm_date']        = pd.to_datetime(df['adm_date']).dt.date
+        df['adm_ts']          = pd.to_datetime(df['adm_ts'], utc=True)
+        df = df.sort_values(['student_id', 'course_id', 'adm_ts'], ascending=True)
+
+        # Step 1 — first admission date per (student, course)
+        first_adm = (df.groupby(['student_id', 'course_id'])['adm_date']
+                       .min().reset_index()
+                       .rename(columns={'adm_date': 'first_adm_date'}))
+
+        # Step 2 — counsellor + university from the FIRST admission row
+        first_row = (df.drop_duplicates(subset=['student_id', 'course_id'], keep='first')
+                       [['student_id', 'course_id', 'counsellor_name', 'university_name']])
+
+        # Step 3 — highest deposit on or after first admission date
+        df_with_first = df.merge(first_adm, on=['student_id', 'course_id'])
+        best_fee = (df_with_first[df_with_first['adm_date'] >= df_with_first['first_adm_date']]
+                      .sort_values('deposit_amount', ascending=False)
+                      .drop_duplicates(subset=['student_id', 'course_id'])
+                    [['student_id', 'course_id', 'deposit_amount']])
+
+        # Step 4 — assemble: one row per (student, course)
+        result = (first_adm
+                    .merge(first_row, on=['student_id', 'course_id'], how='left')
+                    .merge(best_fee,  on=['student_id', 'course_id'], how='left')
+                    .rename(columns={'first_adm_date': 'adm_date'}))
+
+        result['deposit_amount']  = result['deposit_amount'].fillna(0)
+        result['counsellor_name'] = result['counsellor_name'].fillna('')
+        result['university_name'] = result['university_name'].fillna('')
+        return result
+
+    def slice_adm_count(df, group_col, start, end=None):
+        """
+        Count rows per group in window — df already has one row per (student, course)
+        from build_adm_df so .size() is sufficient and fast.
+        """
+        if df.empty:
+            return {}
+        start_d = pd.Timestamp(start).date()
+        end_d   = pd.Timestamp(end or start).date()
+        mask = (df['adm_date'] >= start_d) & (df['adm_date'] <= end_d)
+        return df[mask].groupby(group_col).size().to_dict()
+
+    def slice_fee_sum(df, group_col, start, end=None):
+        """Sum deposit_amount for first-admissions whose adm_date falls in window."""
+        if df.empty:
+            return {}
+        start_d = pd.Timestamp(start).date()
+        end_d   = pd.Timestamp(end or start).date()
+        mask = (df['adm_date'] >= start_d) & (df['adm_date'] <= end_d)
+        return df[mask].groupby(group_col)['deposit_amount'].sum().to_dict()
+
+    df_adm = build_adm_df(rows_adm_raw)
+
+    # ── Counsellor-level DataFrames ───────────────────────────────────────────────
+    def _couns_df(sliced, col):
+        if not sliced:
+            return pd.DataFrame(columns=['counsellor_name', col])
+        df_out = pd.DataFrame(list(sliced.items()), columns=['counsellor_name', col])
+        df_out = df_out[df_out['counsellor_name'].str.strip() != '']
+        return df_out
+
+    df_couns_fee = _couns_df(slice_fee_sum(df_adm, 'counsellor_name', MTD_START_, MTD_END_), 'mtd_fee') \
+        .merge(_couns_df(slice_fee_sum(df_adm, 'counsellor_name', FTD_DATE_, FTD_DATE_), 'ftd_fee'),
                on='counsellor_name', how='outer').fillna(0)
 
-    df_couns_adm = _norm_name(_safe_df(rows_mtd_adm, ['counsellor_name', 'mtd_adm']), 'counsellor_name') \
-        .merge(_norm_name(_safe_df(rows_ftd_adm, ['counsellor_name', 'ftd_adm']), 'counsellor_name'),
+    df_couns_adm = _couns_df(slice_adm_count(df_adm, 'counsellor_name', MTD_START_, MTD_END_), 'mtd_adm') \
+        .merge(_couns_df(slice_adm_count(df_adm, 'counsellor_name', FTD_DATE_, FTD_DATE_), 'ftd_adm'),
                on='counsellor_name', how='outer').fillna(0)
 
-    df_college = pd.DataFrame([dict(r) for r in rows_college])
+    df_last_mtd_adm = _couns_df(slice_adm_count(df_adm, 'counsellor_name', LAST_MTD_START, LAST_MTD_END), 'last_mtd_adm')
+    df_last_mtd_fee = _couns_df(slice_fee_sum(df_adm, 'counsellor_name', LAST_MTD_START, LAST_MTD_END), 'last_mtd_fee')
+
+    # ── College-level DataFrames ──────────────────────────────────────────────────
+    def _college_df(sliced, col):
+        if not sliced:
+            return pd.DataFrame(columns=['college_name', col])
+        df_out = pd.DataFrame(list(sliced.items()), columns=['college_name', col])
+        df_out = df_out[df_out['college_name'].str.strip() != '']
+        return df_out
+
+    df_college_mtd_fee      = _college_df(slice_fee_sum(df_adm, 'university_name', MTD_START_, MTD_END_), 'mtd_fee')
+    df_college_last_mtd_fee = _college_df(slice_fee_sum(df_adm, 'university_name', LAST_MTD_START, LAST_MTD_END), 'last_mtd_fee')
+    df_college_last_mtd     = _college_df(slice_adm_count(df_adm, 'university_name', LAST_MTD_START, LAST_MTD_END), 'last_mtd_adm')
+
+    # ── College DataFrame: forms from SQL + adm counts from df_adm slices ────────
+    df_college = _safe_df(rows_college, ['college_name', 'ytd_forms', 'mtd_forms', 'ftd_forms'])
+    if not df_college.empty:
+        col_adm_ytd = slice_adm_count(df_adm, 'university_name', YTD_START, FTD_DATE_)
+        col_adm_mtd = slice_adm_count(df_adm, 'university_name', MTD_START_, MTD_END_)
+        col_adm_ftd = slice_adm_count(df_adm, 'university_name', FTD_DATE_, FTD_DATE_)
+        df_college['ytd_adm'] = df_college['college_name'].map(col_adm_ytd).fillna(0).astype(int)
+        df_college['mtd_adm'] = df_college['college_name'].map(col_adm_mtd).fillna(0).astype(int)
+        df_college['ftd_adm'] = df_college['college_name'].map(col_adm_ftd).fillna(0).astype(int)
 
     df_last_activity_raw = _norm_name(
         _safe_df(rows_last_activity, ['counsellor_name', 'supervisor', 'last_admission', 'last_application']),
         'counsellor_name'
     )
     df_last_activity_raw = _norm_name(df_last_activity_raw, 'supervisor')
-
-    df_last_mtd_adm         = _norm_name(_safe_df(rows_last_mtd_adm, ['counsellor_name', 'last_mtd_adm']), 'counsellor_name')
-    df_college_last_mtd     = _safe_df(rows_college_last_mtd, ['college_name', 'last_mtd_adm'])
-    df_last_mtd_fee         = _norm_name(_safe_df(rows_last_mtd_fee, ['counsellor_name', 'last_mtd_fee']), 'counsellor_name')
-    df_college_mtd_fee      = _safe_df(rows_college_mtd_fee, ['college_name', 'mtd_fee'])
-    df_college_last_mtd_fee = _safe_df(rows_college_last_mtd_fee, ['college_name', 'last_mtd_fee'])
 
     return df_couns, df_couns_fee, df_couns_adm, df_college, df_last_activity_raw, df_couns_all, df_last_mtd_adm, df_college_last_mtd, df_last_mtd_fee, df_college_mtd_fee, df_college_last_mtd_fee
 
