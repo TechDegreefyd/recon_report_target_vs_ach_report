@@ -198,7 +198,7 @@ for _i, _utc_h in enumerate(_NEW_HOURS_UTC):
 # Custom slots: 7 PM, 7:30 PM (already in loop above), 8 PM IST
 REGULAR_OUTBOUND_SCHEDULE += [
     (13, 30, "generate_outbound_report.py", "Regular Outbound Cumulative — 19:00 IST", _regular_ob_cumulative),
-    (14, 30, "generate_outbound_report.py", "Regular Outbound Cumulative — 20:00 IST", _regular_ob_cumulative),
+    (14, 31, "generate_outbound_report.py", "Regular Outbound Cumulative — 20:00 IST", _regular_ob_cumulative),
 ]
 GREETER_SCHEDULE += [
     (13, 32, "generate_greeter_report.py", "Greeter Cumulative — 19:00 IST", _greeter_cumulative),
