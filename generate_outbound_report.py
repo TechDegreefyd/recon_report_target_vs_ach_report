@@ -39,6 +39,7 @@ parser.add_argument('--to-time',    default=None,  dest='to_time',   help='HH:MM
 parser.add_argument('--group',        default=None,  help='Override WhatsApp group ID')
 parser.add_argument('--only-regular', action='store_true', dest='only_regular', help='Send only regular (Amity/Punjab) report, skip core')
 parser.add_argument('--only-core',    action='store_true', dest='only_core',    help='Send only core (online LOB) report, skip regular')
+parser.add_argument('--eod',          action='store_true', dest='eod',          help='Label report as End of Day (full day) instead of Cumulative')
 args, _ = parser.parse_known_args()
 
 LOCAL_MODE = args.local
@@ -711,7 +712,7 @@ async def main():
     CORE_TEAMS = [t for t in TEAM_ORDER if t not in REGULAR_TEAMS]
 
     slug         = f'_{(from_time or "").replace(":", "")}-{(to_time or "").replace(":", "")}' if from_time or to_time else ''
-    report_type  = 'Cumulative' if (not from_time or from_time == '09:30') else 'Last 2 Hours'
+    report_type  = 'End of Day' if args.eod else ('Cumulative' if (not from_time or from_time == '09:30') else 'Last 2 Hours')
     target_group = args.group or os.getenv('WHATSAPP_GROUP_CALL_REPORTS', WHATSAPP_GROUP)
 
     async def build_and_send(label_suffix: str, team_order: list, group_id: str):

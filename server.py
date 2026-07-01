@@ -95,6 +95,12 @@ def _call_last_hour_ob():
     return ['--from-time', from_dt.strftime('%H:%M'), '--to-time', to_dt.strftime('%H:%M'),
             '--group', _CALL_GROUP, '--only-core']
 
+def _call_ob_eod_today():
+    """Online outbound core only: today's full day data (sent at 11:30 PM IST same day = UTC 18:00)."""
+    now_ist = datetime.now(IST)
+    today = now_ist.strftime('%d/%m/%Y')
+    return ['--date', today, '--group', _CALL_GROUP, '--only-core', '--eod']
+
 def _call_cumulative_ib():
     """Inbound: shift start (9:30 AM) → now."""
     now_ist = datetime.now(IST)
@@ -128,7 +134,7 @@ def _regular_ob_eod_today():
     """Regular outbound: today's full day data (sent at 11:30 PM IST same day = UTC 18:00)."""
     now_ist = datetime.now(IST)
     today = now_ist.strftime('%d/%m/%Y')
-    return ['--date', today, '--only-regular']
+    return ['--date', today, '--only-regular', '--eod']
 
 def _regular_ob_cumulative():
     """Regular outbound: shift start (9:30 AM) → now minus 15m API sync buffer."""
@@ -153,7 +159,6 @@ SCHEDULE = [
     (4,  35, "generate_all_recon_reports.py",  "Recon — Today (midnight → 10 AM)",           _today_cutoff_10am),
     (4,  30, "generate_all_lms_reports.py",    "LMS Reports — Morning (yesterday IST)",      _lms_yesterday),
     (5,  35, "tat_reports.py",                "TAT Reports — Online LOB (11:05 AM IST)",    None),
-    (4,  30, "bhugoal_generate_report.py",     "Bhugoal Daily Report — 10 AM IST",           None),
     (6,  30, "generate_all_recon_reports.py",  "Recon — Today (midnight → 12 PM)",           _today_cutoff_12pm),
     (10, 30, "generate_all_recon_reports.py",  "Recon — Today (midnight → 4 PM cumulative)", _today_midnight_to_4pm),
     (13, 30, "generate_all_recon_reports.py",  "Recon — Today (midnight → 7 PM cumulative)", _today_midnight_to_7pm),
@@ -173,6 +178,12 @@ for _utc_h in _CALL_HOURS_UTC:
         (_utc_h, 32, "generate_outbound_report.py",
          f"Outbound Last 2hrs  — {_ist_h:02d}:{_ist_m:02d} IST", _call_last_hour_ob),
     ]
+
+# UTC 18:00 = IST 23:30 → EOD full day report (Online outbound, core only)
+CALL_SCHEDULE.append(
+    (18, 1, "generate_outbound_report.py",
+     "Online Outbound EOD Today — 23:30 IST", _call_ob_eod_today)
+)
 
 # ─── Regular outbound + Greeter schedule ─────────────────────────────────────
 # Regular outbound: 9:30 AM IST → yesterday full day, then every 2h cumulative
@@ -368,7 +379,6 @@ def main():
             "WHATSAPP_GROUP_REGULAR_LMS":   _SMOKE_GROUP,
             "WHATSAPP_GROUP_DAILY_UPDATES": _SMOKE_GROUP,
             "WHATSAPP_GROUP":               _SMOKE_GROUP,
-            "WHATSAPP_GROUP_BHUGOAL":       _SMOKE_GROUP,
         }
 
         def _run_smoke_test():
@@ -381,7 +391,6 @@ def main():
             print("=" * 70, flush=True)
             run_script("generate_all_lms_reports.py",    "SMOKE TEST — LMS Reports (admin group only)",          None,            extra_env=_smoke_env)
             run_script("generate_all_recon_reports.py",  "SMOKE TEST — Recon Report (yesterday full day)",       _yesterday_full, extra_env=_smoke_env)
-            run_script("bhugoal_generate_report.py",     "SMOKE TEST — Bhugoal Daily Report (admin group only)", None,            extra_env=_smoke_env)
             run_script("generate_outbound_report.py",    "SMOKE TEST — Outbound Cumulative (admin group only)",
                        lambda: ['--from-time', _smoke_from, '--to-time', _smoke_to, '--group', _SMOKE_GROUP], extra_env=_smoke_env)
             run_script("generate_greeter_report.py",     "SMOKE TEST — Greeter Cumulative (admin group only)",
