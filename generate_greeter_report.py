@@ -95,6 +95,19 @@ def _extract_csrf(html: str) -> str:
     return ''
 
 
+def _request_with_retry(session, method, url, *, retries=3, backoff=5, **kwargs):
+    """Retry a request on connection/timeout errors (greeter.co.in occasionally stalls)."""
+    for attempt in range(1, retries + 1):
+        try:
+            return session.request(method, url, **kwargs)
+        except (requests.exceptions.ConnectTimeout, requests.exceptions.ConnectionError) as e:
+            if attempt == retries:
+                raise
+            log(f'  Request to {url} failed ({e.__class__.__name__}), retrying in {backoff}s '
+                f'(attempt {attempt}/{retries}) …')
+            time.sleep(backoff)
+
+
 def fetch_greeter_xlsx_api(target_date_str: str) -> str:
     """
     Login to greeter.co.in via requests (no browser) and download the XLSX export.
@@ -111,7 +124,7 @@ def fetch_greeter_xlsx_api(target_date_str: str) -> str:
 
     # Step 1: GET login page → CSRF token
     log('Greeter API: fetching login page …')
-    r = session.get(LOGIN_URL, timeout=30)
+    r = _request_with_retry(session, 'GET', LOGIN_URL, timeout=60)
     r.raise_for_status()
     csrf = _extract_csrf(r.text)
     log(f'  CSRF token: {csrf[:20]}…' if csrf else '  No CSRF token found')
@@ -122,7 +135,7 @@ def fetch_greeter_xlsx_api(target_date_str: str) -> str:
     if csrf:
         login_payload['csrfmiddlewaretoken'] = csrf
         session.headers.update({'Referer': LOGIN_URL})
-    r = session.post(LOGIN_URL, data=login_payload, timeout=30, allow_redirects=True)
+    r = _request_with_retry(session, 'POST', LOGIN_URL, data=login_payload, timeout=60, allow_redirects=True)
     r.raise_for_status()
     if 'login' in r.url.lower():
         raise RuntimeError('Greeter login failed — still on login page. Check credentials.')
@@ -130,7 +143,7 @@ def fetch_greeter_xlsx_api(target_date_str: str) -> str:
 
     # Step 3: GET call log page → fresh CSRF for export
     log('Greeter API: fetching call log page for export CSRF …')
-    r2 = session.get(CALL_LOG_URL, timeout=30)
+    r2 = _request_with_retry(session, 'GET', CALL_LOG_URL, timeout=60)
     r2.raise_for_status()
     csrf2 = _extract_csrf(r2.text)
     log(f'  Export CSRF: {csrf2[:20]}…' if csrf2 else '  No export CSRF found')
@@ -142,7 +155,7 @@ def fetch_greeter_xlsx_api(target_date_str: str) -> str:
         export_payload['csrfmiddlewaretoken'] = csrf2
         session.headers.update({'Referer': CALL_LOG_URL})
 
-    r3 = session.post(EXPORT_URL, data=export_payload, timeout=60, stream=True)
+    r3 = _request_with_retry(session, 'POST', EXPORT_URL, data=export_payload, timeout=60, stream=True)
     r3.raise_for_status()
     ct = r3.headers.get('Content-Type', '')
     if not any(k in ct for k in ('spreadsheet', 'octet-stream', 'excel', 'zip')):
