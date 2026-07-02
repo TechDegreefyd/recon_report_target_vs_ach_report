@@ -81,10 +81,10 @@ _CALL_GROUP    = os.getenv('WHATSAPP_GROUP_ONLINE_LOB', '120363424062745706@g.us
 _GREETER_GROUP = os.getenv('WHATSAPP_GROUP_GREETER',    '120363426619711887@g.us')
 
 def _call_cumulative_ob():
-    """Outbound core only: shift start (9:30 AM) → now minus 15m API sync buffer."""
+    """Outbound core only: shift start (9:15 AM) → now minus 15m API sync buffer."""
     now_ist  = datetime.now(IST)
     to_dt    = now_ist - timedelta(minutes=15)
-    return ['--from-time', '09:30', '--to-time', to_dt.strftime('%H:%M'),
+    return ['--from-time', '09:15', '--to-time', to_dt.strftime('%H:%M'),
             '--group', _CALL_GROUP, '--only-core']
 
 def _call_last_hour_ob():
@@ -167,17 +167,24 @@ SCHEDULE = [
 
 # ─── Call Report schedule (10 AM – 9 PM IST, every 2 hours) ──────────────────
 # Inbound reports stopped. Outbound only: cumulative + last-2hr window.
-# UTC hour 4 = IST 9:30 AM → first slot 10 AM IST = UTC 04:30
+# UTC hour 4 = IST 9:15 AM (first slot) → then every 2h at :30 IST
 CALL_SCHEDULE = []
-for _utc_h in _CALL_HOURS_UTC:
+for _i, _utc_h in enumerate(_CALL_HOURS_UTC):
     _ist_h = (_utc_h + 5) % 24
-    _ist_m = 30
-    CALL_SCHEDULE += [
-        (_utc_h, 30, "generate_outbound_report.py",
-         f"Outbound Cumulative — {_ist_h:02d}:{_ist_m:02d} IST", _call_cumulative_ob),
-        (_utc_h, 32, "generate_outbound_report.py",
-         f"Outbound Last 2hrs  — {_ist_h:02d}:{_ist_m:02d} IST", _call_last_hour_ob),
-    ]
+    if _i == 0:  # first slot shifted to 9:15 IST
+        CALL_SCHEDULE += [
+            (_utc_h, 15, "generate_outbound_report.py",
+             f"Outbound Cumulative — {_ist_h:02d}:15 IST", _call_cumulative_ob),
+            (_utc_h, 17, "generate_outbound_report.py",
+             f"Outbound Last 2hrs  — {_ist_h:02d}:15 IST", _call_last_hour_ob),
+        ]
+    else:
+        CALL_SCHEDULE += [
+            (_utc_h, 30, "generate_outbound_report.py",
+             f"Outbound Cumulative — {_ist_h:02d}:30 IST", _call_cumulative_ob),
+            (_utc_h, 32, "generate_outbound_report.py",
+             f"Outbound Last 2hrs  — {_ist_h:02d}:30 IST", _call_last_hour_ob),
+        ]
 
 # UTC 18:00 = IST 23:30 → EOD full day report (Online outbound, core only)
 CALL_SCHEDULE.append(
