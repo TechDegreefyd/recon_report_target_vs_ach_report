@@ -129,15 +129,15 @@ async def fetch_all_sources(date_str, cutoff_hour=None, start_hour=None):
                     COUNT(DISTINCT CASE WHEN sent_type='bot' AND api_sent_status='Submitted via Bot (Direct Portal)'                THEN student_id END) AS bot_submitted,
                     COUNT(DISTINCT CASE WHEN sent_type='bot' AND api_sent_status='Failed due to Technical Issues'                    THEN student_id END) AS bot_fail,
                     COUNT(DISTINCT CASE WHEN sent_type='bot' AND api_sent_status IN ('Do not Proceed','Do not Proceed (Still) ')      THEN student_id END) AS bot_dnp,
-                    COUNT(DISTINCT CASE WHEN sent_type='auto' AND api_sent_status='Proceed'                                              THEN student_id END) AS auto_proceed,
-                    COUNT(DISTINCT CASE WHEN sent_type='auto' AND api_sent_status='Failed due to Technical Issues'                       THEN student_id END) AS auto_fail,
-                    COUNT(DISTINCT CASE WHEN sent_type='auto' AND api_sent_status IN ('Do not Proceed','Do not Proceed (Still) ')         THEN student_id END) AS auto_dnp,
+                    COUNT(DISTINCT CASE WHEN sent_type IN ('auto','cron') AND api_sent_status='Proceed'                                              THEN student_id END) AS auto_proceed,
+                    COUNT(DISTINCT CASE WHEN sent_type IN ('auto','cron') AND api_sent_status='Failed due to Technical Issues'                       THEN student_id END) AS auto_fail,
+                    COUNT(DISTINCT CASE WHEN sent_type IN ('auto','cron') AND api_sent_status IN ('Do not Proceed','Do not Proceed (Still) ')         THEN student_id END) AS auto_dnp,
                     COUNT(DISTINCT CASE WHEN sent_type='manual' AND api_sent_status='Proceed'                                            THEN student_id END) AS manual_proceed,
                     COUNT(DISTINCT CASE WHEN sent_type='manual' AND api_sent_status='Failed due to Technical Issues'                     THEN student_id END) AS manual_fail,
                     COUNT(DISTINCT CASE WHEN sent_type='manual' AND api_sent_status IN ('Do not Proceed','Do not Proceed (Still) ')       THEN student_id END) AS manual_dnp,
-                    COUNT(DISTINCT CASE WHEN sent_type IN ('auto','manual') AND api_sent_status='Proceed'                                THEN student_id END) AS total_proceed,
-                    COUNT(DISTINCT CASE WHEN sent_type IN ('auto','manual') AND api_sent_status='Failed due to Technical Issues'         THEN student_id END) AS total_fail,
-                    COUNT(DISTINCT CASE WHEN sent_type IN ('auto','manual') AND api_sent_status IN ('Do not Proceed','Do not Proceed (Still) ') THEN student_id END) AS total_dnp
+                    COUNT(DISTINCT CASE WHEN sent_type IN ('auto','manual','cron') AND api_sent_status='Proceed'                                THEN student_id END) AS total_proceed,
+                    COUNT(DISTINCT CASE WHEN sent_type IN ('auto','manual','cron') AND api_sent_status='Failed due to Technical Issues'         THEN student_id END) AS total_fail,
+                    COUNT(DISTINCT CASE WHEN sent_type IN ('auto','manual','cron') AND api_sent_status IN ('Do not Proceed','Do not Proceed (Still) ') THEN student_id END) AS total_dnp
                 FROM student_college_api_sent_status
                 WHERE created_at >= $1::date - interval '5 hours 30 minutes' + interval '{lower_offset}'
                   AND created_at <  $1::date - interval '5 hours 30 minutes' + interval '{upper_offset}'
@@ -151,15 +151,15 @@ async def fetch_all_sources(date_str, cutoff_hour=None, start_hour=None):
                     COUNT(DISTINCT CASE WHEN sent_type='bot' AND api_sent_status='Submitted via Bot (Direct Portal)'                THEN student_id END) AS bot_submitted,
                     COUNT(DISTINCT CASE WHEN sent_type='bot' AND api_sent_status='Failed due to Technical Issues'                    THEN student_id END) AS bot_fail,
                     COUNT(DISTINCT CASE WHEN sent_type='bot' AND api_sent_status IN ('Do not Proceed','Do not Proceed (Still) ')      THEN student_id END) AS bot_dnp,
-                    COUNT(DISTINCT CASE WHEN sent_type='auto' AND api_sent_status='Proceed'                                              THEN student_id END) AS auto_proceed,
-                    COUNT(DISTINCT CASE WHEN sent_type='auto' AND api_sent_status='Failed due to Technical Issues'                       THEN student_id END) AS auto_fail,
-                    COUNT(DISTINCT CASE WHEN sent_type='auto' AND api_sent_status IN ('Do not Proceed','Do not Proceed (Still) ')         THEN student_id END) AS auto_dnp,
+                    COUNT(DISTINCT CASE WHEN sent_type IN ('auto','cron') AND api_sent_status='Proceed'                                              THEN student_id END) AS auto_proceed,
+                    COUNT(DISTINCT CASE WHEN sent_type IN ('auto','cron') AND api_sent_status='Failed due to Technical Issues'                       THEN student_id END) AS auto_fail,
+                    COUNT(DISTINCT CASE WHEN sent_type IN ('auto','cron') AND api_sent_status IN ('Do not Proceed','Do not Proceed (Still) ')         THEN student_id END) AS auto_dnp,
                     COUNT(DISTINCT CASE WHEN sent_type='manual' AND api_sent_status='Proceed'                                            THEN student_id END) AS manual_proceed,
                     COUNT(DISTINCT CASE WHEN sent_type='manual' AND api_sent_status='Failed due to Technical Issues'                     THEN student_id END) AS manual_fail,
                     COUNT(DISTINCT CASE WHEN sent_type='manual' AND api_sent_status IN ('Do not Proceed','Do not Proceed (Still) ')       THEN student_id END) AS manual_dnp,
-                    COUNT(DISTINCT CASE WHEN sent_type IN ('auto','manual') AND api_sent_status='Proceed'                                THEN student_id END) AS total_proceed,
-                    COUNT(DISTINCT CASE WHEN sent_type IN ('auto','manual') AND api_sent_status='Failed due to Technical Issues'         THEN student_id END) AS total_fail,
-                    COUNT(DISTINCT CASE WHEN sent_type IN ('auto','manual') AND api_sent_status IN ('Do not Proceed','Do not Proceed (Still) ') THEN student_id END) AS total_dnp
+                    COUNT(DISTINCT CASE WHEN sent_type IN ('auto','manual','cron') AND api_sent_status='Proceed'                                THEN student_id END) AS total_proceed,
+                    COUNT(DISTINCT CASE WHEN sent_type IN ('auto','manual','cron') AND api_sent_status='Failed due to Technical Issues'         THEN student_id END) AS total_fail,
+                    COUNT(DISTINCT CASE WHEN sent_type IN ('auto','manual','cron') AND api_sent_status IN ('Do not Proceed','Do not Proceed (Still) ') THEN student_id END) AS total_dnp
                 FROM student_college_api_sent_status
                 WHERE created_at >= $1::date - interval '5 hours 30 minutes'
                   AND created_at <  $1::date + interval '1 day' - interval '5 hours 30 minutes'
