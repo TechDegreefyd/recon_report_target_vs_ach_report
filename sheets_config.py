@@ -33,6 +33,7 @@ import os
 import json
 from datetime import datetime
 
+from filelock import FileLock
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from google.auth.transport.requests import Request
@@ -51,6 +52,7 @@ _CLIENT_SECRET = os.path.join(
     'client_secret_804950201435-1i6i2gtvopf98ncqdk3902lkni02g6ss.apps.googleusercontent.com.json'
 )
 _TOKEN_PATH = os.path.join(_SCRIPT_DIR, 'token.json')
+_TOKEN_LOCK_PATH = _TOKEN_PATH + '.lock'
 
 _service = None  # module-level cache — auth once per process
 
@@ -66,33 +68,37 @@ def get_service():
     token_env = os.environ.get('GOOGLE_TOKEN_JSON')
     client_secret_env = os.environ.get('GOOGLE_CLIENT_SECRET_JSON')
 
-    if token_env:
-        creds = Credentials.from_authorized_user_info(json.loads(token_env), SCOPES)
+    # Cross-process lock: multiple report scripts can run concurrently and
+    # each refreshes/writes the same shared token.json — without this,
+    # concurrent refreshes can race and corrupt or invalidate the token.
+    with FileLock(_TOKEN_LOCK_PATH, timeout=60):
+        if token_env:
+            creds = Credentials.from_authorized_user_info(json.loads(token_env), SCOPES)
 
-    if not creds or not creds.valid:
-        if creds and creds.expired and creds.refresh_token:
-            creds.refresh(Request())
-            # Persist refreshed token back to env-var path or file
-            if token_env:
-                # Write refreshed token to file so next run picks it up
-                with open(_TOKEN_PATH, 'w') as fh:
-                    fh.write(creds.to_json())
-        else:
-            # Fall back to file-based flow
-            if os.path.exists(_TOKEN_PATH):
-                creds = Credentials.from_authorized_user_file(_TOKEN_PATH, SCOPES)
-                if creds and creds.expired and creds.refresh_token:
-                    creds.refresh(Request())
+        if not creds or not creds.valid:
+            if creds and creds.expired and creds.refresh_token:
+                creds.refresh(Request())
+                # Persist refreshed token back to env-var path or file
+                if token_env:
+                    # Write refreshed token to file so next run picks it up
                     with open(_TOKEN_PATH, 'w') as fh:
                         fh.write(creds.to_json())
             else:
-                if not os.path.exists(_CLIENT_SECRET) and client_secret_env:
-                    with open(_CLIENT_SECRET, 'w') as fh:
-                        fh.write(client_secret_env)
-                flow = InstalledAppFlow.from_client_secrets_file(_CLIENT_SECRET, SCOPES)
-                creds = flow.run_local_server(port=0)
-                with open(_TOKEN_PATH, 'w') as fh:
-                    fh.write(creds.to_json())
+                # Fall back to file-based flow
+                if os.path.exists(_TOKEN_PATH):
+                    creds = Credentials.from_authorized_user_file(_TOKEN_PATH, SCOPES)
+                    if creds and creds.expired and creds.refresh_token:
+                        creds.refresh(Request())
+                        with open(_TOKEN_PATH, 'w') as fh:
+                            fh.write(creds.to_json())
+                else:
+                    if not os.path.exists(_CLIENT_SECRET) and client_secret_env:
+                        with open(_CLIENT_SECRET, 'w') as fh:
+                            fh.write(client_secret_env)
+                    flow = InstalledAppFlow.from_client_secrets_file(_CLIENT_SECRET, SCOPES)
+                    creds = flow.run_local_server(port=0)
+                    with open(_TOKEN_PATH, 'w') as fh:
+                        fh.write(creds.to_json())
 
     _service = build('sheets', 'v4', credentials=creds)
     return _service

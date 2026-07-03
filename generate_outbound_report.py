@@ -712,7 +712,13 @@ async def main():
     CORE_TEAMS = [t for t in TEAM_ORDER if t not in REGULAR_TEAMS]
 
     slug         = f'_{(from_time or "").replace(":", "")}-{(to_time or "").replace(":", "")}' if from_time or to_time else ''
-    report_type  = 'End of Day' if args.eod else ('Cumulative' if (not from_time or from_time == '09:30') else 'Last 2 Hours')
+    if args.eod:
+        report_type = 'End of Day'
+    elif not from_time or from_time in ('09:15', '09:30'):
+        report_type = 'Cumulative'
+    else:
+        window_hours = (datetime.strptime(to_time, '%H:%M') - datetime.strptime(from_time, '%H:%M')).total_seconds() / 3600
+        report_type = 'Last Hour' if round(window_hours) == 1 else f'Last {round(window_hours)} Hours'
     target_group = args.group or os.getenv('WHATSAPP_GROUP_CALL_REPORTS', WHATSAPP_GROUP)
 
     async def build_and_send(label_suffix: str, team_order: list, group_id: str):
