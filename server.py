@@ -88,10 +88,10 @@ def _call_cumulative_ob():
             '--group', _CALL_GROUP, '--only-core']
 
 def _call_last_hour_ob():
-    """Outbound core only: last 2-hour window minus 15m API sync buffer."""
+    """Outbound core only: last 1-hour window minus 15m API sync buffer (cadence is now hourly)."""
     now_ist  = datetime.now(IST)
     to_dt    = now_ist - timedelta(minutes=15)
-    from_dt  = to_dt   - timedelta(hours=2)
+    from_dt  = to_dt   - timedelta(hours=1)
     return ['--from-time', from_dt.strftime('%H:%M'), '--to-time', to_dt.strftime('%H:%M'),
             '--group', _CALL_GROUP, '--only-core']
 
@@ -137,10 +137,10 @@ def _regular_ob_eod_today():
     return ['--date', today, '--only-regular', '--eod']
 
 def _regular_ob_cumulative():
-    """Regular outbound: shift start (9:30 AM) → now minus 15m API sync buffer."""
+    """Regular outbound: shift start (9:15 AM) → now minus 15m API sync buffer."""
     now_ist = datetime.now(IST)
     to_dt   = now_ist - timedelta(minutes=15)
-    return ['--from-time', '09:30', '--to-time', to_dt.strftime('%H:%M'), '--only-regular']
+    return ['--from-time', '09:15', '--to-time', to_dt.strftime('%H:%M'), '--only-regular']
 
 # ─── Greeter helpers (new schedule: 11:30 PM same-day EOD, then 2-hr cumulative) ───────
 def _greeter_eod_today():
@@ -148,8 +148,8 @@ def _greeter_eod_today():
     return ['--date', 'today', '--group', _GREETER_GROUP]
 
 
-# IST 10 AM – 9 PM = UTC 04:30 – 15:30  →  UTC hours 4–15, every 2 hours
-_CALL_HOURS_UTC = list(range(4, 16, 2))   # 4,6,8,10,12,14 → IST 9:30,11:30,13:30,15:30,17:30,19:30
+# Online LOB (core) outbound: hourly cadence, 9:15 AM – 9 PM IST
+_CALL_HOURS_UTC = list(range(4, 16, 1))   # 4,5,6,...,15 → hourly slots (real IST times land on the hour, e.g. 11:00,12:00...21:00)
 
 # IST 9:30 AM – 7:30 PM = UTC 04:00 – 14:00  →  new schedule for regular + greeter
 _NEW_HOURS_UTC = list(range(4, 15, 2))    # 4,6,8,10,12,14 → IST 9:30,11:30,13:30,15:30,17:30,19:30
@@ -165,26 +165,38 @@ SCHEDULE = [
     (15, 0,  "generate_all_lms_reports.py",    "LMS Reports (Online + Regular)",             lambda: ['--skip-last-activity']),
 ]
 
-# ─── Call Report schedule (10 AM – 9 PM IST, every 2 hours) ──────────────────
-# Inbound reports stopped. Outbound only: cumulative + last-2hr window.
-# UTC hour 4 = IST 9:15 AM (first slot) → then every 2h at :30 IST
+# ─── Call Report schedule (online LOB / core, hourly) ─────────────────────────
+# Inbound reports stopped. Outbound only: cumulative + last-1hr window.
+# First slot fires at true 9:15 IST = UTC 03:45 (IST = UTC + 5:30), then hourly
+# from the second grid slot (UTC hour 5 = real IST 11:00) onward.
 CALL_SCHEDULE = []
 for _i, _utc_h in enumerate(_CALL_HOURS_UTC):
     _ist_h = (_utc_h + 5) % 24
-    if _i == 0:  # first slot shifted to 9:15 IST
+    if _i == 0:  # first slot: true 9:15 IST (UTC 03:45), not UTC 04:15 (real 9:45)
         CALL_SCHEDULE += [
-            (_utc_h, 15, "generate_outbound_report.py",
-             f"Outbound Cumulative — {_ist_h:02d}:15 IST", _call_cumulative_ob),
-            (_utc_h, 17, "generate_outbound_report.py",
-             f"Outbound Last 2hrs  — {_ist_h:02d}:15 IST", _call_last_hour_ob),
+            (3, 45, "generate_outbound_report.py",
+             "Outbound Cumulative — 09:15 IST", _call_cumulative_ob),
+            (3, 47, "generate_outbound_report.py",
+             "Outbound Last Hour  — 09:15 IST", _call_last_hour_ob),
         ]
     else:
         CALL_SCHEDULE += [
             (_utc_h, 30, "generate_outbound_report.py",
              f"Outbound Cumulative — {_ist_h:02d}:30 IST", _call_cumulative_ob),
             (_utc_h, 32, "generate_outbound_report.py",
-             f"Outbound Last 2hrs  — {_ist_h:02d}:30 IST", _call_last_hour_ob),
+             f"Outbound Last Hour  — {_ist_h:02d}:30 IST", _call_last_hour_ob),
         ]
+
+# Custom slot: 7:30 PM IST (UTC 14:00) — the hourly grid above already lands on
+# 7:00 PM (UTC 13:30) and 8:00 PM (UTC 14:30), so only 7:30 PM needs adding here.
+# Minutes 4/6 keep it clear of the 8 PM grid slot (14:30/14:32) and of the
+# Regular Outbound / Greeter jobs that also fire at UTC 14:00/14:02.
+CALL_SCHEDULE += [
+    (14, 4, "generate_outbound_report.py",
+     "Outbound Cumulative — 19:30 IST (custom)", _call_cumulative_ob),
+    (14, 6, "generate_outbound_report.py",
+     "Outbound Last Hour  — 19:30 IST (custom)", _call_last_hour_ob),
+]
 
 # UTC 18:00 = IST 23:30 → EOD full day report (Online outbound, core only)
 CALL_SCHEDULE.append(
@@ -196,12 +208,16 @@ CALL_SCHEDULE.append(
 # Regular outbound: 9:30 AM IST → yesterday full day, then every 2h cumulative
 # Greeter:          11:30, 13:30, 15:30, 17:30, 19:30 IST → cumulative today
 #                   23:30 IST (UTC 18:00) → today's full day EOD report
-REGULAR_OUTBOUND_SCHEDULE = []
+REGULAR_OUTBOUND_SCHEDULE = [
+    # first slot: true 9:15 IST (UTC 03:49) — matches core's shift-start time
+    (3, 49, "generate_outbound_report.py",
+     "Regular Outbound Cumulative — 09:15 IST", _regular_ob_cumulative),
+]
 GREETER_SCHEDULE = []
 for _i, _utc_h in enumerate(_NEW_HOURS_UTC):
     _ist_h = (_utc_h + 5) % 24
     _ist_m = 30
-    if _i == 0:  # 9:30 AM IST → cumulative only (EOD yesterday sent at 23:30 IST)
+    if _i == 0:  # 9:15 AM slot handled above, outside the loop
         pass
     else:  # 11:30, 13:30, 15:30, 17:30, 19:30 IST → cumulative today
         REGULAR_OUTBOUND_SCHEDULE.append(
