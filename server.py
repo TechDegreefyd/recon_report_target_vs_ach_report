@@ -7,6 +7,8 @@ Long-running process that runs report scripts on schedule (UTC times, IST-equiva
 
   • LMS Reports (Online + Regular)  → generate_all_lms_reports.py
   • Recon Report                    → generate_all_recon_reports.py
+  • Bhugoal Report                  → bhugoal_generate_report.py
+  • Callback Reports (Today+Overdue)→ generate_callback_reports.py
 
 Uses APScheduler with cron triggers — no manual loop, no duplicate-run tracking.
 Usage:  python server.py
@@ -163,6 +165,7 @@ SCHEDULE = [
     (10, 30, "generate_all_recon_reports.py",  "Recon — Today (midnight → 4 PM cumulative)", _today_midnight_to_4pm),
     (13, 30, "generate_all_recon_reports.py",  "Recon — Today (midnight → 7 PM cumulative)", _today_midnight_to_7pm),
     (15, 0,  "generate_all_lms_reports.py",    "LMS Reports (Online + Regular)",             lambda: ['--skip-last-activity']),
+    (4,  40, "bhugoal_generate_report.py",     "Bhugoal Report — 10:00 AM IST (yesterday)",  None),
 ]
 
 # ─── Call Report schedule (online LOB / core, hourly) ─────────────────────────
@@ -248,6 +251,17 @@ GREETER_SCHEDULE.append(
     (18, 2, "generate_greeter_report.py",
      "Greeter EOD Today — 23:30 IST", _greeter_eod_today)
 )
+
+# ─── Callback Reports (Today's Queue + Overdue Alert) ────────────────────────
+# Every 3 hours, 6 AM – 9 PM IST → UTC 00:30, 03:30, 06:30, 09:30, 12:30, 15:30
+# (midnight and 3 AM IST slots skipped — no callback activity overnight)
+CALLBACK_SCHEDULE = []
+for _utc_h in range(0, 16, 3):
+    _ist_h = (_utc_h + 5) % 24
+    CALLBACK_SCHEDULE.append(
+        (_utc_h, 30, "generate_callback_reports.py",
+         f"Callback Reports — {_ist_h:02d}:00 IST", None)
+    )
 
 
 def ist_now():
@@ -366,6 +380,14 @@ def main():
             id=label,
         )
 
+    for hour, minute, script, label, args_fn in CALLBACK_SCHEDULE:
+        scheduler.add_job(
+            run_script,
+            trigger=CronTrigger(hour=hour, minute=minute),
+            args=[script, label, args_fn],
+            id=label,
+        )
+
     scheduler.add_job(
         cleanup_old_reports,
         trigger=CronTrigger(hour=18, minute=30),  # midnight IST
@@ -379,7 +401,7 @@ def main():
     print(f"  Server time (IST): {datetime.now(IST).strftime('%Y-%m-%d %H:%M:%S %Z')}\n", flush=True)
 
     print("  SCHEDULE:", flush=True)
-    for h, m, _, label, _ in SCHEDULE + CALL_SCHEDULE + REGULAR_OUTBOUND_SCHEDULE + GREETER_SCHEDULE:
+    for h, m, _, label, _ in SCHEDULE + CALL_SCHEDULE + REGULAR_OUTBOUND_SCHEDULE + GREETER_SCHEDULE + CALLBACK_SCHEDULE:
         ist_h = (h + 5) % 24
         ist_m = m + 30
         if ist_m >= 60:

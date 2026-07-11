@@ -1,170 +1,59 @@
-ICC Flow — Student-wise TAT
+-- Today's Scheduled Callbacks
 
-WITH cohort AS (
-  SELECT
-    s.student_id,
-    s.student_name,
-    s."first_Icc_Date",
-    s.created_at AS lead_created_at,
-    s.assigned_counsellor_id
-  FROM students s
-  WHERE s.created_at >= CURRENT_DATE - INTERVAL '7 days' - INTERVAL '5 hours 30 minutes'
-    AND s.created_at < CURRENT_DATE - INTERVAL '5 hours 30 minutes'
-),
-first_app AS (
-  SELECT student_id, MIN(created_at) AS first_app_at
-  FROM course_status_journeys
-  WHERE course_status = 'Application'
-    AND student_id IN (SELECT student_id FROM cohort)
-  GROUP BY student_id
-),
-first_adm AS (
-  SELECT student_id, MIN(created_at) AS first_adm_at
-  FROM course_status_journeys
-  WHERE course_status = 'Admission'
-    AND INITCAP(TRIM(fee_type)) NOT IN ('Partial Paid', 'Partially Paid', 'Partial Done')
-    AND student_id IN (SELECT student_id FROM cohort)
-  GROUP BY student_id
+WITH latest AS (
+  SELECT DISTINCT ON (sr.student_id)
+    sr.student_id,
+    sr.callback_date
+  FROM student_remarks sr
+  WHERE sr.isdisabled = false
+  ORDER BY sr.student_id, sr.created_at DESC
 )
 SELECT
-  mgr.counsellor_name                                                        AS to_name,
-  l2.counsellor_name                                                         AS counsellor_name,
-  c.student_id,
-  c.student_name,
-  DATE(c.lead_created_at  AT TIME ZONE 'Asia/Kolkata')                       AS lead_date,
-  DATE(c."first_Icc_Date" AT TIME ZONE 'Asia/Kolkata')                       AS icc_date,
-  DATE(fa.first_app_at    AT TIME ZONE 'Asia/Kolkata')                       AS app_date,
-  DATE(adm.first_adm_at   AT TIME ZONE 'Asia/Kolkata')                       AS adm_date,
-  ROUND(EXTRACT(EPOCH FROM (fa.first_app_at - c."first_Icc_Date")) / 86400, 1) AS icc_to_app_days,
-  ROUND(EXTRACT(EPOCH FROM (adm.first_adm_at - fa.first_app_at))   / 86400, 1) AS app_to_adm_days
-FROM cohort c
-JOIN counsellors l2  ON c.assigned_counsellor_id = l2.counsellor_id AND l2.role = 'l2'
-JOIN counsellors mgr ON l2.assigned_to = mgr.counsellor_id AND mgr.role = 'to'
-JOIN first_app fa    ON c.student_id = fa.student_id
-  AND c."first_Icc_Date" IS NOT NULL
-  AND fa.first_app_at >= c."first_Icc_Date"
-LEFT JOIN first_adm adm ON c.student_id = adm.student_id
-ORDER BY mgr.counsellor_name, l2.counsellor_name, icc_to_app_days DESC
+  tow.counsellor_name AS to_name,
+  l2.counsellor_name  AS l2_name,
+  l2.counsellor_id,
+  COUNT(*) AS scheduled_today
+FROM latest lt
+INNER JOIN students s        ON lt.student_id = s.student_id
+INNER JOIN counsellors l2    ON s.assigned_counsellor_id = l2.counsellor_id
+INNER JOIN counsellors tow   ON l2.assigned_to = tow.counsellor_id
+WHERE lt.callback_date = (NOW() AT TIME ZONE 'Asia/Kolkata')::date
+  AND l2.counsellor_id IN ('CNS-95E89FD2','CNS-A7C45EF3','CNS-50FC5C75','CNS-C955E4FD',
+    'CNS-46211CD0','CNS-3202BBFB','CNS-F73AC472','CNS-98EBC81C','CNS-DF1C4738','CNS-F77A0C4F',
+    'CNS-31F88819','CNS-41CB98F3','CNS-832F23A3','CNS-55D3DFD1','CNS-A4FEB626','CNS-044DCBE8',
+    'CNS-54EF30DC','CNS-FE30B430','CNS-9B43C0C5','CNS-4A8DF2BC','CNS-E0E66B47','CNS-B67EBAD9',
+    'CNS-EA7E1516','CNS-19EC286D','CNS-B20D26C2','CNS-DEC844DA','CNS-CDAD6465','CNS-24936D78',
+    'CNS-3FFA343D','CNS-519AA26B','CNS-B5CA4D71','CNS-A6E3F09E','CNS-00AB3C7B','CNS-DE855747',
+    'CNS-869C2811')
+GROUP BY tow.counsellor_name, l2.counsellor_name, l2.counsellor_id
+ORDER BY tow.counsellor_name, l2.counsellor_name
 
+-- Overdue Callbacks
 
-Direct Flow — Student-wise TAT
-
-WITH cohort AS (
-  SELECT
-    s.student_id,
-    s.student_name,
-    s."first_Icc_Date",
-    s.created_at AS lead_created_at,
-    s.assigned_counsellor_id
-  FROM students s
-  WHERE s.created_at >= CURRENT_DATE - INTERVAL '7 days' - INTERVAL '5 hours 30 minutes'
-    AND s.created_at < CURRENT_DATE - INTERVAL '5 hours 30 minutes'
-),
-first_app AS (
-  SELECT student_id, MIN(created_at) AS first_app_at
-  FROM course_status_journeys
-  WHERE course_status = 'Application'
-    AND student_id IN (SELECT student_id FROM cohort)
-  GROUP BY student_id
-),
-first_adm AS (
-  SELECT student_id, MIN(created_at) AS first_adm_at
-  FROM course_status_journeys
-  WHERE course_status = 'Admission'
-    AND INITCAP(TRIM(fee_type)) NOT IN ('Partial Paid', 'Partially Paid', 'Partial Done')
-    AND student_id IN (SELECT student_id FROM cohort)
-  GROUP BY student_id
+ WITH latest AS (
+  SELECT DISTINCT ON (sr.student_id)
+    sr.student_id,
+    sr.callback_date
+  FROM student_remarks sr
+  WHERE sr.isdisabled = false
+  ORDER BY sr.student_id, sr.created_at DESC
 )
 SELECT
-  mgr.counsellor_name                                                              AS to_name,
-  l2.counsellor_name                                                               AS counsellor_name,
-  c.student_id,
-  c.student_name,
-  DATE(c.lead_created_at AT TIME ZONE 'Asia/Kolkata')                              AS lead_date,
-  DATE(fa.first_app_at   AT TIME ZONE 'Asia/Kolkata')                              AS app_date,
-  DATE(adm.first_adm_at  AT TIME ZONE 'Asia/Kolkata')                              AS adm_date,
-  ROUND(EXTRACT(EPOCH FROM (fa.first_app_at  - c.lead_created_at)) / 86400, 1)    AS lead_to_app_days,
-  ROUND(EXTRACT(EPOCH FROM (adm.first_adm_at - fa.first_app_at))   / 86400, 1)    AS app_to_adm_days,
-  ROUND(EXTRACT(EPOCH FROM (adm.first_adm_at - c.lead_created_at)) / 86400, 1)    AS total_days
-FROM cohort c
-JOIN counsellors l2  ON c.assigned_counsellor_id = l2.counsellor_id AND l2.role = 'l2'
-JOIN counsellors mgr ON l2.assigned_to = mgr.counsellor_id AND mgr.role = 'to'
-JOIN first_app fa    ON c.student_id = fa.student_id
-LEFT JOIN first_adm adm ON c.student_id = adm.student_id
-WHERE c."first_Icc_Date" IS NULL
-   OR c."first_Icc_Date" > fa.first_app_at
-ORDER BY mgr.counsellor_name, l2.counsellor_name, lead_to_app_days DESC
-
-
-ICC → Application Timeline — Supervisor View
-
-WITH cohort AS (
-  SELECT
-    s.student_id,
-    s."first_Icc_Date",
-    s.assigned_counsellor_id
-  FROM students s
-  WHERE s.created_at >= CURRENT_DATE - INTERVAL '7 days' - INTERVAL '5 hours 30 minutes'
-    AND s.created_at < CURRENT_DATE - INTERVAL '5 hours 30 minutes'
-    AND s."first_Icc_Date" IS NOT NULL
-),
-first_app AS (
-  SELECT student_id, MIN(created_at) AS first_app_at
-  FROM course_status_journeys
-  WHERE course_status = 'Application'
-    AND student_id IN (SELECT student_id FROM cohort)
-  GROUP BY student_id
-),
-icc_to_app AS (
-  SELECT
-    c.student_id,
-    c.assigned_counsellor_id,
-    fa.first_app_at,
-    CASE
-      WHEN fa.first_app_at IS NULL THEN NULL
-      WHEN fa.first_app_at < c."first_Icc_Date" THEN NULL
-      ELSE EXTRACT(EPOCH FROM (fa.first_app_at - c."first_Icc_Date")) / 86400
-    END AS days_to_app
-  FROM cohort c
-  LEFT JOIN first_app fa ON c.student_id = fa.student_id
-)
-SELECT
-  mgr.counsellor_name AS to_name,
-
-  COUNT(DISTINCT i.student_id) AS total_icc,
-
-  COUNT(DISTINCT CASE WHEN i.days_to_app < 1
-    THEN i.student_id END) AS app_same_day,
-  ROUND(COUNT(DISTINCT CASE WHEN i.days_to_app < 1
-    THEN i.student_id END) * 100.0 / NULLIF(COUNT(DISTINCT i.student_id), 0), 1) AS app_same_day_pct,
-
-  COUNT(DISTINCT CASE WHEN i.days_to_app >= 1 AND i.days_to_app < 3
-    THEN i.student_id END) AS app_1_to_2,
-  ROUND(COUNT(DISTINCT CASE WHEN i.days_to_app >= 1 AND i.days_to_app < 3
-    THEN i.student_id END) * 100.0 / NULLIF(COUNT(DISTINCT i.student_id), 0), 1) AS app_1_to_2_pct,
-
-  COUNT(DISTINCT CASE WHEN i.days_to_app >= 3 AND i.days_to_app < 4
-    THEN i.student_id END) AS app_3_to_4,
-  ROUND(COUNT(DISTINCT CASE WHEN i.days_to_app >= 3 AND i.days_to_app < 4
-    THEN i.student_id END) * 100.0 / NULLIF(COUNT(DISTINCT i.student_id), 0), 1) AS app_3_to_4_pct,
-
-  COUNT(DISTINCT CASE WHEN i.days_to_app >= 4 AND i.days_to_app < 5
-    THEN i.student_id END) AS app_4_to_5,
-  ROUND(COUNT(DISTINCT CASE WHEN i.days_to_app >= 4 AND i.days_to_app < 5
-    THEN i.student_id END) * 100.0 / NULLIF(COUNT(DISTINCT i.student_id), 0), 1) AS app_4_to_5_pct,
-
-  COUNT(DISTINCT CASE WHEN i.days_to_app >= 5
-    THEN i.student_id END) AS app_5_plus,
-  ROUND(COUNT(DISTINCT CASE WHEN i.days_to_app >= 5
-    THEN i.student_id END) * 100.0 / NULLIF(COUNT(DISTINCT i.student_id), 0), 1) AS app_5_plus_pct,
-
-  COUNT(DISTINCT CASE WHEN i.days_to_app IS NULL AND i.first_app_at IS NULL
-    THEN i.student_id END) AS not_applied,
-  ROUND(COUNT(DISTINCT CASE WHEN i.days_to_app IS NULL AND i.first_app_at IS NULL
-    THEN i.student_id END) * 100.0 / NULLIF(COUNT(DISTINCT i.student_id), 0), 1) AS not_applied_pct
-
-FROM icc_to_app i
-JOIN counsellors l2  ON i.assigned_counsellor_id = l2.counsellor_id AND l2.role = 'l2'
-JOIN counsellors mgr ON l2.assigned_to = mgr.counsellor_id AND mgr.role = 'to'
-GROUP BY mgr.counsellor_name
-ORDER BY mgr.counsellor_name
+  tow.counsellor_name AS to_name,
+  l2.counsellor_name  AS l2_name,
+  l2.counsellor_id,
+  COUNT(*) AS overdue
+FROM latest lt
+INNER JOIN students s        ON lt.student_id = s.student_id
+INNER JOIN counsellors l2    ON s.assigned_counsellor_id = l2.counsellor_id
+INNER JOIN counsellors tow   ON l2.assigned_to = tow.counsellor_id
+WHERE lt.callback_date < (NOW() AT TIME ZONE 'Asia/Kolkata')::date
+  AND l2.counsellor_id IN ('CNS-95E89FD2','CNS-A7C45EF3','CNS-50FC5C75','CNS-C955E4FD',
+    'CNS-46211CD0','CNS-3202BBFB','CNS-F73AC472','CNS-98EBC81C','CNS-DF1C4738','CNS-F77A0C4F',
+    'CNS-31F88819','CNS-41CB98F3','CNS-832F23A3','CNS-55D3DFD1','CNS-A4FEB626','CNS-044DCBE8',
+    'CNS-54EF30DC','CNS-FE30B430','CNS-9B43C0C5','CNS-4A8DF2BC','CNS-E0E66B47','CNS-B67EBAD9',
+    'CNS-EA7E1516','CNS-19EC286D','CNS-B20D26C2','CNS-DEC844DA','CNS-CDAD6465','CNS-24936D78',
+    'CNS-3FFA343D','CNS-519AA26B','CNS-B5CA4D71','CNS-A6E3F09E','CNS-00AB3C7B','CNS-DE855747',
+    'CNS-869C2811')
+GROUP BY tow.counsellor_name, l2.counsellor_name, l2.counsellor_id
+ORDER BY tow.counsellor_name, l2.counsellor_name

@@ -31,6 +31,7 @@ COPY download_callinsight.py .
 COPY tat_reports.py .
 COPY generate_greeter_report.py .
 COPY check_api_delay.py .
+COPY generate_callback_reports.py .
 
 RUN mkdir -p \
     "Automation Cron Job/Target Report/local_fallback" \
@@ -38,6 +39,7 @@ RUN mkdir -p \
     "Automation Cron Job/Outbound Report" \
     "Automation Cron Job/Inbound Report" \
     "Automation Cron Job/Greeter Report" \
+    "Automation Cron Job/Callback Report" \
     "callinsight_downloads" \
     "greeter_downloads"
 
