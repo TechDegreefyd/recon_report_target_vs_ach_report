@@ -378,7 +378,6 @@ def _filter_today(table_data):
     today_variants = {
         _TODAY,                                          # 2026-06-22
         _now.strftime('%d/%m/%Y'),                       # 22/06/2026
-        _now.strftime('%-d/%-m/%Y') if hasattr(_now, 'strftime') else '',  # 22/6/2026
         f"{_now.day}/{_now.month}/{_now.year}",         # 22/6/2026
     }
     def row_has_today(row):
