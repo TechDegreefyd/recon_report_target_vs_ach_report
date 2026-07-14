@@ -1,59 +1,122 @@
--- Today's Scheduled Callbacks
 
-WITH latest AS (
-  SELECT DISTINCT ON (sr.student_id)
+**1. Today's Callback Queue** — Scheduled | Done | Carried Over | New (Done + Carried Over + New = Scheduled)
+
+```sql
+WITH ordered AS (
+  SELECT
     sr.student_id,
-    sr.callback_date
+    sr.created_at,
+    sr.callback_date,
+    LAG(sr.callback_date) OVER (PARTITION BY sr.student_id ORDER BY sr.created_at) AS prev_callback_date,
+    ROW_NUMBER() OVER (PARTITION BY sr.student_id ORDER BY sr.created_at DESC) AS rn
   FROM student_remarks sr
   WHERE sr.isdisabled = false
-  ORDER BY sr.student_id, sr.created_at DESC
 )
 SELECT
   tow.counsellor_name AS to_name,
   l2.counsellor_name  AS l2_name,
   l2.counsellor_id,
-  COUNT(*) AS scheduled_today
-FROM latest lt
-INNER JOIN students s        ON lt.student_id = s.student_id
+
+  -- Scheduled = Done + Carried Over + New (always)
+  (
+    COUNT(*) FILTER (
+      WHERE o.prev_callback_date = (NOW() AT TIME ZONE 'Asia/Kolkata')::date
+        AND (o.created_at AT TIME ZONE 'Asia/Kolkata')::date = (NOW() AT TIME ZONE 'Asia/Kolkata')::date
+    )
+    +
+    COUNT(*) FILTER (
+      WHERE o.rn = 1
+        AND o.callback_date = (NOW() AT TIME ZONE 'Asia/Kolkata')::date
+    )
+  ) AS scheduled,
+
+  -- Done: was due today, got a follow-up call today (cleared)
+  COUNT(*) FILTER (
+    WHERE o.prev_callback_date = (NOW() AT TIME ZONE 'Asia/Kolkata')::date
+      AND (o.created_at AT TIME ZONE 'Asia/Kolkata')::date = (NOW() AT TIME ZONE 'Asia/Kolkata')::date
+  ) AS done,
+
+  -- Carried Over: still pending, but scheduled on an earlier day (old)
+  COUNT(*) FILTER (
+    WHERE o.rn = 1
+      AND o.callback_date = (NOW() AT TIME ZONE 'Asia/Kolkata')::date
+      AND (o.created_at AT TIME ZONE 'Asia/Kolkata')::date < (NOW() AT TIME ZONE 'Asia/Kolkata')::date
+  ) AS carried_over,
+
+  -- New: still pending, AND was created today (fresh, same-day call + same-day callback)
+  COUNT(*) FILTER (
+    WHERE o.rn = 1
+      AND o.callback_date = (NOW() AT TIME ZONE 'Asia/Kolkata')::date
+      AND (o.created_at AT TIME ZONE 'Asia/Kolkata')::date = (NOW() AT TIME ZONE 'Asia/Kolkata')::date
+  ) AS new_added
+
+FROM ordered o
+INNER JOIN students s        ON o.student_id = s.student_id
 INNER JOIN counsellors l2    ON s.assigned_counsellor_id = l2.counsellor_id
 INNER JOIN counsellors tow   ON l2.assigned_to = tow.counsellor_id
-WHERE lt.callback_date = (NOW() AT TIME ZONE 'Asia/Kolkata')::date
-  AND l2.counsellor_id IN ('CNS-95E89FD2','CNS-A7C45EF3','CNS-50FC5C75','CNS-C955E4FD',
-    'CNS-46211CD0','CNS-3202BBFB','CNS-F73AC472','CNS-98EBC81C','CNS-DF1C4738','CNS-F77A0C4F',
-    'CNS-31F88819','CNS-41CB98F3','CNS-832F23A3','CNS-55D3DFD1','CNS-A4FEB626','CNS-044DCBE8',
-    'CNS-54EF30DC','CNS-FE30B430','CNS-9B43C0C5','CNS-4A8DF2BC','CNS-E0E66B47','CNS-B67EBAD9',
-    'CNS-EA7E1516','CNS-19EC286D','CNS-B20D26C2','CNS-DEC844DA','CNS-CDAD6465','CNS-24936D78',
-    'CNS-3FFA343D','CNS-519AA26B','CNS-B5CA4D71','CNS-A6E3F09E','CNS-00AB3C7B','CNS-DE855747',
-    'CNS-869C2811')
+WHERE l2.counsellor_id IN ('CNS-95E89FD2','CNS-A7C45EF3','CNS-50FC5C75','CNS-C955E4FD',
+  'CNS-46211CD0','CNS-3202BBFB','CNS-F73AC472','CNS-98EBC81C','CNS-DF1C4738','CNS-F77A0C4F',
+  'CNS-31F88819','CNS-41CB98F3','CNS-832F23A3','CNS-55D3DFD1','CNS-A4FEB626','CNS-044DCBE8',
+  'CNS-54EF30DC','CNS-FE30B430','CNS-9B43C0C5','CNS-4A8DF2BC','CNS-E0E66B47','CNS-B67EBAD9',
+  'CNS-EA7E1516','CNS-19EC286D','CNS-B20D26C2','CNS-DEC844DA','CNS-CDAD6465','CNS-24936D78',
+  'CNS-3FFA343D','CNS-519AA26B','CNS-B5CA4D71','CNS-A6E3F09E','CNS-00AB3C7B','CNS-DE855747',
+  'CNS-869C2811')
 GROUP BY tow.counsellor_name, l2.counsellor_name, l2.counsellor_id
 ORDER BY tow.counsellor_name, l2.counsellor_name
+```
 
--- Overdue Callbacks
+**2. Overdue Callback Alert** — Scheduled | Done | Pending (already mutually exclusive, no change needed)
 
- WITH latest AS (
-  SELECT DISTINCT ON (sr.student_id)
+```sql
+WITH ordered AS (
+  SELECT
     sr.student_id,
-    sr.callback_date
+    sr.created_at,
+    sr.callback_date,
+    LAG(sr.callback_date) OVER (PARTITION BY sr.student_id ORDER BY sr.created_at) AS prev_callback_date,
+    ROW_NUMBER() OVER (PARTITION BY sr.student_id ORDER BY sr.created_at DESC) AS rn
   FROM student_remarks sr
   WHERE sr.isdisabled = false
-  ORDER BY sr.student_id, sr.created_at DESC
 )
 SELECT
   tow.counsellor_name AS to_name,
   l2.counsellor_name  AS l2_name,
   l2.counsellor_id,
-  COUNT(*) AS overdue
-FROM latest lt
-INNER JOIN students s        ON lt.student_id = s.student_id
+
+  (
+    COUNT(*) FILTER (
+      WHERE o.prev_callback_date < (NOW() AT TIME ZONE 'Asia/Kolkata')::date
+        AND (o.created_at AT TIME ZONE 'Asia/Kolkata')::date = (NOW() AT TIME ZONE 'Asia/Kolkata')::date
+    )
+    +
+    COUNT(*) FILTER (
+      WHERE o.rn = 1
+        AND o.callback_date < (NOW() AT TIME ZONE 'Asia/Kolkata')::date
+    )
+  ) AS scheduled,
+
+  COUNT(*) FILTER (
+    WHERE o.prev_callback_date < (NOW() AT TIME ZONE 'Asia/Kolkata')::date
+      AND (o.created_at AT TIME ZONE 'Asia/Kolkata')::date = (NOW() AT TIME ZONE 'Asia/Kolkata')::date
+  ) AS done,
+
+  COUNT(*) FILTER (
+    WHERE o.rn = 1
+      AND o.callback_date < (NOW() AT TIME ZONE 'Asia/Kolkata')::date
+  ) AS pending
+
+FROM ordered o
+INNER JOIN students s        ON o.student_id = s.student_id
 INNER JOIN counsellors l2    ON s.assigned_counsellor_id = l2.counsellor_id
 INNER JOIN counsellors tow   ON l2.assigned_to = tow.counsellor_id
-WHERE lt.callback_date < (NOW() AT TIME ZONE 'Asia/Kolkata')::date
-  AND l2.counsellor_id IN ('CNS-95E89FD2','CNS-A7C45EF3','CNS-50FC5C75','CNS-C955E4FD',
-    'CNS-46211CD0','CNS-3202BBFB','CNS-F73AC472','CNS-98EBC81C','CNS-DF1C4738','CNS-F77A0C4F',
-    'CNS-31F88819','CNS-41CB98F3','CNS-832F23A3','CNS-55D3DFD1','CNS-A4FEB626','CNS-044DCBE8',
-    'CNS-54EF30DC','CNS-FE30B430','CNS-9B43C0C5','CNS-4A8DF2BC','CNS-E0E66B47','CNS-B67EBAD9',
-    'CNS-EA7E1516','CNS-19EC286D','CNS-B20D26C2','CNS-DEC844DA','CNS-CDAD6465','CNS-24936D78',
-    'CNS-3FFA343D','CNS-519AA26B','CNS-B5CA4D71','CNS-A6E3F09E','CNS-00AB3C7B','CNS-DE855747',
-    'CNS-869C2811')
+WHERE l2.counsellor_id IN ('CNS-95E89FD2','CNS-A7C45EF3','CNS-50FC5C75','CNS-C955E4FD',
+  'CNS-46211CD0','CNS-3202BBFB','CNS-F73AC472','CNS-98EBC81C','CNS-DF1C4738','CNS-F77A0C4F',
+  'CNS-31F88819','CNS-41CB98F3','CNS-832F23A3','CNS-55D3DFD1','CNS-A4FEB626','CNS-044DCBE8',
+  'CNS-54EF30DC','CNS-FE30B430','CNS-9B43C0C5','CNS-4A8DF2BC','CNS-E0E66B47','CNS-B67EBAD9',
+  'CNS-EA7E1516','CNS-19EC286D','CNS-B20D26C2','CNS-DEC844DA','CNS-CDAD6465','CNS-24936D78',
+  'CNS-3FFA343D','CNS-519AA26B','CNS-B5CA4D71','CNS-A6E3F09E','CNS-00AB3C7B','CNS-DE855747',
+  'CNS-869C2811')
 GROUP BY tow.counsellor_name, l2.counsellor_name, l2.counsellor_id
 ORDER BY tow.counsellor_name, l2.counsellor_name
+```
+

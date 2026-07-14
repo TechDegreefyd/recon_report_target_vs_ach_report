@@ -66,43 +66,100 @@ SEND_GROUPS = [g.strip() for g in os.getenv('WHATSAPP_GROUP_ONLINE_LOB', '120363
 # SQL QUERIES  — counsellor_id list is resolved at runtime from the sheet roster
 # ═══════════════════════════════════════════════════════════════════════════════
 
-_LATEST_REMARK_CTE = """
-WITH latest AS (
-  SELECT DISTINCT ON (sr.student_id)
+_ORDERED_CTE = """
+WITH ordered AS (
+  SELECT
     sr.student_id,
-    sr.callback_date
+    sr.created_at,
+    sr.callback_date,
+    LAG(sr.callback_date) OVER (PARTITION BY sr.student_id ORDER BY sr.created_at) AS prev_callback_date,
+    ROW_NUMBER() OVER (PARTITION BY sr.student_id ORDER BY sr.created_at DESC) AS rn
   FROM student_remarks sr
   WHERE sr.isdisabled = false
-  ORDER BY sr.student_id, sr.created_at DESC
 )
 """
 
-TODAY_SQL = _LATEST_REMARK_CTE + """
+# Today's Callback Queue — Scheduled | Done | Carried Over | New (Done + Carried Over + New = Scheduled)
+TODAY_SQL = _ORDERED_CTE + """
 SELECT
-  l2.counsellor_name AS l2_name,
+  tow.counsellor_name AS to_name,
+  l2.counsellor_name  AS l2_name,
   l2.counsellor_id,
-  COUNT(*) AS cnt
-FROM latest lt
-INNER JOIN students s     ON lt.student_id = s.student_id
-INNER JOIN counsellors l2 ON s.assigned_counsellor_id = l2.counsellor_id
-WHERE lt.callback_date = (NOW() AT TIME ZONE 'Asia/Kolkata')::date
-  AND l2.counsellor_id = ANY($1::text[])
-GROUP BY l2.counsellor_name, l2.counsellor_id
-ORDER BY l2.counsellor_name;
+
+  (
+    COUNT(*) FILTER (
+      WHERE o.prev_callback_date = (NOW() AT TIME ZONE 'Asia/Kolkata')::date
+        AND (o.created_at AT TIME ZONE 'Asia/Kolkata')::date = (NOW() AT TIME ZONE 'Asia/Kolkata')::date
+    )
+    +
+    COUNT(*) FILTER (
+      WHERE o.rn = 1
+        AND o.callback_date = (NOW() AT TIME ZONE 'Asia/Kolkata')::date
+    )
+  ) AS scheduled,
+
+  COUNT(*) FILTER (
+    WHERE o.prev_callback_date = (NOW() AT TIME ZONE 'Asia/Kolkata')::date
+      AND (o.created_at AT TIME ZONE 'Asia/Kolkata')::date = (NOW() AT TIME ZONE 'Asia/Kolkata')::date
+  ) AS done,
+
+  COUNT(*) FILTER (
+    WHERE o.rn = 1
+      AND o.callback_date = (NOW() AT TIME ZONE 'Asia/Kolkata')::date
+      AND (o.created_at AT TIME ZONE 'Asia/Kolkata')::date < (NOW() AT TIME ZONE 'Asia/Kolkata')::date
+  ) AS carried_over,
+
+  COUNT(*) FILTER (
+    WHERE o.rn = 1
+      AND o.callback_date = (NOW() AT TIME ZONE 'Asia/Kolkata')::date
+      AND (o.created_at AT TIME ZONE 'Asia/Kolkata')::date = (NOW() AT TIME ZONE 'Asia/Kolkata')::date
+  ) AS new_added
+
+FROM ordered o
+INNER JOIN students s        ON o.student_id = s.student_id
+INNER JOIN counsellors l2    ON s.assigned_counsellor_id = l2.counsellor_id
+INNER JOIN counsellors tow   ON l2.assigned_to = tow.counsellor_id
+WHERE l2.counsellor_id = ANY($1::text[])
+GROUP BY tow.counsellor_name, l2.counsellor_name, l2.counsellor_id
+ORDER BY tow.counsellor_name, l2.counsellor_name;
 """
 
-OVERDUE_SQL = _LATEST_REMARK_CTE + """
+# Overdue Callback Alert — Scheduled | Done | Pending (already mutually exclusive)
+OVERDUE_SQL = _ORDERED_CTE + """
 SELECT
-  l2.counsellor_name AS l2_name,
+  tow.counsellor_name AS to_name,
+  l2.counsellor_name  AS l2_name,
   l2.counsellor_id,
-  COUNT(*) AS cnt
-FROM latest lt
-INNER JOIN students s     ON lt.student_id = s.student_id
-INNER JOIN counsellors l2 ON s.assigned_counsellor_id = l2.counsellor_id
-WHERE lt.callback_date < (NOW() AT TIME ZONE 'Asia/Kolkata')::date
-  AND l2.counsellor_id = ANY($1::text[])
-GROUP BY l2.counsellor_name, l2.counsellor_id
-ORDER BY l2.counsellor_name;
+
+  (
+    COUNT(*) FILTER (
+      WHERE o.prev_callback_date < (NOW() AT TIME ZONE 'Asia/Kolkata')::date
+        AND (o.created_at AT TIME ZONE 'Asia/Kolkata')::date = (NOW() AT TIME ZONE 'Asia/Kolkata')::date
+    )
+    +
+    COUNT(*) FILTER (
+      WHERE o.rn = 1
+        AND o.callback_date < (NOW() AT TIME ZONE 'Asia/Kolkata')::date
+    )
+  ) AS scheduled,
+
+  COUNT(*) FILTER (
+    WHERE o.prev_callback_date < (NOW() AT TIME ZONE 'Asia/Kolkata')::date
+      AND (o.created_at AT TIME ZONE 'Asia/Kolkata')::date = (NOW() AT TIME ZONE 'Asia/Kolkata')::date
+  ) AS done,
+
+  COUNT(*) FILTER (
+    WHERE o.rn = 1
+      AND o.callback_date < (NOW() AT TIME ZONE 'Asia/Kolkata')::date
+  ) AS pending
+
+FROM ordered o
+INNER JOIN students s        ON o.student_id = s.student_id
+INNER JOIN counsellors l2    ON s.assigned_counsellor_id = l2.counsellor_id
+INNER JOIN counsellors tow   ON l2.assigned_to = tow.counsellor_id
+WHERE l2.counsellor_id = ANY($1::text[])
+GROUP BY tow.counsellor_name, l2.counsellor_name, l2.counsellor_id
+ORDER BY tow.counsellor_name, l2.counsellor_name;
 """
 
 
@@ -141,15 +198,7 @@ async def fetch_all():
     finally:
         await conn.close()
 
-    def attach_team(rows):
-        out = []
-        for r in rows:
-            d = dict(r)
-            d['to_name'] = sup_map.get(_norm(d['l2_name']), 'Unmapped')
-            out.append(d)
-        return out
-
-    return attach_team(today_rows), attach_team(overdue_rows)
+    return [dict(r) for r in today_rows], [dict(r) for r in overdue_rows]
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -158,19 +207,37 @@ async def fetch_all():
 
 def e(v): return _html.escape(str(v))
 
+# Metric column specs per report: (row_key, header_label, css_class)
+TODAY_METRICS   = [('scheduled', 'Sched', 'scheduled'), ('done', 'Done', 'completed'),
+                    ('new_added', 'New', 'new'), ('pending', 'Pending', 'pending')]
+OVERDUE_METRICS = [('scheduled', 'Sched', 'scheduled'), ('done', 'Done', 'completed'),
+                    ('pending', 'Pending', 'pending')]
 
-def build_teams(rows):
+# Grand-bar summary spec per report: (row_key, label, css_class)
+TODAY_SUMMARY   = [('scheduled', 'Scheduled', 'scheduled'), ('done', 'Completed', 'completed'),
+                    ('new_added', 'New Added', 'new'), ('pending', 'Overall Pending', 'pending')]
+OVERDUE_SUMMARY = [('scheduled', 'Scheduled', 'scheduled'), ('done', 'Completed', 'completed'),
+                    ('pending', 'Overall Pending', 'pending')]
+
+
+def build_teams(rows, metric_keys):
     teams = {}
     for r in rows:
-        teams.setdefault(r['to_name'], []).append({'name': r['l2_name'], 'count': int(r['cnt'])})
+        m = {'name': r['l2_name']}
+        for k in metric_keys:
+            if k == 'pending' and 'pending' not in r:
+                m['pending'] = int(r['scheduled']) - int(r['done'])
+            else:
+                m[k] = int(r[k])
+        teams.setdefault(r['to_name'], []).append(m)
     for members in teams.values():
-        members.sort(key=lambda m: -m['count'])
+        members.sort(key=lambda m: -m['scheduled'])
     return teams
 
 
 def split_columns(teams):
     """Greedy bin-pack team blocks into two columns, balanced by total row count."""
-    order = sorted(teams.keys(), key=lambda t: -sum(m['count'] for m in teams[t]))
+    order = sorted(teams.keys(), key=lambda t: -sum(m['scheduled'] for m in teams[t]))
     left, right = [], []
     left_h, right_h = 0, 0
     for t in order:
@@ -182,35 +249,48 @@ def split_columns(teams):
     return left, right
 
 
-def team_block_html(team_name, members):
-    total = sum(m['count'] for m in members)
+def team_block_html(team_name, members, metrics):
+    totals = {key: sum(m[key] for m in members) for key, _, _ in metrics}
+    header_cells = ''.join(f'<th class="num">{totals[key]}</th>' for key, _, _ in metrics)
+    sub_cells    = ''.join(f'<th class="num">{e(label)}</th>' for _, label, _ in metrics)
     rows_html = ''
     for i, m in enumerate(members, 1):
-        zero = ' zero' if not m['count'] else ''
-        rows_html += f'''
-        <tr class="data-row{zero}">
-          <td class="idx">{i}</td>
-          <td>{e(m["name"])}</td>
-          <td class="num count">{m["count"]}</td>
-        </tr>'''
+        zero = ' zero' if not m['scheduled'] else ''
+        data_cells = ''.join(f'<td class="num {cls}">{m[key]}</td>' for key, _, cls in metrics)
+        rows_html += (f'<tr class="data-row{zero}"><td class="idx">{i}</td>'
+                       f'<td>{e(m["name"])}</td>{data_cells}</tr>')
     return f'''
       <div class="team-block-wrap">
         <table class="mini">
           <thead>
-            <tr class="team-row"><th colspan="2">{e(team_name)}</th><th class="num">{total}</th></tr>
+            <tr class="team-row"><th colspan="2">{e(team_name)}</th>{header_cells}</tr>
+            <tr class="sub-head"><th></th><th></th>{sub_cells}</tr>
           </thead>
           <tbody>{rows_html}</tbody>
         </table>
       </div>'''
 
 
-def build_html(rows, *, title, kicker, subtitle, meta_word, accent, glow, footer_label):
-    teams = build_teams(rows)
+def build_html(rows, *, title, kicker, subtitle, meta_word, accent, glow, metrics, summary):
+    metric_keys = [key for key, _, _ in metrics]
+    teams = build_teams(rows, metric_keys)
     left_teams, right_teams = split_columns(teams)
-    left_html  = ''.join(team_block_html(t, teams[t]) for t in left_teams)
-    right_html = ''.join(team_block_html(t, teams[t]) for t in right_teams)
-    grand_total   = sum(m['count'] for members in teams.values() for m in members)
+    left_html  = ''.join(team_block_html(t, teams[t], metrics) for t in left_teams)
+    right_html = ''.join(team_block_html(t, teams[t], metrics) for t in right_teams)
     n_counsellors = sum(len(members) for members in teams.values())
+
+    grand_totals = {key: sum(m[key] for members in teams.values() for m in members)
+                     for key, _, _ in summary}
+    grand_bar_html = ''.join(
+        f'<div class="grand-item {cls}"><div class="label">{e(label)}</div>'
+        f'<div class="value">{grand_totals[key]:,}</div></div>'
+        for key, label, cls in summary
+    )
+
+    metric_css = '\n'.join(f'''
+  tr.data-row td.{cls} {{ color: {'#3F5DBF' if cls == 'scheduled' else '#0F6B5C' if cls == 'completed' else '#B36A00' if cls == 'new' else '#B33418'}; }}
+  tr.data-row.zero td.{cls} {{ color: #C9C3B4; font-weight: 400; }}
+  .grand-item.{cls} .value {{ color: {'#3F5DBF' if cls == 'scheduled' else '#0F6B5C' if cls == 'completed' else '#B36A00' if cls == 'new' else '#B33418'}; }}''' for cls in {c for _, _, c in metrics})
 
     return f'''<!DOCTYPE html>
 <html lang="en">
@@ -222,173 +302,42 @@ def build_html(rows, *, title, kicker, subtitle, meta_word, accent, glow, footer
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
   :root {{
-    --navy: #0E1B2B;
-    --paper: #FBF9F4;
-    --ink: #1B1B18;
-    --ink-soft: #7A7568;
-    --accent: {accent};
-    --glow: {glow};
-    --line: #E5E0D4;
+    --navy: #0E1B2B; --paper: #FBF9F4; --ink: #1B1B18; --ink-soft: #7A7568;
+    --accent: {accent}; --glow: {glow}; --line: #E5E0D4;
   }}
   * {{ box-sizing: border-box; }}
-  body {{
-    margin: 0;
-    background: var(--navy);
-    font-family: 'Inter', sans-serif;
-    padding: 24px 14px 36px;
-  }}
-  .wrap {{
-    max-width: 980px;
-    margin: 0 auto;
-    background: var(--paper);
-    border-radius: 14px;
-    overflow: hidden;
-    box-shadow: 0 20px 60px rgba(0,0,0,0.35);
-  }}
-  header {{
-    padding: 22px 26px 16px;
-    border-bottom: 3px solid var(--accent);
-    background: linear-gradient(135deg, {glow}12, transparent 60%);
-    display: flex;
-    justify-content: space-between;
-    align-items: flex-end;
-    flex-wrap: wrap;
-    gap: 14px;
-  }}
-  .kicker {{
-    font-family: 'IBM Plex Mono', monospace;
-    font-size: 11px;
-    letter-spacing: 0.16em;
-    text-transform: uppercase;
-    color: {glow};
-    margin: 0 0 6px;
-    font-weight: 600;
-  }}
-  h1 {{
-    font-family: 'Space Grotesk', sans-serif;
-    font-size: 23px;
-    font-weight: 700;
-    margin: 0 0 6px;
-    color: var(--ink);
-    letter-spacing: -0.01em;
-  }}
-  .subtitle {{
-    font-size: 12px;
-    color: var(--ink-soft);
-    margin: 0;
-    line-height: 1.5;
-    max-width: 440px;
-  }}
+  body {{ margin: 0; background: var(--navy); font-family: 'Inter', sans-serif; padding: 24px 14px 36px; }}
+  .wrap {{ max-width: 1040px; margin: 0 auto; background: var(--paper); border-radius: 14px; overflow: hidden; box-shadow: 0 20px 60px rgba(0,0,0,0.35); }}
+  header {{ padding: 22px 26px 16px; border-bottom: 3px solid var(--accent); background: linear-gradient(135deg, {glow}12, transparent 60%); display: flex; justify-content: space-between; align-items: flex-end; flex-wrap: wrap; gap: 14px; }}
+  .kicker {{ font-family: 'IBM Plex Mono', monospace; font-size: 11px; letter-spacing: 0.16em; text-transform: uppercase; color: {glow}; margin: 0 0 6px; font-weight: 600; }}
+  h1 {{ font-family: 'Space Grotesk', sans-serif; font-size: 23px; font-weight: 700; margin: 0 0 6px; color: var(--ink); letter-spacing: -0.01em; }}
+  .subtitle {{ font-size: 12px; color: var(--ink-soft); margin: 0; line-height: 1.5; max-width: 500px; }}
   .head-right {{ text-align: right; }}
-  .date-chip {{
-    background: var(--ink);
-    color: var(--paper);
-    padding: 5px 12px;
-    border-radius: 4px;
-    font-family: 'IBM Plex Mono', monospace;
-    font-size: 11px;
-    display: inline-block;
-    margin-bottom: 8px;
-  }}
-  .meta-line {{
-    font-family: 'IBM Plex Mono', monospace;
-    font-size: 11px;
-    color: var(--ink-soft);
-  }}
-
-  .columns {{
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 0;
-    align-items: start;
-  }}
+  .date-chip {{ background: var(--ink); color: var(--paper); padding: 5px 12px; border-radius: 4px; font-family: 'IBM Plex Mono', monospace; font-size: 11px; display: inline-block; margin-bottom: 8px; }}
+  .meta-line {{ font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: var(--ink-soft); }}
+  .columns {{ display: grid; grid-template-columns: 1fr 1fr; gap: 0; align-items: start; }}
   .col {{ padding: 18px 0 26px; }}
-  .col.left {{ border-right: 1px dashed var(--line); padding-right: 0; }}
-
-  .team-block-wrap {{
-    padding: 0 22px 20px;
-    margin-bottom: 20px;
-    border-bottom: 2px solid var(--line);
-  }}
+  .col.left {{ border-right: 1px dashed var(--line); }}
+  .team-block-wrap {{ padding: 0 20px 20px; margin-bottom: 20px; border-bottom: 2px solid var(--line); }}
   .team-block-wrap:last-child {{ margin-bottom: 0; border-bottom: none; padding-bottom: 0; }}
-  table.mini {{
-    width: 100%;
-    border-collapse: collapse;
-  }}
-
-  tr.team-row th {{
-    background: var(--ink);
-    color: var(--paper);
-    font-family: 'Space Grotesk', sans-serif;
-    font-weight: 600;
-    font-size: 12px;
-    padding: 8px 18px;
-    text-align: left;
-  }}
-  tr.team-row th.num {{
-    text-align: right;
-    font-family: 'IBM Plex Mono', monospace;
-    color: {accent};
-    font-size: 13px;
-  }}
-
-  td, th {{ padding: 6px 18px; font-size: 12.5px; }}
-  tr.data-row td {{
-    color: var(--ink);
-    border-bottom: 1px solid var(--line);
-  }}
-  tr.data-row td.idx {{
-    color: var(--ink-soft);
-    font-family: 'IBM Plex Mono', monospace;
-    font-size: 11px;
-    width: 22px;
-  }}
-  tr.data-row td.num {{ text-align: right; }}
-  tr.data-row td.count {{
-    font-family: 'IBM Plex Mono', monospace;
-    color: {glow};
-    font-weight: 600;
-    font-size: 13px;
-  }}
+  table.mini {{ width: 100%; border-collapse: collapse; }}
+  tr.team-row th {{ background: var(--ink); color: var(--paper); font-family: 'Space Grotesk', sans-serif; font-weight: 600; font-size: 11.5px; padding: 8px 10px; text-align: left; }}
+  tr.team-row th.num {{ text-align: right; font-family: 'IBM Plex Mono', monospace; color: var(--accent); font-size: 12px; width: 46px; }}
+  tr.sub-head th {{ font-family: 'IBM Plex Mono', monospace; font-size: 9px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--ink-soft); padding: 4px 10px 3px; text-align: right; border-bottom: 1px solid var(--line); }}
+  td, th {{ padding: 6px 10px; font-size: 12px; }}
+  tr.data-row td {{ color: var(--ink); border-bottom: 1px solid var(--line); }}
+  tr.data-row td.idx {{ color: var(--ink-soft); font-family: 'IBM Plex Mono', monospace; font-size: 10.5px; width: 18px; }}
+  tr.data-row td.num {{ text-align: right; font-family: 'IBM Plex Mono', monospace; font-weight: 600; font-size: 12.5px; width: 46px; }}
   tr.data-row.zero td {{ color: #ADA795; }}
-  tr.data-row.zero td.count {{ color: #C9C3B4; font-weight: 400; }}
   tr.data-row:last-child td {{ border-bottom: 2px solid var(--line); }}
   tr.data-row:hover td {{ background: {glow}0c; }}
-
-  .grand-bar {{
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 16px 26px;
-    background: {glow}14;
-    border-top: 2px solid var(--accent);
-  }}
-  .grand-bar .label {{
-    font-family: 'Space Grotesk', sans-serif;
-    font-weight: 700;
-    font-size: 14px;
-    color: var(--ink);
-  }}
-  .grand-bar .value {{
-    font-family: 'IBM Plex Mono', monospace;
-    font-size: 22px;
-    font-weight: 600;
-    color: {glow};
-  }}
-
-  footer.note {{
-    padding: 10px 26px 18px;
-    font-family: 'IBM Plex Mono', monospace;
-    font-size: 9.5px;
-    color: var(--ink-soft);
-    text-align: center;
-    letter-spacing: 0.02em;
-  }}
-
-  @media (max-width: 620px) {{
-    .columns {{ grid-template-columns: 1fr; }}
-    .col.left {{ border-right: none; border-bottom: 1px dashed var(--line); }}
-  }}
+{metric_css}
+  .grand-bar {{ display: flex; justify-content: space-around; align-items: center; padding: 16px 20px; background: {glow}14; border-top: 2px solid var(--accent); gap: 16px; flex-wrap: wrap; }}
+  .grand-item {{ text-align: center; }}
+  .grand-item .label {{ font-family: 'IBM Plex Mono', monospace; font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--ink-soft); margin-bottom: 4px; }}
+  .grand-item .value {{ font-family: 'IBM Plex Mono', monospace; font-size: 22px; font-weight: 600; }}
+  footer.note {{ padding: 10px 26px 18px; font-family: 'IBM Plex Mono', monospace; font-size: 9.5px; color: var(--ink-soft); text-align: center; letter-spacing: 0.02em; }}
+  @media (max-width: 620px) {{ .columns {{ grid-template-columns: 1fr; }} .col.left {{ border-right: none; border-bottom: 1px dashed var(--line); }} }}
 </style>
 </head>
 <body>
@@ -404,17 +353,11 @@ def build_html(rows, *, title, kicker, subtitle, meta_word, accent, glow, footer
         <div class="meta-line">{e(meta_word)} · {n_counsellors} counsellors</div>
       </div>
     </header>
-
     <div class="columns">
       <div class="col left">{left_html}</div>
       <div class="col right">{right_html}</div>
     </div>
-
-    <div class="grand-bar">
-      <span class="label">Grand Total ({e(footer_label)})</span>
-      <span class="value">{grand_total:,}</span>
-    </div>
-
+    <div class="grand-bar">{grand_bar_html}</div>
     <footer class="note">DEGREEFYD OPS &middot; CALLBACK REPORTING &middot; latest remark per student · IST-filtered · assigned_counsellor_id</footer>
   </div>
 </body>
@@ -482,10 +425,10 @@ async def main():
                 today_rows,
                 title="Today's Callback Queue",
                 kicker='Scheduled · Due Today',
-                subtitle='Callback due today per counsellor (IST), grouped by team owner.',
+                subtitle="Callbacks scheduled for today per counsellor (IST) — completed, freshly added, and still pending — grouped by team owner.",
                 meta_word='Scheduled for today',
                 accent='#3FB6A3', glow='#0F6B5C',
-                footer_label='Due Today',
+                metrics=TODAY_METRICS, summary=TODAY_SUMMARY,
             ),
         },
         {
@@ -495,10 +438,10 @@ async def main():
                 overdue_rows,
                 title='Overdue Callback Alert',
                 kicker='Overdue · Callback Date Passed',
-                subtitle='Callback date already passed per counsellor (IST), grouped by team owner.',
+                subtitle='Overdue callbacks per counsellor (IST) — completed today vs. still pending — grouped by team owner.',
                 meta_word='Overdue callbacks',
                 accent='#E2572B', glow='#B33418',
-                footer_label='Overdue',
+                metrics=OVERDUE_METRICS, summary=OVERDUE_SUMMARY,
             ),
         },
     ]
