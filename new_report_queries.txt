@@ -1,59 +1,40 @@
+Going with the LMS-matched version — filter to **Pre Application + Initial Counselling Completed only** (Application dropped, since it doesn't appear in the LMS's Callback Leads section, verified 0=0 against your screenshot).
 
-**1. Today's Callback Queue** — Scheduled | Done | Carried Over | New (Done + Carried Over + New = Scheduled)
+**1. Today's Callback Queue** — Scheduled | Done | Carried Over | New
 
 ```sql
-WITH ordered AS (
+WITH eligible AS (
+  SELECT student_id FROM students
+  WHERE current_student_status IN ('Pre Application','Initial Counselling Completed')
+),
+ordered AS (
   SELECT
-    sr.student_id,
-    sr.created_at,
-    sr.callback_date,
+    sr.student_id, sr.created_at, sr.callback_date,
     LAG(sr.callback_date) OVER (PARTITION BY sr.student_id ORDER BY sr.created_at) AS prev_callback_date,
     ROW_NUMBER() OVER (PARTITION BY sr.student_id ORDER BY sr.created_at DESC) AS rn
   FROM student_remarks sr
   WHERE sr.isdisabled = false
+    AND sr.student_id IN (SELECT student_id FROM eligible)
 )
 SELECT
-  tow.counsellor_name AS to_name,
-  l2.counsellor_name  AS l2_name,
-  l2.counsellor_id,
-
-  -- Scheduled = Done + Carried Over + New (always)
-  (
-    COUNT(*) FILTER (
-      WHERE o.prev_callback_date = (NOW() AT TIME ZONE 'Asia/Kolkata')::date
-        AND (o.created_at AT TIME ZONE 'Asia/Kolkata')::date = (NOW() AT TIME ZONE 'Asia/Kolkata')::date
-    )
-    +
-    COUNT(*) FILTER (
-      WHERE o.rn = 1
-        AND o.callback_date = (NOW() AT TIME ZONE 'Asia/Kolkata')::date
-    )
+  tow.counsellor_name AS to_name, l2.counsellor_name AS l2_name, l2.counsellor_id,
+  (COUNT(*) FILTER (WHERE o.prev_callback_date = (NOW() AT TIME ZONE 'Asia/Kolkata')::date
+                      AND (o.created_at AT TIME ZONE 'Asia/Kolkata')::date = (NOW() AT TIME ZONE 'Asia/Kolkata')::date)
+   + COUNT(*) FILTER (WHERE o.rn = 1 AND o.callback_date = (NOW() AT TIME ZONE 'Asia/Kolkata')::date)
   ) AS scheduled,
-
-  -- Done: was due today, got a follow-up call today (cleared)
-  COUNT(*) FILTER (
-    WHERE o.prev_callback_date = (NOW() AT TIME ZONE 'Asia/Kolkata')::date
-      AND (o.created_at AT TIME ZONE 'Asia/Kolkata')::date = (NOW() AT TIME ZONE 'Asia/Kolkata')::date
+  COUNT(*) FILTER (WHERE o.prev_callback_date = (NOW() AT TIME ZONE 'Asia/Kolkata')::date
+                     AND (o.created_at AT TIME ZONE 'Asia/Kolkata')::date = (NOW() AT TIME ZONE 'Asia/Kolkata')::date
   ) AS done,
-
-  -- Carried Over: still pending, but scheduled on an earlier day (old)
-  COUNT(*) FILTER (
-    WHERE o.rn = 1
-      AND o.callback_date = (NOW() AT TIME ZONE 'Asia/Kolkata')::date
-      AND (o.created_at AT TIME ZONE 'Asia/Kolkata')::date < (NOW() AT TIME ZONE 'Asia/Kolkata')::date
+  COUNT(*) FILTER (WHERE o.rn = 1 AND o.callback_date = (NOW() AT TIME ZONE 'Asia/Kolkata')::date
+                     AND (o.created_at AT TIME ZONE 'Asia/Kolkata')::date < (NOW() AT TIME ZONE 'Asia/Kolkata')::date
   ) AS carried_over,
-
-  -- New: still pending, AND was created today (fresh, same-day call + same-day callback)
-  COUNT(*) FILTER (
-    WHERE o.rn = 1
-      AND o.callback_date = (NOW() AT TIME ZONE 'Asia/Kolkata')::date
-      AND (o.created_at AT TIME ZONE 'Asia/Kolkata')::date = (NOW() AT TIME ZONE 'Asia/Kolkata')::date
+  COUNT(*) FILTER (WHERE o.rn = 1 AND o.callback_date = (NOW() AT TIME ZONE 'Asia/Kolkata')::date
+                     AND (o.created_at AT TIME ZONE 'Asia/Kolkata')::date = (NOW() AT TIME ZONE 'Asia/Kolkata')::date
   ) AS new_added
-
 FROM ordered o
-INNER JOIN students s        ON o.student_id = s.student_id
-INNER JOIN counsellors l2    ON s.assigned_counsellor_id = l2.counsellor_id
-INNER JOIN counsellors tow   ON l2.assigned_to = tow.counsellor_id
+INNER JOIN students s      ON o.student_id = s.student_id
+INNER JOIN counsellors l2  ON s.assigned_counsellor_id = l2.counsellor_id
+INNER JOIN counsellors tow ON l2.assigned_to = tow.counsellor_id
 WHERE l2.counsellor_id IN ('CNS-95E89FD2','CNS-A7C45EF3','CNS-50FC5C75','CNS-C955E4FD',
   'CNS-46211CD0','CNS-3202BBFB','CNS-F73AC472','CNS-98EBC81C','CNS-DF1C4738','CNS-F77A0C4F',
   'CNS-31F88819','CNS-41CB98F3','CNS-832F23A3','CNS-55D3DFD1','CNS-A4FEB626','CNS-044DCBE8',
@@ -65,50 +46,37 @@ GROUP BY tow.counsellor_name, l2.counsellor_name, l2.counsellor_id
 ORDER BY tow.counsellor_name, l2.counsellor_name
 ```
 
-**2. Overdue Callback Alert** — Scheduled | Done | Pending (already mutually exclusive, no change needed)
+**2. Overdue Callback Alert** — Scheduled | Done | Pending
 
 ```sql
-WITH ordered AS (
+WITH eligible AS (
+  SELECT student_id FROM students
+  WHERE current_student_status IN ('Pre Application','Initial Counselling Completed')
+),
+ordered AS (
   SELECT
-    sr.student_id,
-    sr.created_at,
-    sr.callback_date,
+    sr.student_id, sr.created_at, sr.callback_date,
     LAG(sr.callback_date) OVER (PARTITION BY sr.student_id ORDER BY sr.created_at) AS prev_callback_date,
     ROW_NUMBER() OVER (PARTITION BY sr.student_id ORDER BY sr.created_at DESC) AS rn
   FROM student_remarks sr
   WHERE sr.isdisabled = false
+    AND sr.student_id IN (SELECT student_id FROM eligible)
 )
 SELECT
-  tow.counsellor_name AS to_name,
-  l2.counsellor_name  AS l2_name,
-  l2.counsellor_id,
-
-  (
-    COUNT(*) FILTER (
-      WHERE o.prev_callback_date < (NOW() AT TIME ZONE 'Asia/Kolkata')::date
-        AND (o.created_at AT TIME ZONE 'Asia/Kolkata')::date = (NOW() AT TIME ZONE 'Asia/Kolkata')::date
-    )
-    +
-    COUNT(*) FILTER (
-      WHERE o.rn = 1
-        AND o.callback_date < (NOW() AT TIME ZONE 'Asia/Kolkata')::date
-    )
+  tow.counsellor_name AS to_name, l2.counsellor_name AS l2_name, l2.counsellor_id,
+  (COUNT(*) FILTER (WHERE o.prev_callback_date < (NOW() AT TIME ZONE 'Asia/Kolkata')::date
+                      AND (o.created_at AT TIME ZONE 'Asia/Kolkata')::date = (NOW() AT TIME ZONE 'Asia/Kolkata')::date)
+   + COUNT(*) FILTER (WHERE o.rn = 1 AND o.callback_date < (NOW() AT TIME ZONE 'Asia/Kolkata')::date)
   ) AS scheduled,
-
-  COUNT(*) FILTER (
-    WHERE o.prev_callback_date < (NOW() AT TIME ZONE 'Asia/Kolkata')::date
-      AND (o.created_at AT TIME ZONE 'Asia/Kolkata')::date = (NOW() AT TIME ZONE 'Asia/Kolkata')::date
+  COUNT(*) FILTER (WHERE o.prev_callback_date < (NOW() AT TIME ZONE 'Asia/Kolkata')::date
+                     AND (o.created_at AT TIME ZONE 'Asia/Kolkata')::date = (NOW() AT TIME ZONE 'Asia/Kolkata')::date
   ) AS done,
-
-  COUNT(*) FILTER (
-    WHERE o.rn = 1
-      AND o.callback_date < (NOW() AT TIME ZONE 'Asia/Kolkata')::date
+  COUNT(*) FILTER (WHERE o.rn = 1 AND o.callback_date < (NOW() AT TIME ZONE 'Asia/Kolkata')::date
   ) AS pending
-
 FROM ordered o
-INNER JOIN students s        ON o.student_id = s.student_id
-INNER JOIN counsellors l2    ON s.assigned_counsellor_id = l2.counsellor_id
-INNER JOIN counsellors tow   ON l2.assigned_to = tow.counsellor_id
+INNER JOIN students s      ON o.student_id = s.student_id
+INNER JOIN counsellors l2  ON s.assigned_counsellor_id = l2.counsellor_id
+INNER JOIN counsellors tow ON l2.assigned_to = tow.counsellor_id
 WHERE l2.counsellor_id IN ('CNS-95E89FD2','CNS-A7C45EF3','CNS-50FC5C75','CNS-C955E4FD',
   'CNS-46211CD0','CNS-3202BBFB','CNS-F73AC472','CNS-98EBC81C','CNS-DF1C4738','CNS-F77A0C4F',
   'CNS-31F88819','CNS-41CB98F3','CNS-832F23A3','CNS-55D3DFD1','CNS-A4FEB626','CNS-044DCBE8',
@@ -120,3 +88,6 @@ GROUP BY tow.counsellor_name, l2.counsellor_name, l2.counsellor_id
 ORDER BY tow.counsellor_name, l2.counsellor_name
 ```
 
+**Key change:** `eligible` now just filters `students.current_student_status IN ('Pre Application','Initial Counselling Completed')` directly — no `course_status_journeys` UNION needed, since `current_student_status` already tracks the student's *current* stage correctly (Application/Admission/Enrolled/NotInterested students are naturally excluded). This is verified exact-match (0=0) against your LMS screenshot for Abhishek Swami's overdue count.
+
+Let me save this correction to memory and rerun for all counsellors.Fixed. Now let me run both queries for all 34 counsellors.Today's data confirmed (27 counsellors with activity, 7 at zero don't show but are still in scope). Now overdue:Both queries verified — Abhishek Swami now shows **0** overdue exactly matching your screenshot. Both datasets pulled fresh for all 34 counsellors. Want me to rebuild the two HTML reports now with these LMS-matched numbers?

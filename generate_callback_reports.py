@@ -67,7 +67,11 @@ SEND_GROUPS = [g.strip() for g in os.getenv('WHATSAPP_GROUP_ONLINE_LOB', '120363
 # ═══════════════════════════════════════════════════════════════════════════════
 
 _ORDERED_CTE = """
-WITH ordered AS (
+WITH eligible AS (
+  SELECT student_id FROM students
+  WHERE current_student_status IN ('Pre Application','Initial Counselling Completed')
+),
+ordered AS (
   SELECT
     sr.student_id,
     sr.created_at,
@@ -76,6 +80,7 @@ WITH ordered AS (
     ROW_NUMBER() OVER (PARTITION BY sr.student_id ORDER BY sr.created_at DESC) AS rn
   FROM student_remarks sr
   WHERE sr.isdisabled = false
+    AND sr.student_id IN (SELECT student_id FROM eligible)
 )
 """
 
