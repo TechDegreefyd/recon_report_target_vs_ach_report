@@ -17,7 +17,7 @@ Pipeline:
      students created within the window. App/Adm = how many of those students'
      course journeys hit Application / Admission status within the window.
      Summed across all 3 DBs (a number's leads can land in more than one DB).
-  3. L2A% = Adm / Leads.
+  3. L2F% = App / Leads (lead-to-form), L2A% = Adm / Leads (lead-to-admission) — in that order.
   4. Screenshot the HTML (Playwright) and send it to WhatsApp via WHAPI.
 
 Usage:
@@ -348,8 +348,8 @@ def build_row(number, call_data, lms_data, window):
     app = d[f'{prefix}_app']
     adm = d[f'{prefix}_adm']
     leads = d[f'{prefix}_leads']
+    l2f = round(app / leads * 100, 1) if leads else 0.0
     l2a = round(adm / leads * 100, 1) if leads else 0.0
-    f2a = round(adm / app * 100, 1) if app else 0.0
     return {
         'label': NUMBERS[number]['label'],
         'number': number,
@@ -360,16 +360,16 @@ def build_row(number, call_data, lms_data, window):
         'leads': leads,
         'app': app,
         'adm': adm,
+        'l2f': l2f,
         'l2a': l2a,
-        'f2a': f2a,
     }
 
 
 def sum_rows(rows):
     keys = ['total_calls', 'answered', 'unique_calls', 'unique_answered', 'leads', 'app', 'adm']
     out = {k: sum(r[k] for r in rows) for k in keys}
+    out['l2f'] = round(out['app'] / out['leads'] * 100, 1) if out['leads'] else 0.0
     out['l2a'] = round(out['adm'] / out['leads'] * 100, 1) if out['leads'] else 0.0
-    out['f2a'] = round(out['adm'] / out['app'] * 100, 1) if out['app'] else 0.0
     return out
 
 
@@ -404,8 +404,8 @@ def build_html(call_data, lms_data):
               <td class="leads-cell">{tot["leads"]}</td>
               <td>{tot["app"]}</td>
               <td class="adm-cell">{tot["adm"]}</td>
+              <td>{pct_chip(tot["l2f"])}</td>
               <td>{pct_chip(tot["l2a"])}</td>
-              <td>{pct_chip(tot["f2a"])}</td>
             </tr>'''
 
         def college_row(r):
@@ -419,8 +419,8 @@ def build_html(call_data, lms_data):
               <td class="leads-cell">{r["leads"]}</td>
               <td>{r["app"]}</td>
               <td class="adm-cell">{r["adm"]}</td>
+              <td>{pct_chip(r["l2f"])}</td>
               <td>{pct_chip(r["l2a"])}</td>
-              <td>{pct_chip(r["f2a"])}</td>
             </tr>'''
 
         rows_html  = type_row('Generic', generic_tot, 'generic', GENERIC_ORDER)
@@ -435,8 +435,8 @@ def build_html(call_data, lms_data):
           <td class="leads-cell">{grand_tot["leads"]}</td>
           <td>{grand_tot["app"]}</td>
           <td class="adm-cell">{grand_tot["adm"]}</td>
+          <td>{pct_chip(grand_tot["l2f"])}</td>
           <td>{pct_chip(grand_tot["l2a"])}</td>
-          <td>{pct_chip(grand_tot["f2a"])}</td>
         </tr>'''
 
         return f'''
@@ -465,8 +465,8 @@ def build_html(call_data, lms_data):
                 <th></th>
                 <th>App</th>
                 <th>Adm</th>
+                <th>L2F%</th>
                 <th>L2A%</th>
-                <th>F2A%</th>
               </tr>
             </thead>
             <tbody>{rows_html}</tbody>

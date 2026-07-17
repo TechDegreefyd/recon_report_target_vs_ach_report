@@ -265,10 +265,10 @@ for _utc_h in range(0, 16, 3):
     )
 
 # ─── IVR Extension Report (Call Extension — Greeter x LMS funnel) ────────────
-# Every 3 hours, 9 AM – 9 PM IST → UTC 03:30, 06:30, 09:30, 12:30, 15:30
-# Minute offset (33) keeps it clear of Callback Reports, which land on :30 the same hours.
+# Every 4 hours, 10 AM – 10 PM IST → UTC 04:30, 08:30, 12:30, 16:30
+# Minute offset (33) keeps it clear of other jobs landing on :30 the same hours.
 IVR_EXTENSION_SCHEDULE = []
-for _utc_h in range(3, 16, 3):
+for _utc_h in range(4, 17, 4):
     _ist_h = (_utc_h + 5) % 24
     IVR_EXTENSION_SCHEDULE.append(
         (_utc_h, 33, "generate_ivr_extension_report.py",
