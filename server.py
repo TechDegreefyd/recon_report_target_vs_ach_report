@@ -9,6 +9,7 @@ Long-running process that runs report scripts on schedule (UTC times, IST-equiva
   • Recon Report                    → generate_all_recon_reports.py
   • Bhugoal Report                  → bhugoal_generate_report.py
   • Callback Reports (Today+Overdue)→ generate_callback_reports.py
+  • IVR Extension Report (Call x LMS)→ generate_ivr_extension_report.py
 
 Uses APScheduler with cron triggers — no manual loop, no duplicate-run tracking.
 Usage:  python server.py
@@ -263,6 +264,17 @@ for _utc_h in range(0, 16, 3):
          f"Callback Reports — {_ist_h:02d}:00 IST", None)
     )
 
+# ─── IVR Extension Report (Call Extension — Greeter x LMS funnel) ────────────
+# Every 3 hours, 9 AM – 9 PM IST → UTC 03:30, 06:30, 09:30, 12:30, 15:30
+# Minute offset (33) keeps it clear of Callback Reports, which land on :30 the same hours.
+IVR_EXTENSION_SCHEDULE = []
+for _utc_h in range(3, 16, 3):
+    _ist_h = (_utc_h + 5) % 24
+    IVR_EXTENSION_SCHEDULE.append(
+        (_utc_h, 33, "generate_ivr_extension_report.py",
+         f"IVR Extension Report — {_ist_h:02d}:00 IST", None)
+    )
+
 
 def ist_now():
     return datetime.now(IST)
@@ -388,6 +400,14 @@ def main():
             id=label,
         )
 
+    for hour, minute, script, label, args_fn in IVR_EXTENSION_SCHEDULE:
+        scheduler.add_job(
+            run_script,
+            trigger=CronTrigger(hour=hour, minute=minute),
+            args=[script, label, args_fn],
+            id=label,
+        )
+
     scheduler.add_job(
         cleanup_old_reports,
         trigger=CronTrigger(hour=18, minute=30),  # midnight IST
@@ -401,7 +421,7 @@ def main():
     print(f"  Server time (IST): {datetime.now(IST).strftime('%Y-%m-%d %H:%M:%S %Z')}\n", flush=True)
 
     print("  SCHEDULE:", flush=True)
-    for h, m, _, label, _ in SCHEDULE + CALL_SCHEDULE + REGULAR_OUTBOUND_SCHEDULE + GREETER_SCHEDULE + CALLBACK_SCHEDULE:
+    for h, m, _, label, _ in SCHEDULE + CALL_SCHEDULE + REGULAR_OUTBOUND_SCHEDULE + GREETER_SCHEDULE + CALLBACK_SCHEDULE + IVR_EXTENSION_SCHEDULE:
         ist_h = (h + 5) % 24
         ist_m = m + 30
         if ist_m >= 60:
