@@ -348,7 +348,7 @@ def build_row(number, call_data, lms_data, window):
     app = d[f'{prefix}_app']
     adm = d[f'{prefix}_adm']
     leads = d[f'{prefix}_leads']
-    l2f = round(app / leads * 100, 1) if leads else 0.0
+    l2f = round((app + adm) / leads * 100, 1) if leads else 0.0
     l2a = round(adm / leads * 100, 1) if leads else 0.0
     return {
         'label': NUMBERS[number]['label'],
@@ -368,7 +368,7 @@ def build_row(number, call_data, lms_data, window):
 def sum_rows(rows):
     keys = ['total_calls', 'answered', 'unique_calls', 'unique_answered', 'leads', 'app', 'adm']
     out = {k: sum(r[k] for r in rows) for k in keys}
-    out['l2f'] = round(out['app'] / out['leads'] * 100, 1) if out['leads'] else 0.0
+    out['l2f'] = round((out['app'] + out['adm']) / out['leads'] * 100, 1) if out['leads'] else 0.0
     out['l2a'] = round(out['adm'] / out['leads'] * 100, 1) if out['leads'] else 0.0
     return out
 
