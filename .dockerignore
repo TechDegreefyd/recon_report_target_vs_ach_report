@@ -26,3 +26,8 @@ Thumbs.db
 # Dev / CI files not needed in image
 *.md
 setup_sheets.py
+
+META/seen_ads.json
+
+# Competitor ad alert state volume
+state/

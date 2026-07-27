@@ -34,7 +34,17 @@ COPY check_api_delay.py .
 COPY generate_callback_reports.py .
 COPY generate_ivr_extension_report.py .
 
+# Meta Ad Library competitor digest (scraper + daily WhatsApp alert)
+COPY META/scraper.py META/daily_ad_alert.py META/competitors.json ./META/
+
+# seen_ads.json tracks which competitor ads have already been reported. Kept
+# outside the image so a rebuild doesn't re-send the previous day's ads - mount
+# a volume here to make it survive.
+ENV AD_ALERT_STATE_FILE=/app/state/seen_ads.json
+VOLUME ["/app/state"]
+
 RUN mkdir -p \
+    "state" \
     "Automation Cron Job/Target Report/local_fallback" \
     "Automation Cron Job/Recon Data" \
     "Automation Cron Job/Outbound Report" \

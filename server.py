@@ -167,6 +167,8 @@ SCHEDULE = [
     (13, 30, "generate_all_recon_reports.py",  "Recon — Today (midnight → 7 PM cumulative)", _today_midnight_to_7pm),
     (15, 0,  "generate_all_lms_reports.py",    "LMS Reports (Online + Regular)",             lambda: ['--skip-last-activity']),
     (4,  40, "bhugoal_generate_report.py",     "Bhugoal Report — 10:00 AM IST (yesterday)",  None),
+    (4,  30, os.path.join("META", "daily_ad_alert.py"),
+             "Competitor Ad Alert — 10:00 AM IST (ads launched in last 24h)",                None),
 ]
 
 # ─── Call Report schedule (online LOB / core, hourly) ─────────────────────────
@@ -444,6 +446,14 @@ def main():
             "WHATSAPP_GROUP_REGULAR_LMS":   _SMOKE_GROUP,
             "WHATSAPP_GROUP_DAILY_UPDATES": _SMOKE_GROUP,
             "WHATSAPP_GROUP":               _SMOKE_GROUP,
+            # Competitor digest normally DMs a person - redirect to the admin
+            # group, and send its seen-ads state to a throwaway file so the
+            # smoke run doesn't mark today's ads as already reported and leave
+            # the real 10 AM run with nothing to say.
+            "WHATSAPP_COMPETITOR_ADS_TO":   _SMOKE_GROUP,
+            "AD_ALERT_STATE_FILE":          os.path.join(
+                BASE_DIR, "state", "seen_ads.smoke.json"
+            ),
         }
 
         def _run_smoke_test():
@@ -460,6 +470,8 @@ def main():
                        lambda: ['--from-time', _smoke_from, '--to-time', _smoke_to, '--group', _SMOKE_GROUP], extra_env=_smoke_env)
             run_script("generate_greeter_report.py",     "SMOKE TEST — Greeter Cumulative (admin group only)",
                        lambda: ['--from-time', _smoke_from, '--to-time', _smoke_to, '--group', _SMOKE_GROUP], extra_env=_smoke_env)
+            run_script(os.path.join("META", "daily_ad_alert.py"),
+                       "SMOKE TEST — Competitor Ad Alert (admin group only)",  None, extra_env=_smoke_env)
             print("=" * 70, flush=True)
             print("  SMOKE TEST COMPLETE — Admin group notified. Scheduler is live.\n", flush=True)
 
