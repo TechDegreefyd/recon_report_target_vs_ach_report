@@ -1,115 +1,26 @@
-Here are two ready-to-run queries — just paste and execute, no parameters needed.
+College Vidya	1.01029E+15	https://www.facebook.com/ads/library/?id=1010288418577859	College Vidya	TRUE	26-07-2026	2.46209E+15	1	1	FACEBOOK, INSTAGRAM	Sign up	Join Webinar @ â‚¹99 | 29th July, 5:00PM	"â‚¹99 | 29th July 2026 | 5:00 PM IST
+Closing 6â€“7 admissions/month?
+Youâ€™re already doing the hard part â€” just not for yourself.
 
-**1. For `regular_lms`** (covers 919484958351 – CU LPU Combined, and 919484958355 – DSA):
+College Vidya is hosting a â‚¹99 webinar with Rohit Gupta (COO) to show how you can build your own education advisory business with zero investment and full backend support.
 
-```sql
-WITH campaign_leads AS (
-  SELECT DISTINCT ON (sla.student_id)
-    sla.student_id, sla.utm_campaign
-  FROM student_lead_activities sla
-  WHERE sla.utm_campaign IN ('919484958351','919484958355')
-  ORDER BY sla.student_id, sla.created_at ASC
-),
-first_form AS (
-  SELECT cl.utm_campaign, csj.student_id, csj.course_id, MIN(csj.created_at) AS form_date
-  FROM course_status_journeys csj
-  JOIN campaign_leads cl ON cl.student_id = csj.student_id
-  WHERE csj.course_status IN (
-    'Form Submitted – Portal Pending','Form Submitted – Completed',
-    'Walkin Completed','Walkin Marked','Exam/Interview Scheduled',
-    'Offer Letter/Results Pending','Offer Letter/Results Released','Ready For Admission'
-  )
-  GROUP BY cl.utm_campaign, csj.student_id, csj.course_id
-),
-first_admission AS (
-  SELECT cl.utm_campaign, csj.student_id, csj.course_id, MIN(csj.created_at) AS adm_date
-  FROM course_status_journeys csj
-  JOIN campaign_leads cl ON cl.student_id = csj.student_id
-  WHERE csj.course_status IN ('Admission','Enrolled')
-    AND csj.fee_type NOT IN ('Partial Done','Partial Paid','Partially Paid')
-  GROUP BY cl.utm_campaign, csj.student_id, csj.course_id
-)
-SELECT
-  cl.utm_campaign AS campaign_number,
-  COUNT(DISTINCT cl.student_id) AS leads,
-  COUNT(DISTINCT ff.student_id) AS applications,
-  COUNT(DISTINCT fa.student_id) AS admissions
-FROM campaign_leads cl
-LEFT JOIN first_form ff ON ff.student_id = cl.student_id AND ff.utm_campaign = cl.utm_campaign
-LEFT JOIN first_admission fa ON fa.student_id = cl.student_id AND fa.utm_campaign = cl.utm_campaign
-GROUP BY cl.utm_campaign
-ORDER BY cl.utm_campaign
-```
+Clear model. Real revenue potential. Execution roadmap.
 
-**2. For `regular_amity_lms`** (covers 919484958352 – Amity, no fee_type exclusion):
+Stop working for others. Build your own system."	https://collegevidya.in/masterclass-edtech-business/	VIDEO		https://video.fdel1-5.fna.fbcdn.net/o1/v/t2/f2/m366/AQMoeZFrKiQ30wjm1IVNzDl8F-NOn05DsFLu7iiKxvYTmX7gfqkoyXvNziB3ZfTj0qA_jSvfNsyyU91MprWarEaQAWwXEIHHMWmm9FG7hGb52A.mp4?_nc_cat=106&_nc_oc=AdobQy7ncm4BHymRdnGCnQ2pPmt3zxBf9jH0irPuG8C5mgjX-IwOEv9akFawocJO5aeM3Hqu5i1FGxwEArlob-te&_nc_sid=b66105&_nc_ht=video.fdel1-5.fna.fbcdn.net&_nc_ohc=9ldMjFoYV7wQ7kNvwGSZq4X&efg=eyJ2ZW5jb2RlX3RhZyI6Inhwdl9wcm9ncmVzc2l2ZS5WSV9VU0VDQVNFX1BST0RVQ1RfVFlQRS4uQzMuNzIwLmRhc2hfaDI2NC1iYXNpYy1nZW4yXzcyMHAiLCJ4cHZfYXNzZXRfaWQiOjEwMjc5MjE0NjMzMTQ1NDksImFzc2V0X2FnZV9kYXlzIjoxLCJ2aV91c2VjYXNlX2lkIjoxMDc5OSwiZHVyYXRpb25fcyI6NDYsInVybGdlbl9zb3VyY2UiOiJ3d3cifQ%3D%3D&ccb=17-1&vs=342aaab7167ca23c&_nc_vs=HBksFQIYRWZiX2VwaGVtZXJhbC8zMjRBMTJBRjBEQTdDMzg4OUJGNUIyNDczQzkyN0E5OF9tdF8xX3ZpZGVvX2Rhc2hpbml0Lm1wNBUAAsgBEgAVAhhAZmJfcGVybWFuZW50LzEzNENEMTIzRDZFRjFEQkM4RDZFRTBFRTkwMzI4OUFFX2F1ZGlvX2Rhc2hpbml0Lm1wNBUCAsgBEgAoABgAGwKIB3VzZV9vaWwBMRJwcm9ncmVzc2l2ZV9yZWNpcGUBMRUAACbqoeza87jTAxUCKAJDMywXQEd64UeuFHsYGWRhc2hfaDI2NC1iYXNpYy1nZW4yXzcyMHARAHUAZd6oAQA&_nc_gid=lhIFY--MTiE0jSMGY0iDnQ&_nc_ss=7f289&_nc_map=urlgen_bucketless&_nc_zt=28&oh=00_AQCVc162AbGWk-o2ltyJtkLfgmeOEYGNmvXPOjwZ4DLukw&oe=6A6D10D6
+College Vidya	1.58864E+15	https://www.facebook.com/ads/library/?id=1588638372653170	College Vidya	TRUE	26-07-2026	1.31206E+15	1	1	FACEBOOK, INSTAGRAM	Sign up	Join Webinar @ â‚¹99 | 29th July, 5:00PM	"â‚¹99 | 29th July 2026 | 5:00 PM IST
+Closing 6â€“7 admissions/month?
+Youâ€™re already doing the hard part â€” just not for yourself.
 
-```sql
-WITH campaign_leads AS (
-  SELECT DISTINCT ON (sla.student_id)
-    sla.student_id, sla.utm_campaign
-  FROM student_lead_activities sla
-  WHERE sla.utm_campaign = '919484958352'
-  ORDER BY sla.student_id, sla.created_at ASC
-),
-first_form AS (
-  SELECT cl.utm_campaign, csj.student_id, csj.course_id, MIN(csj.created_at) AS form_date
-  FROM course_status_journeys csj
-  JOIN campaign_leads cl ON cl.student_id = csj.student_id
-  WHERE csj.course_status IN (
-    'Form Submitted – Portal Pending','Form Submitted – Completed',
-    'Walkin Completed','Walkin Marked','Exam/Interview Scheduled',
-    'Offer Letter/Results Pending','Offer Letter/Results Released','Ready For Admission'
-  )
-  GROUP BY cl.utm_campaign, csj.student_id, csj.course_id
-),
-first_admission AS (
-  SELECT cl.utm_campaign, csj.student_id, csj.course_id, MIN(csj.created_at) AS adm_date
-  FROM course_status_journeys csj
-  JOIN campaign_leads cl ON cl.student_id = csj.student_id
-  WHERE csj.course_status IN ('Admission','Enrolled')
-  GROUP BY cl.utm_campaign, csj.student_id, csj.course_id
-)
-SELECT
-  cl.utm_campaign AS campaign_number,
-  COUNT(DISTINCT cl.student_id) AS leads,
-  COUNT(DISTINCT ff.student_id) AS applications,
-  COUNT(DISTINCT fa.student_id) AS admissions
-FROM campaign_leads cl
-LEFT JOIN first_form ff ON ff.student_id = cl.student_id AND ff.utm_campaign = cl.utm_campaign
-LEFT JOIN first_admission fa ON fa.student_id = cl.student_id AND fa.utm_campaign = cl.utm_campaign
-GROUP BY cl.utm_campaign
-```
+College Vidya is hosting a â‚¹99 webinar with Rohit Gupta (COO) to show how you can build your own education advisory business with zero investment and full backend support.
 
-WITH campaign_leads AS (
-  SELECT DISTINCT ON (sla.student_id)
-    sla.student_id, sla.utm_campaign
-  FROM student_lead_activities sla
-  WHERE sla.utm_campaign = '919484958353'
-  ORDER BY sla.student_id, sla.created_at ASC
-),
-first_form AS (
-  SELECT cl.utm_campaign, csj.student_id, csj.course_id, MIN(csj.created_at) AS form_date
-  FROM course_status_journeys csj
-  JOIN campaign_leads cl ON cl.student_id = csj.student_id
-  WHERE csj.course_status IN ('Application')
-  GROUP BY cl.utm_campaign, csj.student_id, csj.course_id
-),
-first_admission AS (
-  SELECT cl.utm_campaign, csj.student_id, csj.course_id, MIN(csj.created_at) AS adm_date
-  FROM course_status_journeys csj
-  JOIN campaign_leads cl ON cl.student_id = csj.student_id
-  WHERE csj.course_status IN ('Admission','Enrolled')
-    AND csj.fee_type NOT IN ('Partial Done','Partial Paid','Partially Paid')
-  GROUP BY cl.utm_campaign, csj.student_id, csj.course_id
-)
-SELECT
-  cl.utm_campaign AS campaign_number,
-  COUNT(DISTINCT cl.student_id) AS leads,
-  COUNT(DISTINCT ff.student_id) AS applications,
-  COUNT(DISTINCT fa.student_id) AS admissions
-FROM campaign_leads cl
-LEFT JOIN first_form ff ON ff.student_id = cl.student_id AND ff.utm_campaign = cl.utm_campaign
-LEFT JOIN first_admission fa ON fa.student_id = cl.student_id AND fa.utm_campaign = cl.utm_campaign
-GROUP BY cl.utm_campaign
+Clear model. Real revenue potential. Execution roadmap.
 
+Stop working for others. Build your own system."	https://collegevidya.in/masterclass-edtech-business/	VIDEO		https://video.fdel1-1.fna.fbcdn.net/o1/v/t2/f2/m366/AQPUQ64KHwWvjzRC9r6JeL4raQGgyu4zLfvNOtLG1s4JSIoGuOxWlqPlXQws_Qd1QmZ_0V3NJyBtKw9FBtTE7gWkLgOhi4Hzwy09-gqtOdmpcw.mp4?_nc_cat=104&_nc_oc=AdqXgHluALoUyU-0LhdQ7AixDyuvhK-bIEgaF071i-Q1AqXwK2oo_0ryQFdo1TKXcIrWF0GfrJYyBqPqdIaDI_6u&_nc_sid=b66105&_nc_ht=video.fdel1-1.fna.fbcdn.net&_nc_ohc=IB9iAekmwnkQ7kNvwEriv0E&efg=eyJ2ZW5jb2RlX3RhZyI6Inhwdl9wcm9ncmVzc2l2ZS5WSV9VU0VDQVNFX1BST0RVQ1RfVFlQRS4uQzMuNzIwLmRhc2hfaDI2NC1iYXNpYy1nZW4yXzcyMHAiLCJ4cHZfYXNzZXRfaWQiOjEwNjQwODEzODk3MDM5NzUsImFzc2V0X2FnZV9kYXlzIjoxLCJ2aV91c2VjYXNlX2lkIjoxMDc5OSwiZHVyYXRpb25fcyI6NDgsInVybGdlbl9zb3VyY2UiOiJ3d3cifQ%3D%3D&ccb=17-1&vs=1340a7b36e307cc1&_nc_vs=HBksFQIYRWZiX2VwaGVtZXJhbC82MDQ4RkM4OTU4NjkzMTE4NjhCMzJBRUZGQzQxMDJCRV9tdF8xX3ZpZGVvX2Rhc2hpbml0Lm1wNBUAAsgBEgAVAhhAZmJfcGVybWFuZW50LzUwNDc5OTlBMDAxMTg2MTk1QjA4RkFBODdBRDg1RUFBX2F1ZGlvX2Rhc2hpbml0Lm1wNBUCAsgBEgAoABgAGwKIB3VzZV9vaWwBMRJwcm9ncmVzc2l2ZV9yZWNpcGUBMRUAACbOzPaT2PHjAxUCKAJDMywXQEhZmZmZmZoYGWRhc2hfaDI2NC1iYXNpYy1nZW4yXzcyMHARAHUAZd6oAQA&_nc_gid=lhIFY--MTiE0jSMGY0iDnQ&_nc_ss=7f289&_nc_map=urlgen_bucketless&_nc_zt=28&oh=00_AQBjcwr4uHAFN0suegElOYbpyQDsxg5QO0veVhUfwcIVJA&oe=6A6D3B3C
+Learning Routes	1.35729E+15	https://www.facebook.com/ads/library/?id=1357286029711232	Learning Routes	TRUE	26-07-2026	8.05214E+14	1	1	FACEBOOK, INSTAGRAM	Apply now		"Elevate your career in the power & energy sector with a specialized MBA from UPES Online. ðŸŽ“
 
+Build management skills that align with real-world industry roles and stay ahead of the curve.
+
+âœ… UGC-Entitled & Recognized MBA
+âœ… Power-focused curriculum for professionals like you
+âœ… 100% online learning, designed to fit your schedule
+Boost your expertise and take on leadership roles with confidence!"	http://fb.me/	DCO	https://scontent.fdel1-8.fna.fbcdn.net/v/t39.35426-6/645072639_1414312983512903_5719796129475069996_n.jpg?_nc_cat=101&_nc_map=urlgen_bucketless&ccb=1-7&_nc_sid=c53f8f&_nc_ohc=CGyZ-bqHU7sQ7kNvwEP5jQH&_nc_oc=Adotu2fl1mtrgJ5tsDz-_wJkB6HUaeqCOT2ko8Ysn40QJgDSvFp_6WWiGpg53Jeczn-cNeXLTBf_fZSBDwp7_UlQ&_nc_zt=14&_nc_ht=scontent.fdel1-8.fna&_nc_gid=-zE9UUXdE3WKrEC69GA5JA&_nc_ss=7f289&oh=00_AQBPhcq9HHO1xWeUtjWvs-SJZZHKWsKaWzTUngkKsS9CuA&oe=6A6D2451; https://scontent.fdel1-6.fna.fbcdn.net/v/t39.35426-6/645424023_885241030944305_3011551832030685617_n.jpg?_nc_cat=103&_nc_map=urlgen_bucketless&ccb=1-7&_nc_sid=c53f8f&_nc_ohc=gSHPUODqXZwQ7kNvwFcj9O_&_nc_oc=AdryuubBKaEL1dl6MeRtCtrZYhqFcvEzKy0PZTnjZemlsrRH6y6Xo1RSXKHlnVqVMpgfRzlBkr9M60fN2aP6P88R&_nc_zt=14&_nc_ht=scontent.fdel1-6.fna&_nc_gid=-zE9UUXdE3WKrEC69GA5JA&_nc_ss=7f289&oh=00_AQB-C2Zvu5oCsLb7xY4EHue2qL5uDOGL_wItJV63rpLiIw&oe=6A6D0E74	
