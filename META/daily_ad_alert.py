@@ -10,7 +10,9 @@ cutoff, not a calendar day, so an ad launched shortly before yesterday's
 run still falls inside today's window and would be reported twice. The
 seen-set exists purely to suppress that overlap - it is not a backlog.
 Every ad the scraper returns is recorded as seen, including ones already
-outside the window, so nothing old can ever surface as "new" later.
+outside the window, so nothing old can ever surface as "new" later. Seen
+state is tracked per recipient, so a delivery failure to one WhatsApp
+recipient only retries for that recipient.
 
 Usage:
     python daily_ad_alert.py                 # scrape + send
@@ -85,8 +87,17 @@ log = logging.getLogger("ad_alert")
 
 
 def load_state() -> dict:
-    """Map of library_id -> ISO date first seen. Missing file is a normal
-    first run, not an error: the 1-day window keeps that run small."""
+    """Map of library_id -> {"date": ISO date first seen, "pending": [gid, ...]}.
+
+    `pending` is the set of recipients that have *not* been told about this ad
+    yet. Delivery is tracked per recipient because WHAPI can fail for one
+    recipient while succeeding for another - collapsing that into one flag
+    would resend the whole digest to everyone who already received it.
+
+    Missing file is a normal first run, not an error: the 1-day window keeps
+    that run small. Legacy entries (a bare ISO date string, written before
+    per-recipient tracking) mean "delivered to everyone".
+    """
     if not STATE_FILE.exists():
         return {}
     try:
@@ -94,14 +105,41 @@ def load_state() -> dict:
     except (json.JSONDecodeError, OSError) as exc:
         log.warning("state file unreadable (%s) - treating every ad as new", exc)
         return {}
-    return data if isinstance(data, dict) else {}
+    if not isinstance(data, dict):
+        return {}
+    state = {}
+    for key, value in data.items():
+        if isinstance(value, str):
+            state[key] = {"date": value, "pending": []}
+        elif isinstance(value, dict) and isinstance(value.get("date"), str):
+            pending = value.get("pending")
+            state[key] = {
+                "date": value["date"],
+                "pending": [g for g in pending if isinstance(g, str)] if isinstance(pending, list) else [],
+            }
+    return state
+
+
+def pending_for(state: dict, library_id: str) -> list[str]:
+    """Recipients still owed this ad - everyone, if it has never been seen."""
+    entry = state.get(library_id)
+    if entry is None:
+        return list(ALERT_RECIPIENTS)
+    return [g for g in entry["pending"] if g in ALERT_RECIPIENTS]
+
+
+def mark_delivered(state: dict, library_id: str, gid: str, today_iso: str) -> None:
+    entry = state.setdefault(
+        library_id, {"date": today_iso, "pending": list(ALERT_RECIPIENTS)}
+    )
+    entry["pending"] = [g for g in entry["pending"] if g != gid]
 
 
 def save_state(state: dict) -> None:
     """Prune ids well past any plausible window so the file stays small -
     an id older than the retention period can never re-enter the digest."""
     cutoff = (datetime.now(timezone.utc) - timedelta(days=STATE_RETENTION_DAYS)).date().isoformat()
-    pruned = {k: v for k, v in state.items() if v >= cutoff}
+    pruned = {k: v for k, v in state.items() if v["date"] >= cutoff}
     STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
     STATE_FILE.write_text(json.dumps(pruned, indent=0, sort_keys=True), encoding="utf-8")
 
@@ -336,34 +374,40 @@ def build_messages(new_rows: list[dict], quiet_names: list[str], total_comps: in
 # --------------------------------------------------------------------------
 
 
-def send_text(body: str) -> bool:
+def send_text(body: str, gid: str) -> bool:
     headers = {
         "accept": "application/json",
         "authorization": f"Bearer {WHAPI_TOKEN}",
         "content-type": "application/json",
     }
-    ok = True
-    for gid in ALERT_RECIPIENTS:
-        try:
-            resp = requests.post(
-                "https://gate.whapi.cloud/messages/text",
-                headers=headers,
-                json={"to": gid, "body": body},
-                # Generous: WHAPI has been observed taking >20s to ack a long
-                # text. Timing out early risks the message landing anyway while
-                # we record it as failed, which would duplicate it next run.
-                timeout=90,
-            )
-        except requests.RequestException as exc:
-            log.error("WHAPI request failed → %s: %s", gid, exc)
-            ok = False
-            continue
-        if 200 <= resp.status_code < 300:
-            log.info("sent → %s", gid)
-        else:
-            log.error("WHAPI HTTP %s → %s: %s", resp.status_code, gid, resp.text[:160])
-            ok = False
-    return ok
+    try:
+        resp = requests.post(
+            "https://gate.whapi.cloud/messages/text",
+            headers=headers,
+            json={"to": gid, "body": body},
+            # Generous: WHAPI has been observed taking >20s to ack a long
+            # text. Timing out early risks the message landing anyway while
+            # we record it as failed, which would duplicate it next run.
+            timeout=90,
+        )
+    except requests.RequestException as exc:
+        log.error("WHAPI request failed → %s: %s", gid, exc)
+        return False
+    if 200 <= resp.status_code < 300:
+        log.info("sent → %s", gid)
+        return True
+    log.error("WHAPI HTTP %s → %s: %s", resp.status_code, gid, resp.text[:160])
+    return False
+
+
+def send_all(messages: list[str], gid: str) -> bool:
+    """Send one recipient's whole digest. Stops at the first failure: the
+    remaining parts belong to the same digest, so sending them out of order
+    around a hole is worse than retrying the tail next run."""
+    for msg in messages:
+        if not send_text(msg, gid):
+            return False
+    return True
 
 
 # --------------------------------------------------------------------------
@@ -436,41 +480,48 @@ def main():
     # unreachable cutoff, which disables its own rolling date window.
     on_target = [r for r in all_raw if r.get("start_date") in target_days]
     in_window = select(on_target, datetime(1970, 1, 1, tzinfo=timezone.utc), args.include_dco)
-    new_rows = [r for r in in_window if r["library_id"] not in state]
+    undelivered = [r for r in in_window if pending_for(state, r["library_id"])]
     log.info(
-        "%d ads launched on target date(s), %d after filtering, %d not yet reported",
-        len(on_target), len(in_window), len(new_rows),
+        "%d ads launched on target date(s), %d after filtering, %d not yet reported to everyone",
+        len(on_target), len(in_window), len(undelivered),
     )
 
-    # A competitor is only "quiet" if it was actually scraped successfully -
-    # a failed page must never be reported as having launched nothing.
-    active = {r.get("competitor") for r in new_rows}
-    quiet = [c["name"] for c in competitors if c["name"] not in active and c["name"] not in failed]
-
-    messages = build_messages(new_rows, quiet, len(competitors) - len(failed), target_days)
-    if failed:
-        messages[-1] += "\n\n⚠️ _Could not check: " + ", ".join(failed) + "_"
+    def digest(rows: list[dict]) -> list[str]:
+        # A competitor is only "quiet" if it was actually scraped successfully -
+        # a failed page must never be reported as having launched nothing.
+        active = {r.get("competitor") for r in rows}
+        quiet = [c["name"] for c in competitors if c["name"] not in active and c["name"] not in failed]
+        messages = build_messages(rows, quiet, len(competitors) - len(failed), target_days)
+        if failed:
+            messages[-1] += "\n\n⚠️ _Could not check: " + ", ".join(failed) + "_"
+        return messages
 
     if args.local:
-        for msg in messages:
+        for msg in digest(undelivered):
             print("\n" + "=" * 60)
             print(msg)
         print("\n" + "=" * 60)
         log.info("--local: nothing sent, state file not updated")
         return
 
-    sent = all(send_text(msg) for msg in messages)
+    # Per recipient, because a failure to one must not cost the others their
+    # delivered state - otherwise the next run resends this digest to people
+    # who already got it.
+    any_failed = False
+    for gid in ALERT_RECIPIENTS:
+        rows = [r for r in in_window if gid in pending_for(state, r["library_id"])]
+        if send_all(digest(rows), gid):
+            # Record every ad seen this run, not just the reported ones, so ads
+            # that were already outside the window can never appear as new
+            # later.
+            for row in all_raw:
+                mark_delivered(state, row["library_id"], gid, today_iso)
+        else:
+            any_failed = True
+            log.error("send failed → %s - its ads stay pending and retry next run", gid)
 
-    # Record every ad seen this run, not just the reported ones, so ads that
-    # were already outside the window can never appear as new later. Only on
-    # a successful send - a failed send must leave the ads eligible for the
-    # next run rather than silently swallowing them.
-    if sent:
-        for row in all_raw:
-            state.setdefault(row["library_id"], today_iso)
-        save_state(state)
-    else:
-        log.error("send failed - state not updated, these ads will retry next run")
+    save_state(state)
+    if any_failed:
         sys.exit(1)
 
 
