@@ -1,26 +1,37 @@
-College Vidya	1.01029E+15	https://www.facebook.com/ads/library/?id=1010288418577859	College Vidya	TRUE	26-07-2026	2.46209E+15	1	1	FACEBOOK, INSTAGRAM	Sign up	Join Webinar @ â‚¹99 | 29th July, 5:00PM	"â‚¹99 | 29th July 2026 | 5:00 PM IST
-Closing 6â€“7 admissions/month?
-Youâ€™re already doing the hard part â€” just not for yourself.
+WITH admission_events AS (
+  SELECT student_id, course_id, created_at, INITCAP(TRIM(fee_type)) AS fee_type_clean
+  FROM course_status_journeys
+  WHERE course_status = 'Admission'
+    AND student_id IN (SELECT student_id FROM students)
+),
+deduped AS (
+  SELECT DISTINCT ON (student_id, course_id) student_id, course_id, created_at, fee_type_clean
+  FROM admission_events
+  ORDER BY student_id, course_id, created_at ASC
+),
+month_filtered AS (
+  SELECT * FROM deduped
+  WHERE created_at >= '2026-08-01'::date - INTERVAL '5 hours 30 minutes'
+    AND created_at < '2026-09-01'::date - INTERVAL '5 hours 30 minutes'
+),
+counsellor_admissions AS (
+  SELECT s.assigned_counsellor_id, d.fee_type_clean
+  FROM month_filtered d JOIN students s ON s.student_id = d.student_id
+)
+SELECT COALESCE(to_c.counsellor_name,'Unassigned Team') AS team_owner,
+       l2.counsellor_name AS counsellor_name,
+       COUNT(*) AS total_admissions,
+       COUNT(*) FILTER (WHERE ca.fee_type_clean IN ('Partial Paid','Partially Paid','Partial Done')) AS partial_paid,
+       COUNT(*) FILTER (WHERE ca.fee_type_clean ILIKE '%Annual%') AS annual_paid,
+       COUNT(*) FILTER (WHERE ca.fee_type_clean ILIKE '%Semester%') AS semester_paid,
+       COUNT(*) FILTER (WHERE ca.fee_type_clean ILIKE '%Full%') AS full_paid,
+       COUNT(*) FILTER (WHERE ca.fee_type_clean NOT ILIKE '%Annual%' AND ca.fee_type_clean NOT ILIKE '%Semester%'
+                          AND ca.fee_type_clean NOT ILIKE '%Full%'
+                          AND ca.fee_type_clean NOT IN ('Partial Paid','Partially Paid','Partial Done')) AS other_unspecified
+FROM counsellor_admissions ca
+JOIN counsellors l2 ON l2.counsellor_id = ca.assigned_counsellor_id
+LEFT JOIN counsellors to_c ON to_c.counsellor_id = l2.assigned_to
+GROUP BY to_c.counsellor_name, l2.counsellor_name
+ORDER BY to_c.counsellor_name NULLS LAST, total_admissions DESC
 
-College Vidya is hosting a â‚¹99 webinar with Rohit Gupta (COO) to show how you can build your own education advisory business with zero investment and full backend support.
 
-Clear model. Real revenue potential. Execution roadmap.
-
-Stop working for others. Build your own system."	https://collegevidya.in/masterclass-edtech-business/	VIDEO		https://video.fdel1-5.fna.fbcdn.net/o1/v/t2/f2/m366/AQMoeZFrKiQ30wjm1IVNzDl8F-NOn05DsFLu7iiKxvYTmX7gfqkoyXvNziB3ZfTj0qA_jSvfNsyyU91MprWarEaQAWwXEIHHMWmm9FG7hGb52A.mp4?_nc_cat=106&_nc_oc=AdobQy7ncm4BHymRdnGCnQ2pPmt3zxBf9jH0irPuG8C5mgjX-IwOEv9akFawocJO5aeM3Hqu5i1FGxwEArlob-te&_nc_sid=b66105&_nc_ht=video.fdel1-5.fna.fbcdn.net&_nc_ohc=9ldMjFoYV7wQ7kNvwGSZq4X&efg=eyJ2ZW5jb2RlX3RhZyI6Inhwdl9wcm9ncmVzc2l2ZS5WSV9VU0VDQVNFX1BST0RVQ1RfVFlQRS4uQzMuNzIwLmRhc2hfaDI2NC1iYXNpYy1nZW4yXzcyMHAiLCJ4cHZfYXNzZXRfaWQiOjEwMjc5MjE0NjMzMTQ1NDksImFzc2V0X2FnZV9kYXlzIjoxLCJ2aV91c2VjYXNlX2lkIjoxMDc5OSwiZHVyYXRpb25fcyI6NDYsInVybGdlbl9zb3VyY2UiOiJ3d3cifQ%3D%3D&ccb=17-1&vs=342aaab7167ca23c&_nc_vs=HBksFQIYRWZiX2VwaGVtZXJhbC8zMjRBMTJBRjBEQTdDMzg4OUJGNUIyNDczQzkyN0E5OF9tdF8xX3ZpZGVvX2Rhc2hpbml0Lm1wNBUAAsgBEgAVAhhAZmJfcGVybWFuZW50LzEzNENEMTIzRDZFRjFEQkM4RDZFRTBFRTkwMzI4OUFFX2F1ZGlvX2Rhc2hpbml0Lm1wNBUCAsgBEgAoABgAGwKIB3VzZV9vaWwBMRJwcm9ncmVzc2l2ZV9yZWNpcGUBMRUAACbqoeza87jTAxUCKAJDMywXQEd64UeuFHsYGWRhc2hfaDI2NC1iYXNpYy1nZW4yXzcyMHARAHUAZd6oAQA&_nc_gid=lhIFY--MTiE0jSMGY0iDnQ&_nc_ss=7f289&_nc_map=urlgen_bucketless&_nc_zt=28&oh=00_AQCVc162AbGWk-o2ltyJtkLfgmeOEYGNmvXPOjwZ4DLukw&oe=6A6D10D6
-College Vidya	1.58864E+15	https://www.facebook.com/ads/library/?id=1588638372653170	College Vidya	TRUE	26-07-2026	1.31206E+15	1	1	FACEBOOK, INSTAGRAM	Sign up	Join Webinar @ â‚¹99 | 29th July, 5:00PM	"â‚¹99 | 29th July 2026 | 5:00 PM IST
-Closing 6â€“7 admissions/month?
-Youâ€™re already doing the hard part â€” just not for yourself.
-
-College Vidya is hosting a â‚¹99 webinar with Rohit Gupta (COO) to show how you can build your own education advisory business with zero investment and full backend support.
-
-Clear model. Real revenue potential. Execution roadmap.
-
-Stop working for others. Build your own system."	https://collegevidya.in/masterclass-edtech-business/	VIDEO		https://video.fdel1-1.fna.fbcdn.net/o1/v/t2/f2/m366/AQPUQ64KHwWvjzRC9r6JeL4raQGgyu4zLfvNOtLG1s4JSIoGuOxWlqPlXQws_Qd1QmZ_0V3NJyBtKw9FBtTE7gWkLgOhi4Hzwy09-gqtOdmpcw.mp4?_nc_cat=104&_nc_oc=AdqXgHluALoUyU-0LhdQ7AixDyuvhK-bIEgaF071i-Q1AqXwK2oo_0ryQFdo1TKXcIrWF0GfrJYyBqPqdIaDI_6u&_nc_sid=b66105&_nc_ht=video.fdel1-1.fna.fbcdn.net&_nc_ohc=IB9iAekmwnkQ7kNvwEriv0E&efg=eyJ2ZW5jb2RlX3RhZyI6Inhwdl9wcm9ncmVzc2l2ZS5WSV9VU0VDQVNFX1BST0RVQ1RfVFlQRS4uQzMuNzIwLmRhc2hfaDI2NC1iYXNpYy1nZW4yXzcyMHAiLCJ4cHZfYXNzZXRfaWQiOjEwNjQwODEzODk3MDM5NzUsImFzc2V0X2FnZV9kYXlzIjoxLCJ2aV91c2VjYXNlX2lkIjoxMDc5OSwiZHVyYXRpb25fcyI6NDgsInVybGdlbl9zb3VyY2UiOiJ3d3cifQ%3D%3D&ccb=17-1&vs=1340a7b36e307cc1&_nc_vs=HBksFQIYRWZiX2VwaGVtZXJhbC82MDQ4RkM4OTU4NjkzMTE4NjhCMzJBRUZGQzQxMDJCRV9tdF8xX3ZpZGVvX2Rhc2hpbml0Lm1wNBUAAsgBEgAVAhhAZmJfcGVybWFuZW50LzUwNDc5OTlBMDAxMTg2MTk1QjA4RkFBODdBRDg1RUFBX2F1ZGlvX2Rhc2hpbml0Lm1wNBUCAsgBEgAoABgAGwKIB3VzZV9vaWwBMRJwcm9ncmVzc2l2ZV9yZWNpcGUBMRUAACbOzPaT2PHjAxUCKAJDMywXQEhZmZmZmZoYGWRhc2hfaDI2NC1iYXNpYy1nZW4yXzcyMHARAHUAZd6oAQA&_nc_gid=lhIFY--MTiE0jSMGY0iDnQ&_nc_ss=7f289&_nc_map=urlgen_bucketless&_nc_zt=28&oh=00_AQBjcwr4uHAFN0suegElOYbpyQDsxg5QO0veVhUfwcIVJA&oe=6A6D3B3C
-Learning Routes	1.35729E+15	https://www.facebook.com/ads/library/?id=1357286029711232	Learning Routes	TRUE	26-07-2026	8.05214E+14	1	1	FACEBOOK, INSTAGRAM	Apply now		"Elevate your career in the power & energy sector with a specialized MBA from UPES Online. ðŸŽ“
-
-Build management skills that align with real-world industry roles and stay ahead of the curve.
-
-âœ… UGC-Entitled & Recognized MBA
-âœ… Power-focused curriculum for professionals like you
-âœ… 100% online learning, designed to fit your schedule
-Boost your expertise and take on leadership roles with confidence!"	http://fb.me/	DCO	https://scontent.fdel1-8.fna.fbcdn.net/v/t39.35426-6/645072639_1414312983512903_5719796129475069996_n.jpg?_nc_cat=101&_nc_map=urlgen_bucketless&ccb=1-7&_nc_sid=c53f8f&_nc_ohc=CGyZ-bqHU7sQ7kNvwEP5jQH&_nc_oc=Adotu2fl1mtrgJ5tsDz-_wJkB6HUaeqCOT2ko8Ysn40QJgDSvFp_6WWiGpg53Jeczn-cNeXLTBf_fZSBDwp7_UlQ&_nc_zt=14&_nc_ht=scontent.fdel1-8.fna&_nc_gid=-zE9UUXdE3WKrEC69GA5JA&_nc_ss=7f289&oh=00_AQBPhcq9HHO1xWeUtjWvs-SJZZHKWsKaWzTUngkKsS9CuA&oe=6A6D2451; https://scontent.fdel1-6.fna.fbcdn.net/v/t39.35426-6/645424023_885241030944305_3011551832030685617_n.jpg?_nc_cat=103&_nc_map=urlgen_bucketless&ccb=1-7&_nc_sid=c53f8f&_nc_ohc=gSHPUODqXZwQ7kNvwFcj9O_&_nc_oc=AdryuubBKaEL1dl6MeRtCtrZYhqFcvEzKy0PZTnjZemlsrRH6y6Xo1RSXKHlnVqVMpgfRzlBkr9M60fN2aP6P88R&_nc_zt=14&_nc_ht=scontent.fdel1-6.fna&_nc_gid=-zE9UUXdE3WKrEC69GA5JA&_nc_ss=7f289&oh=00_AQB-C2Zvu5oCsLb7xY4EHue2qL5uDOGL_wItJV63rpLiIw&oe=6A6D0E74	
