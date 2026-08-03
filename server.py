@@ -10,6 +10,7 @@ Long-running process that runs report scripts on schedule (UTC times, IST-equiva
   • Bhugoal Report                  → bhugoal_generate_report.py
   • Callback Reports (Today+Overdue)→ generate_callback_reports.py
   • IVR Extension Report (Call x LMS)→ generate_ivr_extension_report.py
+  • Admission Ledger (Daily + MTD)  → generate_admission_ledger_reports.py
 
 Uses APScheduler with cron triggers — no manual loop, no duplicate-run tracking.
 Usage:  python server.py
@@ -278,6 +279,14 @@ for _utc_h in range(4, 17, 4):
     )
 
 
+# ─── Admission Ledger (Daily + MTD) ───────────────────────────────────────────
+# 8:30 AM IST = UTC 03:00 → matches the report's own 8:30 AM day-boundary cutoff.
+ADMISSION_LEDGER_SCHEDULE = [
+    (3, 0, "generate_admission_ledger_reports.py",
+     "Admission Ledger (Daily + MTD) — 08:30 IST", None),
+]
+
+
 def ist_now():
     return datetime.now(IST)
 
@@ -410,6 +419,14 @@ def main():
             id=label,
         )
 
+    for hour, minute, script, label, args_fn in ADMISSION_LEDGER_SCHEDULE:
+        scheduler.add_job(
+            run_script,
+            trigger=CronTrigger(hour=hour, minute=minute),
+            args=[script, label, args_fn],
+            id=label,
+        )
+
     scheduler.add_job(
         cleanup_old_reports,
         trigger=CronTrigger(hour=18, minute=30),  # midnight IST
@@ -423,7 +440,7 @@ def main():
     print(f"  Server time (IST): {datetime.now(IST).strftime('%Y-%m-%d %H:%M:%S %Z')}\n", flush=True)
 
     print("  SCHEDULE:", flush=True)
-    for h, m, _, label, _ in SCHEDULE + CALL_SCHEDULE + REGULAR_OUTBOUND_SCHEDULE + GREETER_SCHEDULE + CALLBACK_SCHEDULE + IVR_EXTENSION_SCHEDULE:
+    for h, m, _, label, _ in SCHEDULE + CALL_SCHEDULE + REGULAR_OUTBOUND_SCHEDULE + GREETER_SCHEDULE + CALLBACK_SCHEDULE + IVR_EXTENSION_SCHEDULE + ADMISSION_LEDGER_SCHEDULE:
         ist_h = (h + 5) % 24
         ist_m = m + 30
         if ist_m >= 60:
