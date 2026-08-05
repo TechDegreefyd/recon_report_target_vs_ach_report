@@ -280,10 +280,10 @@ for _utc_h in range(4, 17, 4):
 
 
 # ─── Admission Ledger (Daily + MTD) ───────────────────────────────────────────
-# 8:30 AM IST = UTC 03:00 → matches the report's own 8:30 AM day-boundary cutoff.
+# 8:30 PM IST = UTC 15:00 → matches the report's own 8:30 PM day-boundary cutoff.
 ADMISSION_LEDGER_SCHEDULE = [
-    (3, 0, "generate_admission_ledger_reports.py",
-     "Admission Ledger (Daily + MTD) — 08:30 IST", None),
+    (15, 0, "generate_admission_ledger_reports.py",
+     "Admission Ledger (Daily + MTD) — 20:30 IST", None),
 ]
 
 

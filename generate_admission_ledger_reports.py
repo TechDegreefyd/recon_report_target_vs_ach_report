@@ -80,18 +80,18 @@ REPORT_DATE = datetime.strptime(REPORT_DATE_STR, '%Y-%m-%d').date()
 MONTH_START = REPORT_DATE.replace(day=1)
 
 # ─── Day-boundary cutoff ──────────────────────────────────────────────────────
-# Admissions are cut off at 8:30 AM IST — anything marked after 8:30 rolls into
+# Admissions are cut off at 8:30 PM IST — anything marked after 8:30 PM rolls into
 # the NEXT day's daily/monthly window instead of the current one.
 IST_OFFSET   = timedelta(hours=5, minutes=30)
-CUTOFF_TIME  = timedelta(hours=8, minutes=30)
+CUTOFF_TIME  = timedelta(hours=20, minutes=30)
 
 
 def cutoff_instant(d):
-    """Naive UTC instant for the 8:30 AM IST cutoff on calendar date d."""
+    """Naive UTC instant for the 8:30 PM IST cutoff on calendar date d."""
     return datetime(d.year, d.month, d.day) + CUTOFF_TIME - IST_OFFSET
 
 
-print(f"📅 Report Date: {REPORT_DATE_STR}  (day boundary = 8:30 AM IST)")
+print(f"📅 Report Date: {REPORT_DATE_STR}  (day boundary = 8:30 PM IST)")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -423,7 +423,7 @@ async def main():
             print(f"   ✗  {key} = NOT SET")
 
     # ── DAILY ────────────────────────────────────────────────────────────
-    # Window = [8:30 AM IST on the previous day, 8:30 AM IST on REPORT_DATE)
+    # Window = [8:30 PM IST on the previous day, 8:30 PM IST on REPORT_DATE)
     daily_start = cutoff_instant(REPORT_DATE - timedelta(days=1))
     daily_end   = cutoff_instant(REPORT_DATE)
     print("\n─── Fetching: Daily admissions ────────────────────────────────")
@@ -443,14 +443,14 @@ async def main():
         daily_rows,
         title="The Daily Ledger",
         stamp_label=date_display.upper(),
-        note=f"Window covers {date_display}, 8:30 AM cutoff — admissions marked after 8:30 AM roll into the next day's report.",
+        note=f"Window covers {date_display}, 8:30 PM cutoff — admissions marked after 8:30 PM roll into the next day's report.",
         page_title=f"Daily Ledger — {date_display}",
         filename_stub="Daily_Ledger",
         caption=f"📒 Daily Ledger — {date_display}\n{daily_total} total admissions",
     )
 
     # ── MTD ──────────────────────────────────────────────────────────────
-    # Window = [8:30 AM IST on the day before month start, 8:30 AM IST on REPORT_DATE)
+    # Window = [8:30 PM IST on the day before month start, 8:30 PM IST on REPORT_DATE)
     mtd_start = cutoff_instant(MONTH_START - timedelta(days=1))
     mtd_end   = cutoff_instant(REPORT_DATE)
     print("\n─── Fetching: Month-to-date admissions ─────────────────────────")
@@ -468,7 +468,7 @@ async def main():
     month_label = MONTH_START.strftime('%b %Y').upper()
     mtd_stamp = f"{month_label} · MTD (1–{REPORT_DATE.day})"
     mtd_note = (f"Window covers {MONTH_START.strftime(_day_fmt() + ' %b')}–{date_display}, "
-                f"8:30 AM cutoff (month-to-date) — admissions marked after 8:30 AM roll into the next day.")
+                f"8:30 PM cutoff (month-to-date) — admissions marked after 8:30 PM roll into the next day.")
     await build_and_send(
         mtd_rows,
         title="The Monthly Ledger",
