@@ -53,6 +53,7 @@ args = parser.parse_args()
 
 WHAPI_TOKEN = os.getenv('WHAPI_TOKEN_PAID')
 WHATSAPP_GROUP_REGULAR_LMS = args.group or os.getenv('WHATSAPP_GROUP_REGULAR_LMS')
+WHATSAPP_TAG_NUMBER = os.getenv('WHATSAPP_COMPETITOR_ADS_TO')
 
 OUTPUT_DIR = os.path.join(_DIR, 'Automation Cron Job', 'IVR Extension Report')
 os.makedirs(OUTPUT_DIR, exist_ok=True)
@@ -741,6 +742,8 @@ def send_via_whapi(file_path, caption, group_id):
         b64 = base64.b64encode(f.read()).decode('utf-8')
     media_data = f'data:image/png;name={os.path.basename(file_path)};base64,{b64}'
     payload = {'to': group_id, 'media': media_data, 'caption': caption}
+    if WHATSAPP_TAG_NUMBER:
+        payload['mentions'] = [WHATSAPP_TAG_NUMBER]
     headers = {'accept': 'application/json', 'authorization': f'Bearer {WHAPI_TOKEN}', 'content-type': 'application/json'}
 
     for attempt in range(2):
@@ -793,6 +796,8 @@ async def main():
             f'MTD: {mtd_grand["total_calls"]} calls, {mtd_grand["leads"]} leads, '
             f'{mtd_grand["app"]} app, {mtd_grand["adm"]} adm ({mtd_grand["l2a"]}% L2A)'
         )
+        if WHATSAPP_TAG_NUMBER:
+            caption += f'\n@{WHATSAPP_TAG_NUMBER}'
         send_via_whapi(png_path, caption, WHATSAPP_GROUP_REGULAR_LMS)
     else:
         log('  ⚠️  Skipping WhatsApp send — screenshot unavailable')
