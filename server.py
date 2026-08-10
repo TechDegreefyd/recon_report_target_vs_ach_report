@@ -379,29 +379,31 @@ def main():
             id=label,
         )
 
-    for hour, minute, script, label, args_fn in CALL_SCHEDULE:
-        scheduler.add_job(
-            run_script,
-            trigger=CronTrigger(hour=hour, minute=minute),
-            args=[script, label, args_fn],
-            id=label,
-        )
+    # Outbound reports paused — jobs not registered. Re-enable by uncommenting.
+    # for hour, minute, script, label, args_fn in CALL_SCHEDULE:
+    #     scheduler.add_job(
+    #         run_script,
+    #         trigger=CronTrigger(hour=hour, minute=minute),
+    #         args=[script, label, args_fn],
+    #         id=label,
+    #     )
 
-    for hour, minute, script, label, args_fn in REGULAR_OUTBOUND_SCHEDULE:
-        scheduler.add_job(
-            run_script,
-            trigger=CronTrigger(hour=hour, minute=minute),
-            args=[script, label, args_fn],
-            id=label,
-        )
+    # for hour, minute, script, label, args_fn in REGULAR_OUTBOUND_SCHEDULE:
+    #     scheduler.add_job(
+    #         run_script,
+    #         trigger=CronTrigger(hour=hour, minute=minute),
+    #         args=[script, label, args_fn],
+    #         id=label,
+    #     )
 
-    for hour, minute, script, label, args_fn in GREETER_SCHEDULE:
-        scheduler.add_job(
-            run_script,
-            trigger=CronTrigger(hour=hour, minute=minute),
-            args=[script, label, args_fn],
-            id=label,
-        )
+    # Greeter reports paused — jobs not registered. Re-enable by uncommenting.
+    # for hour, minute, script, label, args_fn in GREETER_SCHEDULE:
+    #     scheduler.add_job(
+    #         run_script,
+    #         trigger=CronTrigger(hour=hour, minute=minute),
+    #         args=[script, label, args_fn],
+    #         id=label,
+    #     )
 
     for hour, minute, script, label, args_fn in CALLBACK_SCHEDULE:
         scheduler.add_job(
@@ -440,7 +442,7 @@ def main():
     print(f"  Server time (IST): {datetime.now(IST).strftime('%Y-%m-%d %H:%M:%S %Z')}\n", flush=True)
 
     print("  SCHEDULE:", flush=True)
-    for h, m, _, label, _ in SCHEDULE + CALL_SCHEDULE + REGULAR_OUTBOUND_SCHEDULE + GREETER_SCHEDULE + CALLBACK_SCHEDULE + IVR_EXTENSION_SCHEDULE + ADMISSION_LEDGER_SCHEDULE:
+    for h, m, _, label, _ in SCHEDULE + CALLBACK_SCHEDULE + IVR_EXTENSION_SCHEDULE + ADMISSION_LEDGER_SCHEDULE:
         ist_h = (h + 5) % 24
         ist_m = m + 30
         if ist_m >= 60:
@@ -483,10 +485,12 @@ def main():
             print("=" * 70, flush=True)
             run_script("generate_all_lms_reports.py",    "SMOKE TEST — LMS Reports (admin group only)",          None,            extra_env=_smoke_env)
             run_script("generate_all_recon_reports.py",  "SMOKE TEST — Recon Report (yesterday full day)",       _yesterday_full, extra_env=_smoke_env)
-            run_script("generate_outbound_report.py",    "SMOKE TEST — Outbound Cumulative (admin group only)",
-                       lambda: ['--from-time', _smoke_from, '--to-time', _smoke_to, '--group', _SMOKE_GROUP], extra_env=_smoke_env)
-            run_script("generate_greeter_report.py",     "SMOKE TEST — Greeter Cumulative (admin group only)",
-                       lambda: ['--from-time', _smoke_from, '--to-time', _smoke_to, '--group', _SMOKE_GROUP], extra_env=_smoke_env)
+            # Outbound reports paused — skip in smoke test too.
+            # run_script("generate_outbound_report.py",    "SMOKE TEST — Outbound Cumulative (admin group only)",
+            #            lambda: ['--from-time', _smoke_from, '--to-time', _smoke_to, '--group', _SMOKE_GROUP], extra_env=_smoke_env)
+            # Greeter reports paused — skip in smoke test too.
+            # run_script("generate_greeter_report.py",     "SMOKE TEST — Greeter Cumulative (admin group only)",
+            #            lambda: ['--from-time', _smoke_from, '--to-time', _smoke_to, '--group', _SMOKE_GROUP], extra_env=_smoke_env)
             run_script(os.path.join("META", "daily_ad_alert.py"),
                        "SMOKE TEST — Competitor Ad Alert (admin group only)",  None, extra_env=_smoke_env)
             print("=" * 70, flush=True)
