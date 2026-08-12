@@ -3,11 +3,12 @@
 Call Extension Report — Greeter IVR numbers x LMS Application/Admission funnel.
 
 Numbers covered (Normal IVR group, per user):
-  919484958351  CU LPU Combined   — College Specific
-  919484958352  Amity             — College Specific
-  919484958353  CU Online         — College Specific
-  919484958355  DSA               — Generic
-(956/954 numbers are intentionally excluded.)
+  919484958351  CU LPU Combined   — College Specific (REGULAR db, broad)
+  919484958352  Amity             — College Specific (AMITY db, broad)
+  919484958353  CU Online         — College Specific (ONLINE db, online)
+  919484958354  GLA Online        — College Specific (ONLINE db, online)
+  919484958355  DSA               — Generic (REGULAR db, broad)
+  919484958356  CTPL Campuses     — College Specific (REGULAR db, broad)
 
 Pipeline:
   1. Greeter (admin_call_log_list, session-scoped per DID) → Total Calls, Answered,
@@ -69,9 +70,11 @@ NUMBERS = {
     '919484958351': {'label': 'CU LPU Combined',  'group': 'Specific'},
     '919484958352': {'label': 'Amity',            'group': 'Specific'},
     '919484958353': {'label': 'CU Online',        'group': 'Specific'},
+    '919484958354': {'label': 'GLA Online',       'group': 'Specific'},
     '919484958355': {'label': 'DSA',              'group': 'Generic'},
+    '919484958356': {'label': 'CTPL Campuses',    'group': 'Specific'},
 }
-SPECIFIC_ORDER = ['919484958351', '919484958352', '919484958353']
+SPECIFIC_ORDER = ['919484958351', '919484958352', '919484958353', '919484958354', '919484958356']
 GENERIC_ORDER  = ['919484958355']
 
 # Each number's Leads/App/Adm come from exactly ONE dedicated LMS DB — per the
@@ -100,8 +103,10 @@ LMS_DB_CONFIGS = {
 NUMBER_DB_ROUTE = {
     '919484958351': ('REGULAR', 'broad'),   # CU LPU Combined
     '919484958355': ('REGULAR', 'broad'),   # DSA
+    '919484958356': ('REGULAR', 'broad'),   # CTPL Campuses
     '919484958352': ('AMITY',   'broad'),   # Amity — no fee_type exclusion on admissions
     '919484958353': ('ONLINE',  'online'),  # CU Online
+    '919484958354': ('ONLINE',  'online'),  # GLA Online
 }
 
 _FORM_STATUSES_BROAD = (
