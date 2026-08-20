@@ -3,23 +3,23 @@
 Call Extension Report — Greeter IVR numbers x LMS Application/Admission funnel.
 
 Numbers covered (Normal IVR group, per user):
-  919484958351  CU LPU Combined   — College Specific (REGULAR db, broad)
-  919484958352  Amity             — College Specific (AMITY db, broad)
-  919484958353  CU Online         — College Specific (ONLINE db, online)
-  919484958354  GLA Online        — College Specific (ONLINE db, online)
-  919484958355  DSA               — Generic (REGULAR db, broad)
-  919484958356  CTPL Campuses     — College Specific (REGULAR db, broad)
+919484958351  CU LPU Combined   — College Specific (REGULAR db, broad)
+919484958352  Amity             — College Specific (AMITY db, broad)
+919484958353  CU Online         — College Specific (ONLINE db, online)
+919484958354  GLA Online        — College Specific (ONLINE db, online)
+919484958355  DSA               — Generic (REGULAR db, broad)
+919484958356  CTPL Campuses     — College Specific (REGULAR db, broad)
 
 Pipeline:
-  1. Greeter (admin_call_log_list, session-scoped per DID) → Total Calls, Answered,
-     Unique Calls, Unique Calls Answered — for FTD (today) and MTD (month to date).
-  2. LMS DBs (Online / Regular / Amity) → for each number, find students where
-     source ILIKE '%ivr%' AND first_source_url = <number>. Leads = distinct such
-     students created within the window. App/Adm = how many of those students'
-     course journeys hit Application / Admission status within the window.
-     Summed across all 3 DBs (a number's leads can land in more than one DB).
-  3. L2F% = App / Leads (lead-to-form), L2A% = Adm / Leads (lead-to-admission) — in that order.
-  4. Screenshot the HTML (Playwright) and send it to WhatsApp via WHAPI.
+1. Greeter (admin_call_log_list, session-scoped per DID) → Total Calls, Answered,
+    Unique Calls, Unique Calls Answered — for FTD (today) and MTD (month to date).
+2. LMS DBs (Online / Regular / Amity) → for each number, find students where
+    source ILIKE '%ivr%' AND first_source_url = <number>. Leads = distinct such
+    students created within the window. App/Adm = how many of those students'
+    course journeys hit Application / Admission status within the window.
+    Summed across all 3 DBs (a number's leads can land in more than one DB).
+3. L2F% = App / Leads (lead-to-form), L2A% = Adm / Leads (lead-to-admission) — in that order.
+4. Screenshot the HTML (Playwright) and send it to WhatsApp via WHAPI.
 
 Usage:
     python generate_ivr_extension_report.py             # build HTML, screenshot, send to WhatsApp
@@ -264,20 +264,19 @@ def _bucket(dates, ftd_d, mtd_s, mtd_e):
 
 async def db_fetch_number_funnel(conn, style, number, ftd_date, mtd_start, mtd_end):
     """
-    Mirrors new_report_queries.txt: leads = distinct students whose FIRST-ever
-    student_lead_activities row carries utm_campaign = <number>; App/Adm = whether
-    that student's course journey (any course) reached the form/admission status
-    set, keyed off that student's EARLIEST such event date.
+    Leads = students where source ILIKE '%ivr%' AND first_source_url = <number>.
+    App/Adm = whether that student's course journey (per course, then earliest
+    across courses) reached the form/admission status set, keyed off that
+    student's EARLIEST such event date.
     """
     form_status_clause = _FORM_STATUSES_ONLINE if style == 'online' else _FORM_STATUSES_BROAD
     adm_fee_clause = _ADM_FEE_EXCLUDE if style != 'amity' else ''
 
     leads_sql = """
-        SELECT DISTINCT ON (sla.student_id)
-            sla.student_id, (sla.created_at AT TIME ZONE 'Asia/Kolkata')::date AS d
-        FROM student_lead_activities sla
-        WHERE sla.utm_campaign = $1
-        ORDER BY sla.student_id, sla.created_at ASC
+        SELECT student_id, (created_at AT TIME ZONE 'Asia/Kolkata')::date AS d
+        FROM students
+        WHERE source ILIKE '%ivr%'
+        AND first_source_url = $1
     """
     lead_rows = await conn.fetch(leads_sql, number)
     student_ids = [r['student_id'] for r in lead_rows]
@@ -292,19 +291,27 @@ async def db_fetch_number_funnel(conn, style, number, ftd_date, mtd_start, mtd_e
         return {'ftd_leads': 0, 'mtd_leads': 0, 'ftd_app': 0, 'mtd_app': 0, 'ftd_adm': 0, 'mtd_adm': 0}
 
     form_sql = f"""
-        SELECT csj.student_id, MIN(csj.created_at AT TIME ZONE 'Asia/Kolkata')::date AS d
-        FROM course_status_journeys csj
-        WHERE csj.student_id = ANY($1::text[])
-          AND csj.course_status IN ({form_status_clause})
-        GROUP BY csj.student_id
+        SELECT student_id, MIN(d) AS d FROM (
+            SELECT csj.student_id, csj.course_id,
+                   MIN(csj.created_at AT TIME ZONE 'Asia/Kolkata')::date AS d
+            FROM course_status_journeys csj
+            WHERE csj.student_id = ANY($1::text[])
+            AND csj.course_status IN ({form_status_clause})
+            GROUP BY csj.student_id, csj.course_id
+        ) per_course
+        GROUP BY student_id
     """
     adm_sql = f"""
-        SELECT csj.student_id, MIN(csj.created_at AT TIME ZONE 'Asia/Kolkata')::date AS d
-        FROM course_status_journeys csj
-        WHERE csj.student_id = ANY($1::text[])
-          AND csj.course_status IN ('Admission', 'Enrolled')
-          {adm_fee_clause}
-        GROUP BY csj.student_id
+        SELECT student_id, MIN(d) AS d FROM (
+            SELECT csj.student_id, csj.course_id,
+                   MIN(csj.created_at AT TIME ZONE 'Asia/Kolkata')::date AS d
+            FROM course_status_journeys csj
+            WHERE csj.student_id = ANY($1::text[])
+            AND csj.course_status IN ('Admission', 'Enrolled')
+            {adm_fee_clause}
+            GROUP BY csj.student_id, csj.course_id
+        ) per_course
+        GROUP BY student_id
     """
     form_rows = await conn.fetch(form_sql, student_ids)
     adm_rows = await conn.fetch(adm_sql, student_ids)
@@ -402,67 +409,67 @@ def build_html(call_data, lms_data):
         def type_row(label, tot, extra_class='', numbers=None):
             badges = ''.join(f'<span class="num-badge">{n[-2:]}</span>' for n in (numbers or []))
             return f'''<tr class="type-row {extra_class}">
-              <td class="rowlabel" colspan="2"><span class="rowlabel-inner">{label} {badges}</span></td>
-              <td>{tot["total_calls"]}</td>
-              <td>{tot["answered"]}</td>
-              <td>{tot["unique_calls"]}</td>
-              <td>{tot["unique_answered"]}</td>
-              <td class="leads-cell">{tot["leads"]}</td>
-              <td>{tot["app"]}</td>
-              <td class="adm-cell">{tot["adm"]}</td>
-              <td>{pct_chip(tot["l2f"])}</td>
-              <td>{pct_chip(tot["l2a"])}</td>
+            <td class="rowlabel" colspan="2"><span class="rowlabel-inner">{label} {badges}</span></td>
+            <td>{tot["total_calls"]}</td>
+            <td>{tot["answered"]}</td>
+            <td>{tot["unique_calls"]}</td>
+            <td>{tot["unique_answered"]}</td>
+            <td class="leads-cell">{tot["leads"]}</td>
+            <td>{tot["app"]}</td>
+            <td class="adm-cell">{tot["adm"]}</td>
+            <td>{pct_chip(tot["l2f"])}</td>
+            <td>{pct_chip(tot["l2a"])}</td>
             </tr>'''
 
         def college_row(r):
             return f'''<tr class="college-row">
-              <td></td>
-              <td class="rowlabel"><span class="rowlabel-inner">{esc(r["label"])} <span class="num-badge">{r["number"][-2:]}</span></span></td>
-              <td>{r["total_calls"]}</td>
-              <td>{r["answered"]}</td>
-              <td>{r["unique_calls"]}</td>
-              <td>{r["unique_answered"]}</td>
-              <td class="leads-cell">{r["leads"]}</td>
-              <td>{r["app"]}</td>
-              <td class="adm-cell">{r["adm"]}</td>
-              <td>{pct_chip(r["l2f"])}</td>
-              <td>{pct_chip(r["l2a"])}</td>
+            <td></td>
+            <td class="rowlabel"><span class="rowlabel-inner">{esc(r["label"])} <span class="num-badge">{r["number"][-2:]}</span></span></td>
+            <td>{r["total_calls"]}</td>
+            <td>{r["answered"]}</td>
+            <td>{r["unique_calls"]}</td>
+            <td>{r["unique_answered"]}</td>
+            <td class="leads-cell">{r["leads"]}</td>
+            <td>{r["app"]}</td>
+            <td class="adm-cell">{r["adm"]}</td>
+            <td>{pct_chip(r["l2f"])}</td>
+            <td>{pct_chip(r["l2a"])}</td>
             </tr>'''
 
         rows_html  = type_row('Generic', generic_tot, 'generic', GENERIC_ORDER)
         rows_html += type_row('Specific', specific_tot, 'specific')
         rows_html += ''.join(college_row(r) for r in specific_rows)
         rows_html += f'''<tr class="grand-row">
-          <td class="rowlabel" colspan="2">Grand Total</td>
-          <td>{grand_tot["total_calls"]}</td>
-          <td>{grand_tot["answered"]}</td>
-          <td>{grand_tot["unique_calls"]}</td>
-          <td>{grand_tot["unique_answered"]}</td>
-          <td class="leads-cell">{grand_tot["leads"]}</td>
-          <td>{grand_tot["app"]}</td>
-          <td class="adm-cell">{grand_tot["adm"]}</td>
-          <td>{pct_chip(grand_tot["l2f"])}</td>
-          <td>{pct_chip(grand_tot["l2a"])}</td>
+        <td class="rowlabel" colspan="2">Grand Total</td>
+        <td>{grand_tot["total_calls"]}</td>
+        <td>{grand_tot["answered"]}</td>
+        <td>{grand_tot["unique_calls"]}</td>
+        <td>{grand_tot["unique_answered"]}</td>
+        <td class="leads-cell">{grand_tot["leads"]}</td>
+        <td>{grand_tot["app"]}</td>
+        <td class="adm-cell">{grand_tot["adm"]}</td>
+        <td>{pct_chip(grand_tot["l2f"])}</td>
+        <td>{pct_chip(grand_tot["l2a"])}</td>
         </tr>'''
 
         return f'''
         <div class="tcard">
-          <div class="tcard-head">
+        <div class="tcard-head">
             <span class="tcard-title">{title}</span>
             <span class="tcard-sub">{DATE_LABEL if window == 'ftd' else MTD_START + ' – ' + FTD_DATE}</span>
-          </div>
-          <div class="table-scroll">
-          <table>
+        </div>
+        <div class="table-scroll">
+        <table>
             <thead>
-              <tr>
+            <tr>
                 <th style="text-align:left" colspan="2">Type</th>
                 <th colspan="2" class="grp-calls">Calls</th>
                 <th colspan="2" class="grp-unique">Unique Calls</th>
                 <th class="grp-leads">Leads</th>
                 <th colspan="2" class="grp-funnel">Funnel</th>
                 <th colspan="2" class="grp-l2a">Conversion</th>
-              </tr>
-              <tr>
+            </tr>
+            <tr>
                 <th style="text-align:left" colspan="2"></th>
                 <th>Total</th>
                 <th>Answered</th>
@@ -473,11 +480,11 @@ def build_html(call_data, lms_data):
                 <th>Adm</th>
                 <th>L2F%</th>
                 <th>L2A%</th>
-              </tr>
+            </tr>
             </thead>
             <tbody>{rows_html}</tbody>
-          </table>
-          </div>
+        </table>
+        </div>
         </div>'''
 
     ftd_specific = [build_row(n, call_data, lms_data, 'ftd') for n in SPECIFIC_ORDER]
@@ -491,12 +498,12 @@ def build_html(call_data, lms_data):
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Call Extension Report · {DATE_LABEL}</title>
 <style>
-  @font-face {{
+@font-face {{
     font-family: 'Inter';
     src: local('Inter');
     font-weight: 400 800;
-  }}
-  :root {{
+}}
+:root {{
     --bg: #F8F9FB; --surface: #fff; --border: #e5e7eb; --border-soft: #f3f4f6; --table-border: #cbd1db;
     --thead-bg: #F5F6F8; --text: #111827; --text-dim: #4b5563; --text-mid: #1f2937; --text-soft: #374151;
     --pill-bg: #eef2ff; --pill-text: #4338ca; --pill-border: #c7d2fe;
@@ -506,21 +513,9 @@ def build_html(call_data, lms_data):
     --chip-o-bg: #fff7ed; --chip-o-text: #c2410c; --chip-o-border: #fed7aa;
     --chip-r-bg: #fef2f2; --chip-r-text: #dc2626; --chip-r-border: #fecaca;
     --typerow-bg: #fafafa;
-  }}
-  @media (prefers-color-scheme: dark) {{
+}}
+@media (prefers-color-scheme: dark) {{
     :root {{
-      --bg: #0f1117; --surface: #171a23; --border: #2a2e3a; --border-soft: #23262f; --table-border: #3c4152;
-      --thead-bg: #1c1f29; --text: #e8e9ee; --text-dim: #9298a8; --text-mid: #dcdee5; --text-soft: #c2c5d0;
-      --pill-bg: #232a4d; --pill-text: #a5b4fc; --pill-border: #363f6e;
-      --grand-bg: #05060a; --grand-text: #f4f5f8;
-      --leads-color: #f0b054; --adm-color: #4ade80;
-      --chip-g-bg: #10261a; --chip-g-text: #4ade80; --chip-g-border: #1f4a30;
-      --chip-o-bg: #2b1c0e; --chip-o-text: #fb923c; --chip-o-border: #4a3018;
-      --chip-r-bg: #2b1414; --chip-r-text: #f87171; --chip-r-border: #4a1f1f;
-      --typerow-bg: #1a1d27;
-    }}
-  }}
-  :root[data-theme="dark"] {{
     --bg: #0f1117; --surface: #171a23; --border: #2a2e3a; --border-soft: #23262f; --table-border: #3c4152;
     --thead-bg: #1c1f29; --text: #e8e9ee; --text-dim: #9298a8; --text-mid: #dcdee5; --text-soft: #c2c5d0;
     --pill-bg: #232a4d; --pill-text: #a5b4fc; --pill-border: #363f6e;
@@ -530,8 +525,20 @@ def build_html(call_data, lms_data):
     --chip-o-bg: #2b1c0e; --chip-o-text: #fb923c; --chip-o-border: #4a3018;
     --chip-r-bg: #2b1414; --chip-r-text: #f87171; --chip-r-border: #4a1f1f;
     --typerow-bg: #1a1d27;
-  }}
-  :root[data-theme="light"] {{
+    }}
+}}
+:root[data-theme="dark"] {{
+    --bg: #0f1117; --surface: #171a23; --border: #2a2e3a; --border-soft: #23262f; --table-border: #3c4152;
+    --thead-bg: #1c1f29; --text: #e8e9ee; --text-dim: #9298a8; --text-mid: #dcdee5; --text-soft: #c2c5d0;
+    --pill-bg: #232a4d; --pill-text: #a5b4fc; --pill-border: #363f6e;
+    --grand-bg: #05060a; --grand-text: #f4f5f8;
+    --leads-color: #f0b054; --adm-color: #4ade80;
+    --chip-g-bg: #10261a; --chip-g-text: #4ade80; --chip-g-border: #1f4a30;
+    --chip-o-bg: #2b1c0e; --chip-o-text: #fb923c; --chip-o-border: #4a3018;
+    --chip-r-bg: #2b1414; --chip-r-text: #f87171; --chip-r-border: #4a1f1f;
+    --typerow-bg: #1a1d27;
+}}
+:root[data-theme="light"] {{
     --bg: #F8F9FB; --surface: #fff; --border: #e5e7eb; --border-soft: #f3f4f6; --table-border: #cbd1db;
     --thead-bg: #F5F6F8; --text: #111827; --text-dim: #4b5563; --text-mid: #1f2937; --text-soft: #374151;
     --pill-bg: #eef2ff; --pill-text: #4338ca; --pill-border: #c7d2fe;
@@ -541,10 +548,10 @@ def build_html(call_data, lms_data):
     --chip-o-bg: #fff7ed; --chip-o-text: #c2410c; --chip-o-border: #fed7aa;
     --chip-r-bg: #fef2f2; --chip-r-text: #dc2626; --chip-r-border: #fecaca;
     --typerow-bg: #fafafa;
-  }}
+}}
 
-  *, *::before, *::after {{ box-sizing: border-box; margin: 0; padding: 0; }}
-  body {{
+*, *::before, *::after {{ box-sizing: border-box; margin: 0; padding: 0; }}
+body {{
     font-family: 'Inter', system-ui, sans-serif;
     background: var(--bg);
     color: var(--text);
@@ -552,103 +559,103 @@ def build_html(call_data, lms_data):
     font-size: 15px;
     line-height: 1.5;
     -webkit-font-smoothing: antialiased;
-  }}
-  .topbar {{ display: flex; align-items: center; justify-content: space-between; margin-bottom: 28px; }}
-  .topbar-left {{ display: flex; align-items: center; gap: 14px; }}
-  .logo-mark {{
+}}
+.topbar {{ display: flex; align-items: center; justify-content: space-between; margin-bottom: 28px; }}
+.topbar-left {{ display: flex; align-items: center; gap: 14px; }}
+.logo-mark {{
     width: 40px; height: 40px; border-radius: 10px;
     background: linear-gradient(135deg,#4338ca,#7c3aed);
     display: flex; align-items: center; justify-content: center;
     font-size: 13px; font-weight: 800; color: #fff; letter-spacing: -0.5px;
-  }}
-  .topbar h1 {{ font-size: 1.15rem; font-weight: 700; color: var(--text); }}
-  .topbar p  {{ font-size: .85rem; color: var(--text-dim); margin-top: 2px; }}
-  .pill {{
+}}
+.topbar h1 {{ font-size: 1.15rem; font-weight: 700; color: var(--text); }}
+.topbar p  {{ font-size: .85rem; color: var(--text-dim); margin-top: 2px; }}
+.pill {{
     font-size: .72rem; font-weight: 700; letter-spacing: .8px; text-transform: uppercase;
     padding: 6px 14px; border-radius: 999px;
     background: var(--pill-bg); color: var(--pill-text); border: 1px solid var(--pill-border);
-  }}
-  .kpis {{ display: grid; grid-template-columns: repeat(5,1fr); gap: 10px; margin-bottom: 28px; }}
-  .kpi-card {{ background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 16px 18px; position: relative; overflow: hidden; }}
-  .kpi-card::after {{ content: ''; position: absolute; top: 0; left: 0; right: 0; height: 3px; background: var(--ac, var(--border)); border-radius: 12px 12px 0 0; }}
-  .kpi-card .v {{ font-size: 1.7rem; font-weight: 800; color: var(--vc, var(--text)); line-height: 1; margin-top: 4px; font-variant-numeric: tabular-nums; }}
-  .kpi-card .l {{ font-size: .7rem; font-weight: 600; color: var(--text-dim); text-transform: uppercase; letter-spacing: .6px; margin-top: 8px; }}
+}}
+.kpis {{ display: grid; grid-template-columns: repeat(5,1fr); gap: 10px; margin-bottom: 28px; }}
+.kpi-card {{ background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 16px 18px; position: relative; overflow: hidden; }}
+.kpi-card::after {{ content: ''; position: absolute; top: 0; left: 0; right: 0; height: 3px; background: var(--ac, var(--border)); border-radius: 12px 12px 0 0; }}
+.kpi-card .v {{ font-size: 1.7rem; font-weight: 800; color: var(--vc, var(--text)); line-height: 1; margin-top: 4px; font-variant-numeric: tabular-nums; }}
+.kpi-card .l {{ font-size: .7rem; font-weight: 600; color: var(--text-dim); text-transform: uppercase; letter-spacing: .6px; margin-top: 8px; }}
 
-  .tcard {{ background: var(--surface); border: 1px solid var(--table-border); border-radius: 14px; overflow: hidden; margin-bottom: 24px; }}
-  .tcard-head {{ padding: 14px 18px 13px; border-bottom: 1px solid var(--border-soft); display: flex; align-items: center; justify-content: space-between; }}
-  .tcard-title {{ font-size: .82rem; font-weight: 700; text-transform: uppercase; letter-spacing: .7px; color: var(--text); }}
-  .tcard-sub {{ font-size: .8rem; color: var(--text-dim); }}
+.tcard {{ background: var(--surface); border: 1px solid var(--table-border); border-radius: 14px; overflow: hidden; margin-bottom: 24px; }}
+.tcard-head {{ padding: 14px 18px 13px; border-bottom: 1px solid var(--border-soft); display: flex; align-items: center; justify-content: space-between; }}
+.tcard-title {{ font-size: .82rem; font-weight: 700; text-transform: uppercase; letter-spacing: .7px; color: var(--text); }}
+.tcard-sub {{ font-size: .8rem; color: var(--text-dim); }}
 
-  .table-scroll {{ overflow-x: auto; }}
-  table {{ width: 100%; border-collapse: collapse; min-width: 720px; }}
-  thead tr:first-child th {{
+.table-scroll {{ overflow-x: auto; }}
+table {{ width: 100%; border-collapse: collapse; min-width: 720px; }}
+thead tr:first-child th {{
     padding: 7px 10px; font-size: .68rem; font-weight: 800; text-transform: uppercase; letter-spacing: .5px;
     text-align: center; background: var(--thead-bg);
     border-bottom: 1px solid var(--table-border); border-right: 1px solid var(--table-border);
-  }}
-  thead tr:first-child th:last-child {{ border-right: none; }}
-  thead tr:last-child th {{
+}}
+thead tr:first-child th:last-child {{ border-right: none; }}
+thead tr:last-child th {{
     padding: 6px 10px; font-size: .74rem; font-weight: 700; text-transform: uppercase; letter-spacing: .5px;
     color: var(--text-dim); text-align: right; white-space: nowrap; background: var(--thead-bg);
     border-bottom: 2px solid var(--table-border); border-right: 1px solid var(--table-border);
-  }}
-  thead tr:last-child th:last-child {{ border-right: none; }}
-  .grp-calls   {{ background: #eff6ff; color: #1d4ed8; }}
-  .grp-unique  {{ background: #fdf4ff; color: #a21caf; }}
-  .grp-leads   {{ background: #fffbeb; color: #92400e; }}
-  .grp-funnel  {{ background: #f0fdf4; color: #15803d; }}
-  .grp-l2a     {{ background: #eef2ff; color: #4338ca; }}
-  @media (prefers-color-scheme: dark) {{
+}}
+thead tr:last-child th:last-child {{ border-right: none; }}
+.grp-calls   {{ background: #eff6ff; color: #1d4ed8; }}
+.grp-unique  {{ background: #fdf4ff; color: #a21caf; }}
+.grp-leads   {{ background: #fffbeb; color: #92400e; }}
+.grp-funnel  {{ background: #f0fdf4; color: #15803d; }}
+.grp-l2a     {{ background: #eef2ff; color: #4338ca; }}
+@media (prefers-color-scheme: dark) {{
     .grp-calls  {{ background: #16233d; color: #93c5fd; }}
     .grp-unique {{ background: #351d3d; color: #e9a8ea; }}
     .grp-leads  {{ background: #2b2311; color: #f0c674; }}
     .grp-funnel {{ background: #122a1a; color: #6ee7a0; }}
     .grp-l2a    {{ background: #202449; color: #b3bbfa; }}
-  }}
-  :root[data-theme="dark"] .grp-calls  {{ background: #16233d; color: #93c5fd; }}
-  :root[data-theme="dark"] .grp-unique {{ background: #351d3d; color: #e9a8ea; }}
-  :root[data-theme="dark"] .grp-leads  {{ background: #2b2311; color: #f0c674; }}
-  :root[data-theme="dark"] .grp-funnel {{ background: #122a1a; color: #6ee7a0; }}
-  :root[data-theme="dark"] .grp-l2a    {{ background: #202449; color: #b3bbfa; }}
+}}
+:root[data-theme="dark"] .grp-calls  {{ background: #16233d; color: #93c5fd; }}
+:root[data-theme="dark"] .grp-unique {{ background: #351d3d; color: #e9a8ea; }}
+:root[data-theme="dark"] .grp-leads  {{ background: #2b2311; color: #f0c674; }}
+:root[data-theme="dark"] .grp-funnel {{ background: #122a1a; color: #6ee7a0; }}
+:root[data-theme="dark"] .grp-l2a    {{ background: #202449; color: #b3bbfa; }}
 
-  tbody td {{
+tbody td {{
     padding: 9px 10px; text-align: right; font-size: .9rem; font-weight: 700; color: var(--text-mid);
     border-bottom: 1px solid var(--table-border); border-right: 1px solid var(--table-border);
     font-variant-numeric: tabular-nums;
-  }}
-  tbody td:last-child {{ border-right: none; }}
-  tbody tr:last-child td {{ border-bottom: none; }}
-  .rowlabel {{ text-align: left !important; font-weight: 700; }}
-  .rowlabel-inner {{ display: inline-flex; align-items: center; gap: 8px; }}
-  tr.type-row td {{ background: var(--typerow-bg); font-weight: 800; }}
-  tr.type-row.generic  .rowlabel {{ color: #b45309; }}
-  tr.type-row.specific .rowlabel {{ color: #4338ca; }}
-  @media (prefers-color-scheme: dark) {{ tr.type-row.generic .rowlabel {{ color: #f0b054; }} tr.type-row.specific .rowlabel {{ color: #a5b4fc; }} }}
-  :root[data-theme="dark"] tr.type-row.generic .rowlabel {{ color: #f0b054; }}
-  :root[data-theme="dark"] tr.type-row.specific .rowlabel {{ color: #a5b4fc; }}
-  tr.college-row .rowlabel {{ padding-left: 28px; font-weight: 600; color: var(--text-soft); }}
-  .num-badge {{
+}}
+tbody td:last-child {{ border-right: none; }}
+tbody tr:last-child td {{ border-bottom: none; }}
+.rowlabel {{ text-align: left !important; font-weight: 700; }}
+.rowlabel-inner {{ display: inline-flex; align-items: center; gap: 8px; }}
+tr.type-row td {{ background: var(--typerow-bg); font-weight: 800; }}
+tr.type-row.generic  .rowlabel {{ color: #b45309; }}
+tr.type-row.specific .rowlabel {{ color: #4338ca; }}
+@media (prefers-color-scheme: dark) {{ tr.type-row.generic .rowlabel {{ color: #f0b054; }} tr.type-row.specific .rowlabel {{ color: #a5b4fc; }} }}
+:root[data-theme="dark"] tr.type-row.generic .rowlabel {{ color: #f0b054; }}
+:root[data-theme="dark"] tr.type-row.specific .rowlabel {{ color: #a5b4fc; }}
+tr.college-row .rowlabel {{ padding-left: 28px; font-weight: 600; color: var(--text-soft); }}
+.num-badge {{
     display: inline-flex; align-items: center; justify-content: center;
     min-width: 26px; height: 20px; font-size: .68rem; font-weight: 800;
     color: var(--pill-text); background: var(--pill-bg);
     border: 1px solid var(--pill-border); border-radius: 5px; padding: 0 6px;
     font-variant-numeric: tabular-nums;
-  }}
-  tr.grand-row td {{ background: var(--grand-bg); color: var(--grand-text); font-weight: 800; border-top: 2px solid var(--grand-bg); border-right-color: rgba(255,255,255,.12); }}
-  tr.grand-row td:last-child {{ border-right: none; }}
-  .leads-cell {{ color: var(--leads-color) !important; }}
-  .adm-cell   {{ color: var(--adm-color) !important; }}
-  tr.grand-row .leads-cell, tr.grand-row .adm-cell {{ color: var(--grand-text) !important; }}
+}}
+tr.grand-row td {{ background: var(--grand-bg); color: var(--grand-text); font-weight: 800; border-top: 2px solid var(--grand-bg); border-right-color: rgba(255,255,255,.12); }}
+tr.grand-row td:last-child {{ border-right: none; }}
+.leads-cell {{ color: var(--leads-color) !important; }}
+.adm-cell   {{ color: var(--adm-color) !important; }}
+tr.grand-row .leads-cell, tr.grand-row .adm-cell {{ color: var(--grand-text) !important; }}
 
-  .chip {{ display: inline-block; padding: 3px 9px; border-radius: 5px; font-size: .8rem; font-weight: 800; }}
-  .cg {{ background: var(--chip-g-bg); color: var(--chip-g-text); border: 1px solid var(--chip-g-border); }}
-  .co {{ background: var(--chip-o-bg); color: var(--chip-o-text); border: 1px solid var(--chip-o-border); }}
-  .cr {{ background: var(--chip-r-bg); color: var(--chip-r-text); border: 1px solid var(--chip-r-border); }}
-  tr.grand-row .chip {{ background: rgba(255,255,255,.15); color: #fff; border: 1px solid rgba(255,255,255,.25); }}
+.chip {{ display: inline-block; padding: 3px 9px; border-radius: 5px; font-size: .8rem; font-weight: 800; }}
+.cg {{ background: var(--chip-g-bg); color: var(--chip-g-text); border: 1px solid var(--chip-g-border); }}
+.co {{ background: var(--chip-o-bg); color: var(--chip-o-text); border: 1px solid var(--chip-o-border); }}
+.cr {{ background: var(--chip-r-bg); color: var(--chip-r-text); border: 1px solid var(--chip-r-border); }}
+tr.grand-row .chip {{ background: rgba(255,255,255,.15); color: #fff; border: 1px solid rgba(255,255,255,.25); }}
 
-  footer {{ text-align: center; margin-top: 8px; font-size: .75rem; color: var(--text-dim); }}
+footer {{ text-align: center; margin-top: 8px; font-size: .75rem; color: var(--text-dim); }}
 
-  @media (prefers-reduced-motion: reduce) {{ * {{ transition: none !important; animation: none !important; }} }}
+@media (prefers-reduced-motion: reduce) {{ * {{ transition: none !important; animation: none !important; }} }}
 </style>
 </head>
 <body>
@@ -656,22 +663,22 @@ def build_html(call_data, lms_data):
 <div class="shell">
 
 <div class="topbar">
-  <div class="topbar-left">
+<div class="topbar-left">
     <div class="logo-mark">CE</div>
     <div>
-      <h1>Call Extension Report</h1>
-      <p>{DATE_LABEL} &nbsp;·&nbsp; Normal IVR &nbsp;·&nbsp; {len(NUMBERS)} numbers tracked</p>
+    <h1>Call Extension Report</h1>
+    <p>{DATE_LABEL} &nbsp;·&nbsp; Normal IVR &nbsp;·&nbsp; {len(NUMBERS)} numbers tracked</p>
     </div>
-  </div>
-  <span class="pill">greeter.co.in</span>
+</div>
+<span class="pill">greeter.co.in</span>
 </div>
 
 <div class="kpis">
-  <div class="kpi-card" style="--ac:#3b82f6;--vc:#2563eb"><div class="v">{ftd_grand["total_calls"]}</div><div class="l">Total Calls (FTD)</div></div>
-  <div class="kpi-card" style="--ac:#22c55e;--vc:#16a34a"><div class="v">{ftd_grand["answered"]}</div><div class="l">Answered (FTD)</div></div>
-  <div class="kpi-card" style="--ac:#f59e0b;--vc:#b45309"><div class="v">{ftd_grand["leads"]}</div><div class="l">Leads (FTD)</div></div>
-  <div class="kpi-card" style="--ac:#10b981;--vc:#059669"><div class="v">{ftd_grand["adm"]}</div><div class="l">Admissions (FTD)</div></div>
-  <div class="kpi-card" style="--ac:#7c3aed;--vc:#6d28d9"><div class="v">{ftd_grand["l2a"]}%</div><div class="l">L2A % (FTD)</div></div>
+<div class="kpi-card" style="--ac:#3b82f6;--vc:#2563eb"><div class="v">{ftd_grand["total_calls"]}</div><div class="l">Total Calls (FTD)</div></div>
+<div class="kpi-card" style="--ac:#22c55e;--vc:#16a34a"><div class="v">{ftd_grand["answered"]}</div><div class="l">Answered (FTD)</div></div>
+<div class="kpi-card" style="--ac:#f59e0b;--vc:#b45309"><div class="v">{ftd_grand["leads"]}</div><div class="l">Leads (FTD)</div></div>
+<div class="kpi-card" style="--ac:#10b981;--vc:#059669"><div class="v">{ftd_grand["adm"]}</div><div class="l">Admissions (FTD)</div></div>
+<div class="kpi-card" style="--ac:#7c3aed;--vc:#6d28d9"><div class="v">{ftd_grand["l2a"]}%</div><div class="l">L2A % (FTD)</div></div>
 </div>
 
 {section('ftd', 'For The Day (FTD)')}
