@@ -167,7 +167,8 @@ SCHEDULE = [
     (10, 30, "generate_all_recon_reports.py",  "Recon — Today (midnight → 4 PM cumulative)", _today_midnight_to_4pm),
     (13, 30, "generate_all_recon_reports.py",  "Recon — Today (midnight → 7 PM cumulative)", _today_midnight_to_7pm),
     (15, 0,  "generate_all_lms_reports.py",    "LMS Reports (Online + Regular)",             lambda: ['--skip-last-activity']),
-    (4,  40, "bhugoal_generate_report.py",     "Bhugoal Report — 10:00 AM IST (yesterday)",  None),
+    # Bhugoal Report paused — job not registered. Re-enable by uncommenting.
+    # (4,  40, "bhugoal_generate_report.py",     "Bhugoal Report — 10:00 AM IST (yesterday)",  None),
     (4,  30, os.path.join("META", "daily_ad_alert.py"),
              "Competitor Ad Alert — 10:00 AM IST (ads launched in last 24h)",                None),
 ]
@@ -257,10 +258,10 @@ GREETER_SCHEDULE.append(
 )
 
 # ─── Callback Reports (Today's Queue + Overdue Alert) ────────────────────────
-# Every 3 hours, 6 AM – 9 PM IST → UTC 00:30, 03:30, 06:30, 09:30, 12:30, 15:30
-# (midnight and 3 AM IST slots skipped — no callback activity overnight)
+# Every 3 hours, 9 AM – 9 PM IST → UTC 03:30, 06:30, 09:30, 12:30, 15:30
+# (midnight, 3 AM, and 6 AM IST slots skipped — no callback activity overnight)
 CALLBACK_SCHEDULE = []
-for _utc_h in range(0, 16, 3):
+for _utc_h in range(3, 16, 3):
     _ist_h = (_utc_h + 5) % 24
     CALLBACK_SCHEDULE.append(
         (_utc_h, 30, "generate_callback_reports.py",
