@@ -422,13 +422,14 @@ def main():
             id=label,
         )
 
-    for hour, minute, script, label, args_fn in ADMISSION_LEDGER_SCHEDULE:
-        scheduler.add_job(
-            run_script,
-            trigger=CronTrigger(hour=hour, minute=minute),
-            args=[script, label, args_fn],
-            id=label,
-        )
+    # Admission Ledger reports paused — jobs not registered. Re-enable by uncommenting.
+    # for hour, minute, script, label, args_fn in ADMISSION_LEDGER_SCHEDULE:
+    #     scheduler.add_job(
+    #         run_script,
+    #         trigger=CronTrigger(hour=hour, minute=minute),
+    #         args=[script, label, args_fn],
+    #         id=label,
+    #     )
 
     scheduler.add_job(
         cleanup_old_reports,
@@ -443,7 +444,7 @@ def main():
     print(f"  Server time (IST): {datetime.now(IST).strftime('%Y-%m-%d %H:%M:%S %Z')}\n", flush=True)
 
     print("  SCHEDULE:", flush=True)
-    for h, m, _, label, _ in SCHEDULE + CALLBACK_SCHEDULE + IVR_EXTENSION_SCHEDULE + ADMISSION_LEDGER_SCHEDULE:
+    for h, m, _, label, _ in SCHEDULE + CALLBACK_SCHEDULE + IVR_EXTENSION_SCHEDULE:
         ist_h = (h + 5) % 24
         ist_m = m + 30
         if ist_m >= 60:
