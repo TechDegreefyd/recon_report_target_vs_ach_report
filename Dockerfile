@@ -35,6 +35,7 @@ COPY generate_callback_reports.py .
 COPY generate_ivr_extension_report.py .
 COPY generate_admission_ledger_reports.py .
 COPY generate_servicing_report.py .
+COPY generate_marketing_hub_ingest.py .
 
 # Meta Ad Library competitor digest (scraper + daily WhatsApp alert)
 COPY META/scraper.py META/daily_ad_alert.py META/competitors.json ./META/

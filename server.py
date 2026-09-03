@@ -310,6 +310,15 @@ SERVICING_SCHEDULE.append(
      "Servicing Cumulative — 20:30 IST (EOD)", lambda: ['--mode', 'cumulative'])
 )
 
+# ─── Marketing Hub Ingest (Meta Ads + Google Ads → marketing_reports) ─────────
+# 9:30 AM IST = UTC 4:00. Ingests *yesterday's* data (ad platforms need a day
+# to finalize spend/conversions). No WhatsApp send — just keeps the
+# degreefyd_marketing_hub.marketing_reports table current for the CAG dashboard.
+MARKETING_HUB_SCHEDULE = [
+    (4, 0, "generate_marketing_hub_ingest.py",
+     "Marketing Hub Ingest — 09:30 IST", None),
+]
+
 
 def ist_now():
     return datetime.now(IST)
@@ -463,6 +472,14 @@ def main():
             id=label,
         )
 
+    for hour, minute, script, label, args_fn in MARKETING_HUB_SCHEDULE:
+        scheduler.add_job(
+            run_script,
+            trigger=CronTrigger(hour=hour, minute=minute),
+            args=[script, label, args_fn],
+            id=label,
+        )
+
     scheduler.add_job(
         cleanup_old_reports,
         trigger=CronTrigger(hour=18, minute=30),  # midnight IST
@@ -476,7 +493,7 @@ def main():
     print(f"  Server time (IST): {datetime.now(IST).strftime('%Y-%m-%d %H:%M:%S %Z')}\n", flush=True)
 
     print("  SCHEDULE:", flush=True)
-    for h, m, _, label, _ in SCHEDULE + CALLBACK_SCHEDULE + IVR_EXTENSION_SCHEDULE + SERVICING_SCHEDULE:
+    for h, m, _, label, _ in SCHEDULE + CALLBACK_SCHEDULE + IVR_EXTENSION_SCHEDULE + SERVICING_SCHEDULE + MARKETING_HUB_SCHEDULE:
         ist_h = (h + 5) % 24
         ist_m = m + 30
         if ist_m >= 60:
