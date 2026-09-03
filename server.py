@@ -287,6 +287,29 @@ ADMISSION_LEDGER_SCHEDULE = [
      "Admission Ledger (Daily + MTD) — 20:30 IST", None),
 ]
 
+# ─── Servicing Report (Divya/Neetu/Anshika/Manoj) ─────────────────────────────
+# Window: 11:00 AM – 8:30 PM IST. Two variants fired together each hour:
+#   • Hourly     — just the last completed hour (--mode hourly)
+#   • Cumulative — running total from 11:00 IST to now (--mode cumulative)
+# IST hour:00 = UTC (hour-6):30, so the first hourly run lands at 12:00 IST
+# (covers 11:00-12:00) and the last at 20:00 IST (covers 19:00-20:00).
+SERVICING_SCHEDULE = []
+for _ist_h in range(12, 21):  # 12,13,...,20 IST → 9 runs
+    _utc_h = _ist_h - 6
+    SERVICING_SCHEDULE.append(
+        (_utc_h, 45, "generate_servicing_report.py",
+         f"Servicing Hourly — {_ist_h:02d}:00 IST", lambda: ['--mode', 'hourly'])
+    )
+    SERVICING_SCHEDULE.append(
+        (_utc_h, 47, "generate_servicing_report.py",
+         f"Servicing Cumulative — {_ist_h:02d}:00 IST", lambda: ['--mode', 'cumulative'])
+    )
+# Final cumulative close-out at the 8:30 PM IST window edge (UTC 15:05).
+SERVICING_SCHEDULE.append(
+    (15, 5, "generate_servicing_report.py",
+     "Servicing Cumulative — 20:30 IST (EOD)", lambda: ['--mode', 'cumulative'])
+)
+
 
 def ist_now():
     return datetime.now(IST)
@@ -297,6 +320,7 @@ def cleanup_old_reports(max_age_days=2):
         os.path.join(BASE_DIR, 'Automation Cron Job', 'Outbound Report'),
         os.path.join(BASE_DIR, 'Automation Cron Job', 'Inbound Report'),
         os.path.join(BASE_DIR, 'Automation Cron Job', 'Greeter Report'),
+        os.path.join(BASE_DIR, 'Automation Cron Job', 'Servicing Report'),
         os.path.join(BASE_DIR, 'callinsight_downloads'),
         os.path.join(BASE_DIR, 'greeter_downloads'),
     ]
@@ -431,6 +455,14 @@ def main():
     #         id=label,
     #     )
 
+    for hour, minute, script, label, args_fn in SERVICING_SCHEDULE:
+        scheduler.add_job(
+            run_script,
+            trigger=CronTrigger(hour=hour, minute=minute),
+            args=[script, label, args_fn],
+            id=label,
+        )
+
     scheduler.add_job(
         cleanup_old_reports,
         trigger=CronTrigger(hour=18, minute=30),  # midnight IST
@@ -444,7 +476,7 @@ def main():
     print(f"  Server time (IST): {datetime.now(IST).strftime('%Y-%m-%d %H:%M:%S %Z')}\n", flush=True)
 
     print("  SCHEDULE:", flush=True)
-    for h, m, _, label, _ in SCHEDULE + CALLBACK_SCHEDULE + IVR_EXTENSION_SCHEDULE:
+    for h, m, _, label, _ in SCHEDULE + CALLBACK_SCHEDULE + IVR_EXTENSION_SCHEDULE + SERVICING_SCHEDULE:
         ist_h = (h + 5) % 24
         ist_m = m + 30
         if ist_m >= 60:
