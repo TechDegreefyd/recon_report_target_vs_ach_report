@@ -154,7 +154,7 @@ online_config = load_online_config()
 
 # Online achievement is always MTD — no week window needed for Online
 ONLINE_SUPERVISOR_TARGETS     = online_config.get("supervisor_targets", {})
-ONLINE_COUNSELLOR_FEE_TARGETS = online_config.get("counsellor_fee_targets", {})   # flat {name: target}
+ONLINE_COUNSELLOR_ADM_TARGETS = online_config.get("counsellor_fee_targets", {})   # flat {name: target} — now admission-count targets, not fee
 ONLINE_COUNSELLOR_SUP_MAP     = online_config.get("counsellor_supervisor_map", {}) # {couns: sup} from targets tab
 
 # ─── DB Connection ──────────────────────────────────────────────────────────────
@@ -191,7 +191,7 @@ async def online_get_data():
     }
 
     # Only keep counsellors who have a real numeric target (excludes Anshika Dwivedi etc.)
-    has_target = {c for c, t in ONLINE_COUNSELLOR_FEE_TARGETS.items() if t is not None}
+    has_target = {c for c, t in ONLINE_COUNSELLOR_ADM_TARGETS.items() if t is not None}
 
     couns_data = []
     for r in roster_rows:
@@ -476,10 +476,10 @@ def online_prepare_data(df_couns, df_couns_fee, df_couns_adm, df_college, df_las
 
     # Merge SQL aggregates onto counsellor roster
     df_c_rev = df_couns \
-        .merge(df_couns_fee.rename(columns={'mtd_fee': 'Achieved', 'ftd_fee': 'FTD'}),
+        .merge(df_couns_adm.rename(columns={'mtd_adm': 'Achieved', 'ftd_adm': 'FTD'}),
                on='counsellor_name', how='left').fillna(0)
     df_c_rev['Target'] = df_c_rev['counsellor_name'].map(
-        lambda n: ONLINE_COUNSELLOR_FEE_TARGETS.get(n, 0))
+        lambda n: ONLINE_COUNSELLOR_ADM_TARGETS.get(n, 0))
     # None means "no target set" (displayed as '—'); treat as 0 only for supervisor roll-up sums
     df_c_rev['Ach %'] = df_c_rev.apply(lambda r: online_pct(r['Achieved'], r['Target']), axis=1)
     df_c_rev['_target_numeric'] = df_c_rev['Target'].apply(lambda v: 0 if v is None else v)
@@ -488,7 +488,13 @@ def online_prepare_data(df_couns, df_couns_fee, df_couns_adm, df_college, df_las
         .merge(df_couns_adm.rename(columns={'mtd_adm': 'Achieve', 'ftd_adm': 'FTD'}),
                on='counsellor_name', how='left').fillna(0)
 
-    # ── Counsellor_Fee_Collected ─────────────────────────────────────────────
+    # Real per-counsellor fee data — needed for the supervisor-level Fee Collected
+    # roll-up below (df_c_rev's Achieved/FTD are admission counts, not rupees).
+    df_c_fee = df_couns \
+        .merge(df_couns_fee.rename(columns={'mtd_fee': 'Achieved', 'ftd_fee': 'FTD'}),
+               on='counsellor_name', how='left').fillna(0)
+
+    # ── Counsellor_Admission_Target (per-counsellor admission target vs achieved) ──
     rows = []
     for sup in sup_order:
         s = df_c_rev[df_c_rev['supervisor_name'] == sup]
@@ -502,17 +508,17 @@ def online_prepare_data(df_couns, df_couns_fee, df_couns_adm, df_college, df_las
     gt_tgt_num = df_c_rev['_target_numeric'].sum()
     rows.append(['Grand Total', '', gt_tgt_num, df_c_rev['Achieved'].sum(),
                  online_pct(df_c_rev['Achieved'].sum(), gt_tgt_num), df_c_rev['FTD'].sum()])
-    df_c_rev_sheet = pd.DataFrame(rows, columns=['Supervisor', 'Counsellor', 'Target', 'Fee Collected', 'Ach %', 'FTD'])
+    df_c_rev_sheet = pd.DataFrame(rows, columns=['Supervisor', 'Counsellor', 'Target', 'Adm Achieved', 'Ach %', 'FTD'])
 
     # ── Supervisor_Fee_Collected ─────────────────────────────────────────────
     rows = []
     for sup in sup_order:
-        s = df_c_rev[df_c_rev['supervisor_name'] == sup]
+        s = df_c_fee[df_c_fee['supervisor_name'] == sup]
         sup_tgt = ONLINE_SUPERVISOR_TARGETS.get(sup, 0)
         rows.append([display_names.get(sup, sup), sup_tgt, s['Achieved'].sum(), online_pct(s['Achieved'].sum(), sup_tgt), s['FTD'].sum()])
     gt_tgt = sum(ONLINE_SUPERVISOR_TARGETS.values())
-    gt_ach = df_c_rev['Achieved'].sum()
-    gt_ftd = df_c_rev['FTD'].sum()
+    gt_ach = df_c_fee['Achieved'].sum()
+    gt_ftd = df_c_fee['FTD'].sum()
     rows.append(['Grand Total', gt_tgt, gt_ach, online_pct(gt_ach, gt_tgt), gt_ftd])
     df_sup_rev_sheet = pd.DataFrame(rows, columns=['Supervisor', 'Target', 'Fee Collected', 'Ach %', 'FTD'])
 
@@ -563,7 +569,7 @@ def online_prepare_data(df_couns, df_couns_fee, df_couns_adm, df_college, df_las
     _raw     = df_last_activity_raw if df_last_activity_raw is not None else pd.DataFrame(
         columns=['counsellor_name', 'last_admission', 'last_application'])
     # roster = everyone explicitly listed in the sheet (numeric target OR "-"), under a tracked supervisor
-    _in_sheet = set(ONLINE_COUNSELLOR_FEE_TARGETS.keys())
+    _in_sheet = set(ONLINE_COUNSELLOR_ADM_TARGETS.keys())
     _roster   = (df_couns_all if df_couns_all is not None else df_couns)
     _roster   = _roster[_roster['counsellor_name'].isin(_in_sheet)]
     _today   = report_date.date() if hasattr(report_date, 'date') else report_date
@@ -610,7 +616,7 @@ def online_prepare_data(df_couns, df_couns_fee, df_couns_adm, df_college, df_las
     sup_mom_rows = []
     for sup in sup_order:
         s_adm  = df_c_adm[df_c_adm['supervisor_name'] == sup]
-        s_rev  = df_c_rev[df_c_rev['supervisor_name'] == sup]
+        s_rev  = df_c_fee[df_c_fee['supervisor_name'] == sup]
         this_adm = int(s_adm['Achieve'].sum()) if not s_adm.empty else 0
         this_fee = float(s_rev['Achieved'].sum()) if not s_rev.empty else 0.0
         last_adm = last_fee = 0
@@ -630,7 +636,7 @@ def online_prepare_data(df_couns, df_couns_fee, df_couns_adm, df_college, df_las
     couns_mom_rows = []
     for sup in sup_order:
         s_adm = df_c_adm[df_c_adm['supervisor_name'] == sup]
-        s_rev = df_c_rev[df_c_rev['supervisor_name'] == sup]
+        s_rev = df_c_fee[df_c_fee['supervisor_name'] == sup]
         if s_adm.empty:
             continue
         for _, r in s_adm.iterrows():
@@ -794,9 +800,14 @@ def online_generate_html(sheets):
             t = int(t)
         return f"{(a / t * 100):.1f}%" if t else "0.0%"
 
+    # Per-supervisor admission-target totals — Online_Targets "Adm Monthly Target"
+    # column is now kept in sync with the per-counsellor sums in the
+    # "Counsellor Wise Targets" sheet, so read it directly.
+    sup_adm_target_totals = adm_targets
+
     gt = sup_rev[sup_rev['Supervisor'].astype(str).str.contains('Grand Total', na=False)].iloc[0]
     gt_adm = sup_adm[sup_adm['Supervisor'].astype(str).str.contains('Grand Total', na=False)].iloc[0]
-    total_adm_target = sum(adm_targets.values())
+    total_adm_target = sum(sup_adm_target_totals.values())
     adm_ach_pct = (float(gt_adm['Achieve']) / total_adm_target * 100) if total_adm_target else 0
 
     # ── Pre-build row HTML for supervisor snapshot cards ──
@@ -820,7 +831,8 @@ def online_generate_html(sheets):
         fee_pct_str = online_pct(fee_ach, fee_tgt)
 
         adm_ach_val = int(adm_row['Achieve'])
-        adm_tgt = adm_targets.get(disp_name, 0)
+        adm_tgt = sup_adm_target_totals.get(disp_name, 0)
+        adm_pct_str = online_pct(adm_ach_val, adm_tgt)
         ftd_fee = float(fee_row['FTD'])
         ftd_adm = int(adm_row['FTD'])
         bar_width = min(fee_pct_val, 100)
@@ -830,12 +842,12 @@ def online_generate_html(sheets):
 <div class="sup-name"><small>Team Owner</small>{disp_name}</div>
 <div class="sup-row"><span class="sup-metric">Fee Collected</span><span class="sup-val">{money(fee_ach)} / {money(fee_tgt)}</span></div>
 <div class="sup-row"><span class="sup-metric">Fee Ach %</span><span class="sup-val {bar_color}">{fee_pct_str}</span></div>
-<div class="sup-row"><span class="sup-metric">Admissions</span><span class="sup-val">{adm_ach_val}</span></div>
+<div class="sup-row"><span class="sup-metric">Admissions</span><span class="sup-val">{adm_ach_val} / {num(adm_tgt) if adm_tgt else 0}</span></div>
 <div class="sup-row"><span class="sup-metric">FTD</span><span class="sup-val">{num(ftd_adm) if ftd_adm else 0} adm &middot; {money(ftd_fee)}</span></div>
 <div class="sup-bar-bg"><div class="sup-bar" style="width:{bar_width}%"></div></div></div>\n'''
 
         # Summary table row
-        sup_summary_rows += f'''<tr><td class="left bold">{disp_name}</td><td>{adm_ach_val}</td><td class="rev">{money_full(fee_tgt)}</td><td class="rev">{money_full(fee_ach)}</td><td>{pill(fee_pct_str)}</td><td class="ftd">{money_full(ftd_fee)}</td><td>{num(ftd_adm) if ftd_adm else 0}</td></tr>\n'''
+        sup_summary_rows += f'''<tr><td class="left bold">{disp_name}</td><td>{num(adm_tgt) if adm_tgt else 0}</td><td>{adm_ach_val}</td><td>{pill(adm_pct_str, True)}</td><td class="rev">{money_full(fee_tgt)}</td><td class="rev">{money_full(fee_ach)}</td><td>{pill(fee_pct_str)}</td><td class="ftd">{money_full(ftd_fee)}</td><td>{num(ftd_adm) if ftd_adm else 0}</td></tr>\n'''
 
     # Grand totals
     gt_fee_ach = float(gt['Fee Collected'])
@@ -844,9 +856,10 @@ def online_generate_html(sheets):
     gt_adm_ach = int(gt_adm['Achieve'])
     gt_adm_ftd = int(float(gt_adm['FTD'])) if float(gt_adm['FTD']) else 0
     gt_fee_pct_str = online_pct(gt_fee_ach, gt_fee_tgt)
+    gt_adm_pct_str = online_pct(gt_adm_ach, total_adm_target)
 
     sup_summary_rows += f'''
-<tr class="grand-total"><td class="left bold">&#9679; Grand Total</td><td>{gt_adm_ach}</td><td class="rev">{money_full(gt_fee_tgt)}</td><td class="rev">{money_full(gt_fee_ach)}</td><td>{pill(gt_fee_pct_str)}</td><td class="ftd">{money_full(gt_fee_ftd)}</td><td>{num(gt_adm_ftd)}</td></tr>'''
+<tr class="grand-total"><td class="left bold">&#9679; Grand Total</td><td>{num(total_adm_target) if total_adm_target else 0}</td><td>{gt_adm_ach}</td><td>{pill(gt_adm_pct_str)}</td><td class="rev">{money_full(gt_fee_tgt)}</td><td class="rev">{money_full(gt_fee_ach)}</td><td>{pill(gt_fee_pct_str)}</td><td class="ftd">{money_full(gt_fee_ftd)}</td><td>{num(gt_adm_ftd)}</td></tr>'''
 
     # ── Pre-build counsellor fee rows ──
     c_rev_rows = ''
@@ -861,18 +874,18 @@ def online_generate_html(sheets):
         for _, r in team.iterrows():
             if str(r['Counsellor']) == 'nan':
                 continue
-            c_rev_rows += f'<tr><td class="left">{esc(r["Counsellor"])}</td><td class="rev">{money_full(r["Target"])}</td><td class="rev">{money_full(r["Fee Collected"])}</td><td>{pill(r["Ach %"], True)}</td><td class="ftd">{money_full(r["FTD"])}</td></tr>\n'
-        sub_ach = team['Fee Collected'].sum()
+            c_rev_rows += f'<tr><td class="left">{esc(r["Counsellor"])}</td><td>{num(r["Target"])}</td><td>{num(r["Adm Achieved"])}</td><td>{pill(r["Ach %"], True)}</td><td class="ftd">{num(r["FTD"])}</td></tr>\n'
+        sub_ach = team['Adm Achieved'].sum()
         sub_tgt = team['Target'].sum()
         sub_ftd = team['FTD'].sum()
-        c_rev_rows += f'<tr class="sub-total"><td class="left bold">Total ({sup_name})</td><td class="rev">{money_full(sub_tgt)}</td><td class="rev">{money_full(sub_ach)}</td><td>{pill(online_pct(sub_ach, sub_tgt), True)}</td><td class="ftd">{money_full(sub_ftd)}</td></tr>\n'
+        c_rev_rows += f'<tr class="sub-total"><td class="left bold">Total ({sup_name})</td><td>{num(sub_tgt)}</td><td>{num(sub_ach)}</td><td>{pill(online_pct(sub_ach, sub_tgt), True)}</td><td class="ftd">{num(sub_ftd)}</td></tr>\n'
 
     # Filter out subtotal/grand total rows from c_rev (they contain "Total" or NaN in Counsellor column)
     c_rev_clean = c_rev[~c_rev['Counsellor'].astype(str).str.contains('Total', na=False) & (c_rev['Counsellor'].astype(str) != 'nan') & (c_rev['Counsellor'].astype(str) != '')]
     total_tgt = c_rev_clean['Target'].sum()
-    total_ach = c_rev_clean['Fee Collected'].sum()
+    total_ach = c_rev_clean['Adm Achieved'].sum()
     total_ftd_rev = c_rev_clean['FTD'].sum()
-    c_rev_rows += f'<tr class="grand-total"><td class="left bold">&#11007; Grand Total</td><td class="rev">{money_full(total_tgt)}</td><td class="rev">{money_full(total_ach)}</td><td>{pill(online_pct(total_ach, total_tgt))}</td><td class="ftd">{money_full(total_ftd_rev)}</td></tr>\n'
+    c_rev_rows += f'<tr class="grand-total"><td class="left bold">&#11007; Grand Total</td><td>{num(total_tgt)}</td><td>{num(total_ach)}</td><td>{pill(online_pct(total_ach, total_tgt))}</td><td class="ftd">{num(total_ftd_rev)}</td></tr>\n'
 
     # ── Pre-build counsellor admission rows ──
     c_adm_rows = ''
@@ -898,7 +911,7 @@ def online_generate_html(sheets):
     total_ftd_a = int(c_adm_clean['FTD'].sum())
     c_adm_rows += f'<tr class="grand-total"><td class="left bold">&#11007; Grand Total</td><td>{total_ach_a}</td><td class="ftd">{total_ftd_a}</td></tr>\n'
 
-    # ── Pre-build counsellor targets vs achievements rows (combined fee + adm) ──
+    # ── Pre-build counsellor admission-target vs achievement rows ──
     c_tva_rows = ''
     for sup_name in list(adm_targets.keys()):
         rev_team = c_rev[(c_rev['Supervisor'] == sup_name) &
@@ -907,61 +920,39 @@ def online_generate_html(sheets):
                          (c_rev['Counsellor'].astype(str) != '')]
         if rev_team.empty:
             continue
-        c_tva_rows += f'<tr class="sup-header"><td colspan="8">&#128100; {sup_name} Team</td></tr>\n'
+        c_tva_rows += f'<tr class="sup-header"><td colspan="4">&#128100; {sup_name} Team</td></tr>\n'
         for _, r in rev_team.iterrows():
             couns = str(r['Counsellor'])
             if couns == 'nan':
                 continue
-            adm_match = c_adm[c_adm['Counsellor'] == couns]
-            adm_mtd = int(float(adm_match.iloc[0]['Achieve'])) if not adm_match.empty else 0
-            adm_ftd_v = int(float(adm_match.iloc[0]['FTD'])) if not adm_match.empty else 0
             c_tva_rows += (
                 f'<tr>'
                 f'<td class="left">{esc(couns)}</td>'
-                f'<td class="rev">{money_full(r["Target"])}</td>'
-                f'<td class="rev">{money_full(r["Fee Collected"])}</td>'
+                f'<td>{num(r["Target"])}</td>'
+                f'<td>{num(r["Adm Achieved"])}</td>'
                 f'<td>{pill(r["Ach %"], True)}</td>'
-                f'<td class="ftd">{money_full(r["FTD"])}</td>'
-                f'<td>{adm_mtd if adm_mtd else chr(8212)}</td>'
-                f'<td class="ftd">{adm_ftd_v if adm_ftd_v else chr(8212)}</td>'
                 f'</tr>\n'
             )
-        adm_team = c_adm[(c_adm['Supervisor'] == sup_name) &
-                         ~c_adm['Counsellor'].astype(str).str.contains('Total', na=False) &
-                         (c_adm['Counsellor'].astype(str) != 'nan') &
-                         (c_adm['Counsellor'].astype(str) != '')]
-        sub_fee_tgt = rev_team['Target'].sum()
-        sub_fee_ach = rev_team['Fee Collected'].sum()
-        sub_fee_ftd = rev_team['FTD'].sum()
-        sub_adm_mtd = int(adm_team['Achieve'].sum()) if not adm_team.empty else 0
-        sub_adm_ftd = int(adm_team['FTD'].sum()) if not adm_team.empty else 0
+        sub_adm_tgt = rev_team['Target'].sum()
+        sub_adm_ach = rev_team['Adm Achieved'].sum()
         c_tva_rows += (
             f'<tr class="sub-total">'
             f'<td class="left bold">Total ({sup_name})</td>'
-            f'<td class="rev">{money_full(sub_fee_tgt)}</td>'
-            f'<td class="rev">{money_full(sub_fee_ach)}</td>'
-            f'<td>{pill(online_pct(sub_fee_ach, sub_fee_tgt), True)}</td>'
-            f'<td class="ftd">{money_full(sub_fee_ftd)}</td>'
-            f'<td>{sub_adm_mtd}</td>'
-            f'<td class="ftd">{sub_adm_ftd if sub_adm_ftd else chr(8212)}</td>'
+            f'<td>{num(sub_adm_tgt)}</td>'
+            f'<td>{num(sub_adm_ach)}</td>'
+            f'<td>{pill(online_pct(sub_adm_ach, sub_adm_tgt), True)}</td>'
             f'</tr>\n'
         )
     c_rev_clean_tva = c_rev[~c_rev['Counsellor'].astype(str).str.contains('Total', na=False) & (c_rev['Counsellor'].astype(str) != 'nan') & (c_rev['Counsellor'].astype(str) != '')]
-    c_adm_clean_tva = c_adm[~c_adm['Counsellor'].astype(str).str.contains('Total', na=False) & (c_adm['Counsellor'].astype(str) != 'nan') & (c_adm['Counsellor'].astype(str) != '')]
     gt_tva_fee_tgt = float(c_rev_clean_tva['Target'].sum())
-    gt_tva_fee_ach = float(c_rev_clean_tva['Fee Collected'].sum())
+    gt_tva_fee_ach = float(c_rev_clean_tva['Adm Achieved'].sum())
     gt_tva_fee_ftd = float(c_rev_clean_tva['FTD'].sum())
-    gt_tva_adm_mtd = int(c_adm_clean_tva['Achieve'].sum())
-    gt_tva_adm_ftd = int(c_adm_clean_tva['FTD'].sum())
     c_tva_rows += (
         f'<tr class="grand-total">'
         f'<td class="left bold">&#11007; Grand Total</td>'
-        f'<td class="rev">{money_full(gt_tva_fee_tgt)}</td>'
-        f'<td class="rev">{money_full(gt_tva_fee_ach)}</td>'
+        f'<td>{num(gt_tva_fee_tgt)}</td>'
+        f'<td>{num(gt_tva_fee_ach)}</td>'
         f'<td>{pill(online_pct(gt_tva_fee_ach, gt_tva_fee_tgt))}</td>'
-        f'<td class="ftd">{money_full(gt_tva_fee_ftd)}</td>'
-        f'<td>{gt_tva_adm_mtd}</td>'
-        f'<td class="ftd">{gt_tva_adm_ftd if gt_tva_adm_ftd else chr(8212)}</td>'
         f'</tr>\n'
     )
 
@@ -1210,14 +1201,14 @@ tbody tr:hover td{background:#eef4ff}
     else:
         p3 = '<div class="tabs" style="grid-template-columns:repeat(8,1fr)"><label class="tab-label" for="t1">&#x1f4ca; Overview</label><label class="tab-label" for="t2">&#x1f4b0; Fee Collected</label><label class="tab-label" for="t3">&#x1f393; Admissions</label><label class="tab-label" for="t4">&#x1f3eb; Colleges</label><label class="tab-label" for="t5">&#x1f465; Counsellor T vs A</label><label class="tab-label" for="t6">&#x23f0; Last Activity</label><label class="tab-label" for="t7">&#x1f4c8; Supervisor MoM</label><label class="tab-label" for="t8">&#x1f3db;&#xfe0f; University MoM</label></div>'
     p4_overview_kpis = f'<div class="kpis"><div class="kpi"><div class="kpi-label">Total Fee Collected</div><div class="kpi-value {pct_class((gt_fee_ach / gt_fee_tgt * 100) if gt_fee_tgt else 0)}">{money(gt_fee_ach)}</div><div class="kpi-sub">of {money(gt_fee_tgt)} target</div></div><div class="kpi"><div class="kpi-label">Fee Ach %</div><div class="kpi-value {pct_class((gt_fee_ach / gt_fee_tgt * 100) if gt_fee_tgt else 0)}">{gt_fee_pct_str}</div><div class="kpi-ratio">{money(gt_fee_ach).replace(chr(0x20b9), "")}/{money(gt_fee_tgt).replace(chr(0x20b9), "")}</div><div class="kpi-sub">Grand Total</div></div><div class="kpi"><div class="kpi-label">Admissions</div><div class="kpi-value">{gt_adm_ach}</div><div class="kpi-sub">Grand Total</div></div></div>'
-    p4 = f'<section class="panel" id="p1">{p4_overview_kpis}<div class="slabel"><span>Team Owner Snapshot</span></div><div class="sup-cards">{sup_card_html}</div><div class="slabel"><span>Team Owner Summary Table</span></div><div class="table-wrap"><table><thead><tr><th class="left">Team Owner</th><th>Adm Ach</th><th>Fee TG</th><th>Fee Ach</th><th>Fee Ach %</th><th>FTD Fee</th><th>FTD Adm</th></tr></thead><tbody>{sup_summary_rows}</tbody></table></div></section>'
+    p4 = f'<section class="panel" id="p1">{p4_overview_kpis}<div class="slabel"><span>Team Owner Snapshot</span></div><div class="sup-cards">{sup_card_html}</div><div class="slabel"><span>Team Owner Summary Table</span></div><div class="table-wrap"><table><thead><tr><th class="left">Team Owner</th><th>Adm TG</th><th>Adm Ach</th><th>Adm Ach %</th><th>Fee TG</th><th>Fee Ach</th><th>Fee Ach %</th><th>FTD Fee</th><th>FTD Adm</th></tr></thead><tbody>{sup_summary_rows}</tbody></table></div></section>'
     p5_fee_kpis = f'<div class="kpis"><div class="kpi"><div class="kpi-label">Fee Target</div><div class="kpi-value">{money(gt_fee_tgt)}</div><div class="kpi-sub">{MONTH_LABEL}</div></div><div class="kpi"><div class="kpi-label">Achieved</div><div class="kpi-value {pct_class((gt_fee_ach / gt_fee_tgt * 100) if gt_fee_tgt else 0)}">{money(gt_fee_ach)}</div><div class="kpi-sub">{gt_fee_pct_str} overall</div></div><div class="kpi"><div class="kpi-label">FTD</div><div class="kpi-value green">{money(gt_fee_ftd)}</div><div class="kpi-sub">Today\'s fee collected</div></div></div>'
-    p5 = f'<section class="panel" id="p2">{p5_fee_kpis}<div class="slabel"><span>Counsellor-wise Fee Collected Breakdown &middot; Counsellor targets are intentionally zero</span></div><div class="table-wrap"><table><thead><tr><th class="left">Counsellor</th><th>Target</th><th>MTD Achieved</th><th>Ach %</th><th>FTD</th></tr></thead><tbody>{c_rev_rows}</tbody></table></div></section>'
+    p5 = f'<section class="panel" id="p2">{p5_fee_kpis}<div class="slabel"><span>Counsellor-wise Admission Target Breakdown</span></div><div class="table-wrap"><table><thead><tr><th class="left">Counsellor</th><th>Admission Target</th><th>MTD Achieved</th><th>Ach %</th><th>FTD</th></tr></thead><tbody>{c_rev_rows}</tbody></table></div></section>'
     p6_adm_kpis = f'<div class="kpis"><div class="kpi"><div class="kpi-label">Total Admissions</div><div class="kpi-value">{gt_adm_ach}</div><div class="kpi-sub">{MONTH_LABEL}</div></div><div class="kpi"><div class="kpi-label">FTD</div><div class="kpi-value green">{gt_adm_ftd}</div><div class="kpi-sub">Today\'s closes</div></div></div>'
     p6 = f'<section class="panel" id="p3">{p6_adm_kpis}<div class="slabel"><span>Counsellor-wise Admissions</span></div><div class="table-wrap"><table><thead><tr><th class="left">Counsellor</th><th>Achieved</th><th>FTD</th></tr></thead><tbody>{c_adm_rows}</tbody></table></div></section>'
     p7 = f'<section class="panel" id="p4"><div class="slabel"><span>College-wise Performance &middot; Forms to Admissions</span></div><div class="table-wrap"><table><thead><tr><th class="left" rowspan="2">College</th><th colspan="3">Year to Date</th><th colspan="3">Month to Date</th><th colspan="3">FTD</th></tr><tr><th>Forms</th><th>Adm</th><th>F2A %</th><th>Forms</th><th>Adm</th><th>F2A %</th><th>Forms</th><th>Adm</th><th>F2A %</th></tr></thead><tbody>{college_rows}</tbody></table></div></section>'
-    p7b_kpis = f'<div class="kpis"><div class="kpi"><div class="kpi-label">Fee Target (MTD)</div><div class="kpi-value">{money(gt_tva_fee_tgt)}</div><div class="kpi-sub">{MONTH_LABEL}</div></div><div class="kpi"><div class="kpi-label">Fee Achieved (MTD)</div><div class="kpi-value {pct_class((gt_tva_fee_ach / gt_tva_fee_tgt * 100) if gt_tva_fee_tgt else 0)}">{money(gt_tva_fee_ach)}</div><div class="kpi-sub">{online_pct(gt_tva_fee_ach, gt_tva_fee_tgt)} overall</div></div><div class="kpi"><div class="kpi-label">Admissions (MTD)</div><div class="kpi-value">{gt_tva_adm_mtd}</div><div class="kpi-sub">Grand Total</div></div><div class="kpi"><div class="kpi-label">FTD Fee</div><div class="kpi-value green">{money(gt_tva_fee_ftd)}</div><div class="kpi-sub">Today</div></div><div class="kpi"><div class="kpi-label">FTD Admissions</div><div class="kpi-value green">{gt_tva_adm_ftd if gt_tva_adm_ftd else 0}</div><div class="kpi-sub">Today</div></div></div>'
-    p7b = f'<section class="panel" id="p5">{p7b_kpis}<div class="slabel"><span>Counsellor-wise Targets vs Achievements &middot; Fee &amp; Admissions &middot; {MONTH_LABEL}</span></div><div class="table-wrap"><table><thead><tr><th class="left">Counsellor</th><th>Fee Target</th><th>Fee MTD Ach</th><th>Fee Ach %</th><th>Fee FTD</th><th>Adm MTD</th><th>Adm FTD</th></tr></thead><tbody>{c_tva_rows}</tbody></table></div></section>'
+    p7b_kpis = f'<div class="kpis"><div class="kpi"><div class="kpi-label">Admission Target (MTD)</div><div class="kpi-value">{num(gt_tva_fee_tgt)}</div><div class="kpi-sub">{MONTH_LABEL}</div></div><div class="kpi"><div class="kpi-label">Admission Achieved (MTD)</div><div class="kpi-value {pct_class((gt_tva_fee_ach / gt_tva_fee_tgt * 100) if gt_tva_fee_tgt else 0)}">{num(gt_tva_fee_ach)}</div><div class="kpi-sub">{online_pct(gt_tva_fee_ach, gt_tva_fee_tgt)} overall</div></div><div class="kpi"><div class="kpi-label">FTD Admissions</div><div class="kpi-value green">{num(gt_tva_fee_ftd)}</div><div class="kpi-sub">Today</div></div></div>'
+    p7b = f'<section class="panel" id="p5">{p7b_kpis}<div class="slabel"><span>Counsellor-wise Admission Targets vs Achievements &middot; {MONTH_LABEL}</span></div><div class="table-wrap"><table><thead><tr><th class="left">Counsellor</th><th>Admission Target</th><th>Adm MTD Ach</th><th>Adm Ach %</th></tr></thead><tbody>{c_tva_rows}</tbody></table></div></section>'
     p7c = f'<section class="panel" id="p6"><div class="slabel"><span>Supervisor-wise Counsellor Last Admission &amp; Last Application &middot; {report_date.strftime("%d %b %Y")}</span></div><div class="table-wrap"><table><thead><tr><th class="left">Counsellor</th><th>Last Admission</th><th>Adm Since</th><th>Last Application</th><th>Application Since</th></tr></thead><tbody>{last_act_rows}</tbody></table></div></section>'
     _lm_range_label  = f'{_lm_first.day} {_lm_first.strftime("%b")} – {_lm_same_day.day} {_lm_same_day.strftime("%b %Y")}'
     _tm_range_label  = f'{report_date.replace(day=1).day} {report_date.strftime("%b")} – {report_date.day} {report_date.strftime("%b %Y")}'

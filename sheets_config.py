@@ -15,9 +15,9 @@ Required tabs and their column layout:
     — Roster only; per-counsellor fee targets live in the Counsellor Targets tab (gid below)
 
   Counsellor WIse Targets   (gid=299650822, A:C)  — tab name has trailing space
-    A: Supervisor  B: Counsellor  C: Fee Target (number or '-' for no target)
+    A: Supervisor  B: Counsellor  C: Admission Target (number or '-' for no target)
     — New counsellors are auto-appended with '-' as target.
-    — Used in the "Counsellor T vs A" report tab.
+    — Used in the "Counsellor T vs A" report tab (per-counsellor admission target vs achieved).
 
   Regular_Targets  (A:G)
     A: College  B: Month Start  C: Month End  D: Week Start  E: Week End
@@ -140,13 +140,13 @@ def _get_counsellor_targets_tab() -> str:
             return _counsellor_targets_tab_name
     raise ValueError(
         f"No sheet with gid={_COUNSELLOR_TARGETS_GID} found in spreadsheet {SPREADSHEET_ID}. "
-        "Create the tab with columns: A=Supervisor, B=Counsellor, C=Fee Target."
+        "Create the tab with columns: A=Supervisor, B=Counsellor, C=Admission Target."
     )
 
 
 def load_counsellor_fee_targets() -> dict:
     """
-    Read per-counsellor fee targets from the Counsellor Targets tab (gid=299650822).
+    Read per-counsellor admission targets from the Counsellor Targets tab (gid=299650822).
 
     Expected sheet layout (A:C, row 1 = header):
       A: Supervisor   B: Name (counsellor)   C: Sum of Target <month>
@@ -188,7 +188,7 @@ def load_online_config():
     {
       "supervisor_targets":            {sup: fee_target, ...},       — from Online_Targets
       "supervisor_admission_targets":  {sup: adm_target, ...},       — from Online_Targets
-      "counsellor_fee_targets":        {couns_name: int_or_None, ...} — flat dict from Counsellor Wise Targets tab
+      "counsellor_fee_targets":        {couns_name: int_or_None, ...} — flat dict of per-counsellor ADMISSION targets from Counsellor Wise Targets tab
     }
     Roster (which counsellors exist under which supervisor) is fetched live from the DB
     in online_get_data(), so Online_Counsellors sheet is no longer used.

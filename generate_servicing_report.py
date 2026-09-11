@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
 Servicing Call Report — pulls call stats straight from the LeadLens DB, builds HTML,
-screenshots it, and sends via WhatsApp to an individual number (WHATSAPP_COMPETITOR_ADS_TO).
+screenshots it, and sends via WhatsApp to WHATSAPP_COMPETITOR_ADS_TO and
+WHATSAPP_COMPETITOR_ADS_TO_2 (both, comma-split, unless --to overrides).
 
 Usage:  python generate_servicing_report.py [--local] [--mode hourly|cumulative] [--date DD/MM/YYYY]
   --local       skip WhatsApp send, just save the HTML/PNG
@@ -53,7 +54,11 @@ OUTPUT_DIR = os.path.join(_DIR, 'Automation Cron Job', 'Servicing Report')
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 WHAPI_TOKEN  = os.getenv('WHAPI_TOKEN_PAID')
-WHATSAPP_TO  = args.to or os.getenv('WHATSAPP_COMPETITOR_ADS_TO')
+if args.to:
+    WHATSAPP_RECIPIENTS = [args.to]
+else:
+    _to_raw = f"{os.getenv('WHATSAPP_COMPETITOR_ADS_TO', '')},{os.getenv('WHATSAPP_COMPETITOR_ADS_TO_2', '')}"
+    WHATSAPP_RECIPIENTS = [n.strip() for n in _to_raw.split(',') if n.strip()]
 LEADLENS_DSN = os.getenv('LEADLENS_DSN')
 
 # ─── Report window boundaries ────────────────────────────────────────────────
@@ -403,7 +408,7 @@ async def main():
         log('=== Done (local mode) ===')
         return
 
-    if not WHATSAPP_TO:
+    if not WHATSAPP_RECIPIENTS:
         raise RuntimeError('WHATSAPP_COMPETITOR_ADS_TO env var is not set (and no --to given)')
 
     caption = (
@@ -412,11 +417,12 @@ async def main():
         f'\n⏱ {time_window}'
         f'\n✅ {total_ans}/{total_calls} picked up'
     )
-    log(f'Sending report to WhatsApp ({WHATSAPP_TO}) ...')
-    try:
-        send_whatsapp_image(png_path, caption, WHATSAPP_TO, WHAPI_TOKEN)
-    except Exception as e:
-        log(f'  ⚠️  Send failed: {e}')
+    for recipient in WHATSAPP_RECIPIENTS:
+        log(f'Sending report to WhatsApp ({recipient}) ...')
+        try:
+            send_whatsapp_image(png_path, caption, recipient, WHAPI_TOKEN)
+        except Exception as e:
+            log(f'  ⚠️  Send failed for {recipient}: {e}')
 
     log('Cleaning up local files ...')
     for f in [html_path, png_path]:

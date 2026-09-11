@@ -64,7 +64,10 @@ ALERT_RECIPIENTS = [
     r
     for r in (
         normalize_recipient(v)
-        for v in os.getenv("WHATSAPP_COMPETITOR_ADS_TO", "").split(",")
+        for v in (
+            os.getenv("WHATSAPP_COMPETITOR_ADS_TO", "").split(",")
+            + os.getenv("WHATSAPP_COMPETITOR_ADS_TO_2", "").split(",")
+        )
     )
     if r
 ]

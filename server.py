@@ -447,13 +447,14 @@ def main():
             id=label,
         )
 
-    for hour, minute, script, label, args_fn in IVR_EXTENSION_SCHEDULE:
-        scheduler.add_job(
-            run_script,
-            trigger=CronTrigger(hour=hour, minute=minute),
-            args=[script, label, args_fn],
-            id=label,
-        )
+    # IVR Extension Report paused — jobs not registered. Re-enable by uncommenting.
+    # for hour, minute, script, label, args_fn in IVR_EXTENSION_SCHEDULE:
+    #     scheduler.add_job(
+    #         run_script,
+    #         trigger=CronTrigger(hour=hour, minute=minute),
+    #         args=[script, label, args_fn],
+    #         id=label,
+    #     )
 
     # Admission Ledger reports paused — jobs not registered. Re-enable by uncommenting.
     # for hour, minute, script, label, args_fn in ADMISSION_LEDGER_SCHEDULE:
@@ -493,7 +494,7 @@ def main():
     print(f"  Server time (IST): {datetime.now(IST).strftime('%Y-%m-%d %H:%M:%S %Z')}\n", flush=True)
 
     print("  SCHEDULE:", flush=True)
-    for h, m, _, label, _ in SCHEDULE + CALLBACK_SCHEDULE + IVR_EXTENSION_SCHEDULE + SERVICING_SCHEDULE + MARKETING_HUB_SCHEDULE:
+    for h, m, _, label, _ in SCHEDULE + CALLBACK_SCHEDULE + SERVICING_SCHEDULE + MARKETING_HUB_SCHEDULE:
         ist_h = (h + 5) % 24
         ist_m = m + 30
         if ist_m >= 60:
@@ -521,6 +522,7 @@ def main():
             # smoke run doesn't mark today's ads as already reported and leave
             # the real 10 AM run with nothing to say.
             "WHATSAPP_COMPETITOR_ADS_TO":   _SMOKE_GROUP,
+            "WHATSAPP_COMPETITOR_ADS_TO_2": _SMOKE_GROUP,
             "AD_ALERT_STATE_FILE":          os.path.join(
                 BASE_DIR, "state", "seen_ads.smoke.json"
             ),
