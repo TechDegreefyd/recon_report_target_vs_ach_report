@@ -71,6 +71,7 @@ COUNSELLOR_MAP = {
     '6357725436': ('Neetu',   'Servicing'),
     '6357725414': ('Anshika', 'Servicing'),
     '6357725440': ('Manoj',   'Documentation'),
+    '6357725438': ('Uvais',   'Servicing'),
 }
 ROLE_ORDER  = ['Servicing', 'Documentation']
 ROLE_COLORS = {
