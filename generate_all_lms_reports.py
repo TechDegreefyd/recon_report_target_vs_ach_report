@@ -233,6 +233,19 @@ async def online_get_data():
     if extra_all:
         df_couns_all = pd.concat([df_couns_all, pd.DataFrame(extra_all)], ignore_index=True)
 
+    # ── Include team owners themselves as a "counsellor" row ──────────────────
+    # Admissions self-marked by a Team Owner (counsellor_id on the admission IS
+    # the owner's own login) are real admissions, but owners never appear in the
+    # subordinate roster above (a supervisor is never their own subordinate), so
+    # they were silently dropped from every rollup. Add one synthetic row per
+    # owner (Target stays 0 — owners have no separate admission target).
+    owner_self_rows = [{'supervisor_name': sup, 'counsellor_name': sup} for sup in tracked_supervisors]
+    df_owner_self = pd.DataFrame(owner_self_rows)
+    df_couns = pd.concat([df_couns, df_owner_self], ignore_index=True).drop_duplicates(
+        subset=['supervisor_name', 'counsellor_name'])
+    df_couns_all = pd.concat([df_couns_all, df_owner_self], ignore_index=True).drop_duplicates(
+        subset=['supervisor_name', 'counsellor_name'])
+
     YTD_START  = f'{report_date.year}-01-01'
     MTD_START_ = MTD_START
     MTD_END_   = MTD_END
@@ -254,7 +267,7 @@ async def online_get_data():
     FROM course_status_journeys csj
     JOIN students s   ON s.student_id  = csj.student_id
     JOIN university_courses uc ON uc.course_id = csj.course_id
-    LEFT JOIN counsellors c ON c.counsellor_id = s.assigned_counsellor_id
+    LEFT JOIN counsellors c ON c.counsellor_id = csj.counsellor_id
     WHERE csj.course_status = 'Admission'
       AND INITCAP(TRIM(csj.fee_type)) NOT IN ('Partial Paid', 'Partially Paid', 'Partial Done')
       AND (csj.created_at AT TIME ZONE 'Asia/Kolkata')::date >= '{_raw_start}'::date
@@ -874,7 +887,8 @@ def online_generate_html(sheets):
         for _, r in team.iterrows():
             if str(r['Counsellor']) == 'nan':
                 continue
-            c_rev_rows += f'<tr><td class="left">{esc(r["Counsellor"])}</td><td>{num(r["Target"])}</td><td>{num(r["Adm Achieved"])}</td><td>{pill(r["Ach %"], True)}</td><td class="ftd">{num(r["FTD"])}</td></tr>\n'
+            _couns_disp = f'{esc(r["Counsellor"])} <span style="color:var(--ink-light,#8896a8);font-size:11px">(Self-Marked)</span>' if r["Counsellor"] == sup_name else esc(r["Counsellor"])
+            c_rev_rows += f'<tr><td class="left">{_couns_disp}</td><td>{num(r["Target"])}</td><td>{num(r["Adm Achieved"])}</td><td>{pill(r["Ach %"], True)}</td><td class="ftd">{num(r["FTD"])}</td></tr>\n'
         sub_ach = team['Adm Achieved'].sum()
         sub_tgt = team['Target'].sum()
         sub_ftd = team['FTD'].sum()
@@ -902,7 +916,8 @@ def online_generate_html(sheets):
                 continue
             ach = int(float(r['Achieve'])) if float(r['Achieve']) else '\u2014'
             ftd_val = int(float(r['FTD'])) if float(r['FTD']) else '\u2014'
-            c_adm_rows += f'<tr><td class="left">{esc(r["Counsellor"])}</td><td>{ach if isinstance(ach, int) else "\u2014"}</td><td class="ftd">{ftd_val if isinstance(ftd_val, int) else "\u2014"}</td></tr>\n'
+            _couns_disp = f'{esc(r["Counsellor"])} <span style="color:var(--ink-light,#8896a8);font-size:11px">(Self-Marked)</span>' if r["Counsellor"] == sup_name else esc(r["Counsellor"])
+            c_adm_rows += f'<tr><td class="left">{_couns_disp}</td><td>{ach if isinstance(ach, int) else "\u2014"}</td><td class="ftd">{ftd_val if isinstance(ftd_val, int) else "\u2014"}</td></tr>\n'
         sub_a = int(team['Achieve'].sum())
         sub_f = int(team['FTD'].sum())
         c_adm_rows += f'<tr class="sub-total"><td class="left bold">Total ({sup_name})</td><td>{sub_a}</td><td class="ftd">{sub_f if sub_f else "\u2014"}</td></tr>\n'
@@ -925,9 +940,10 @@ def online_generate_html(sheets):
             couns = str(r['Counsellor'])
             if couns == 'nan':
                 continue
+            _couns_disp = f'{esc(couns)} <span style="color:var(--ink-light,#8896a8);font-size:11px">(Self-Marked)</span>' if couns == sup_name else esc(couns)
             c_tva_rows += (
                 f'<tr>'
-                f'<td class="left">{esc(couns)}</td>'
+                f'<td class="left">{_couns_disp}</td>'
                 f'<td>{num(r["Target"])}</td>'
                 f'<td>{num(r["Adm Achieved"])}</td>'
                 f'<td>{pill(r["Ach %"], True)}</td>'
