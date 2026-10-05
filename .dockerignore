@@ -28,6 +28,8 @@ Thumbs.db
 setup_sheets.py
 
 META/seen_ads.json
+META/seen_blogs.json
+META/seen_blogs.json.lock
 
 # Competitor ad alert state volume
 state/

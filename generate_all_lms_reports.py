@@ -38,6 +38,8 @@ SIDEBAR_NAV         = '--no-sidebar'         not in sys.argv   # sidebar is defa
 YESTERDAY           = '--yesterday'          in sys.argv       # force report_date = yesterday (IST); useful for 10 AM cron
 LAST_ACTIVITY_ONLY  = '--last-activity-only' in sys.argv       # only generate + send the Last Activity tab (skips Regular LMS)
 SKIP_LAST_ACTIVITY  = '--skip-last-activity' in sys.argv       # full run but skip sending Last Activity (sent separately at 10 AM)
+ONLINE_ONLY         = '--online-only'        in sys.argv       # skip all Regular LMS work
+SKIP_REGULAR        = ONLINE_ONLY or LAST_ACTIVITY_ONLY
 
 import pandas as pd
 import asyncpg
@@ -1278,7 +1280,7 @@ tbody tr:hover td{background:#eef4ff}
 # PART 2 — REGULAR LMS REPORT
 # ═══════════════════════════════════════════════════════════════════════════════
 
-regular_config = load_regular_config()
+regular_config = {} if SKIP_REGULAR else load_regular_config()
 
 # Week = Monday of report_date's week → report_date (dynamic, no sheet dependency)
 _week_monday   = report_date - timedelta(days=report_date.weekday())
@@ -1290,7 +1292,7 @@ COLLEGE_TARGETS = regular_config.get("college_targets", {})
 _days_in_month  = calendar.monthrange(report_date.year, report_date.month)[1]
 _weeks_in_month = round(_days_in_month / 7)  # 4 for most months (28-31 days)
 
-REGULAR_DB_CONFIGS = [
+REGULAR_DB_CONFIGS = [] if SKIP_REGULAR else [
     {"name": "REGULAR", "host": os.getenv("REGULAR_LMS_DB_HOST"), "port": int(os.getenv("REGULAR_LMS_DB_PORT", "54321")),
      "database": os.getenv("REGULAR_LMS_DB_NAME"), "user": os.getenv("REGULAR_LMS_DB_USER"),
      "password": os.getenv("REGULAR_LMS_DB_PASSWORD")},
@@ -2614,8 +2616,9 @@ async def main():
         online_pngs = [p for p, ok in zip(online_pngs, online_png_ok) if ok]
 
     # ── STEP 2: Regular LMS ────────────────────────────────────────────────
-    if LAST_ACTIVITY_ONLY:
-        print("─── STEP 2/3: Regular LMS skipped (--last-activity-only) ───────────")
+    if SKIP_REGULAR:
+        reason = '--online-only' if ONLINE_ONLY else '--last-activity-only'
+        print(f"─── STEP 2/3: Regular LMS skipped ({reason}) ───────────")
         regular_html = None
         regular_pngs = []
         regular_summary = None
@@ -2726,7 +2729,8 @@ async def main():
     # ── STEP 3b: Log to Google Sheets Report_Logs ─────────────────────────
     print("  [3b] Logging to Google Sheets Report_Logs...")
     log_report(FTD_DATE, "Online LMS",  online_summary  or "", any(whapi_results.get(k) for k in ('Online_LMS_Overview',)))
-    log_report(FTD_DATE, "Regular LMS", regular_summary or "", any(whapi_results.get(k) for k in ('Regular_LMS_Admissions',)))
+    if not SKIP_REGULAR:
+        log_report(FTD_DATE, "Regular LMS", regular_summary or "", any(whapi_results.get(k) for k in ('Regular_LMS_Admissions',)))
 
     # ── STEP 4: Write delivery manifest (for cron agent) ───────────────────
     manifest = {
@@ -2773,7 +2777,10 @@ async def main():
     print("=" * 60)
     print(f"   FTD: {FTD_DATE}")
     print(f"   Online screenshots:  {'✅' if online_pngs else '❌'} ({len(online_pngs)}/7)")
-    print(f"   Regular screenshots: {'✅' if regular_pngs else '❌'} ({len(regular_pngs)}/6)")
+    if SKIP_REGULAR:
+        print("   Regular LMS: skipped")
+    else:
+        print(f"   Regular screenshots: {'✅' if regular_pngs else '❌'} ({len(regular_pngs)}/6)")
     print(f"   WHAPI sends: {'skipped (--local mode)' if LOCAL_MODE else ('attempted' if WHAPI_TOKEN else 'skipped (no token)')}")
     print("=" * 60)
 

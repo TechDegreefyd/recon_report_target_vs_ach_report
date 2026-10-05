@@ -38,12 +38,15 @@ COPY generate_servicing_report.py .
 COPY generate_marketing_hub_ingest.py .
 
 # Meta Ad Library competitor digest (scraper + daily WhatsApp alert)
-COPY META/scraper.py META/daily_ad_alert.py META/competitors.json ./META/
+COPY META/scraper.py META/daily_ad_alert.py META/daily_blog_alert.py META/competitors.json ./META/
 
 # seen_ads.json tracks which competitor ads have already been reported. Kept
 # outside the image so a rebuild doesn't re-send the previous day's ads - mount
 # a volume here to make it survive.
 ENV AD_ALERT_STATE_FILE=/app/state/seen_ads.json
+# Same for the blog watcher: losing this file re-baselines every site, so any
+# blog published while it was missing is never announced.
+ENV BLOG_ALERT_STATE_FILE=/app/state/seen_blogs.json
 VOLUME ["/app/state"]
 
 RUN mkdir -p \

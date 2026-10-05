@@ -2,6 +2,8 @@
 
 Automated daily report generation for Online and Regular LMS data, plus API Recon reports. Reports are generated as HTML dashboards and delivered to a WhatsApp Admin group via WHAPI.
 
+Current scheduler status: Regular LMS and all Recon reports are paused in `server.py`, including deployment smoke tests. Online LMS schedules continue using `--online-only`, which skips Regular LMS configuration, queries, reports, and logging. Restart or redeploy the scheduler to apply this change. Manual runs without `--online-only` can still generate Regular LMS reports.
+
 ---
 
 ## Scripts

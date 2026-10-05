@@ -10,3 +10,4 @@ pytz>=2023.3
 apscheduler>=3.10.0
 playwright>=1.40.0
 filelock>=3.13.0
+scrapling[fetchers]>=0.4.0

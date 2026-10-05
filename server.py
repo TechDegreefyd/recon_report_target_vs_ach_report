@@ -5,8 +5,8 @@ REPORT CRON SERVER — UTC Scheduler (APScheduler)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 Long-running process that runs report scripts on schedule (UTC times, IST-equivalent).
 
-  • LMS Reports (Online + Regular)  → generate_all_lms_reports.py
-  • Recon Report                    → generate_all_recon_reports.py
+  • Online LMS Reports              → generate_all_lms_reports.py --online-only
+  • Regular LMS + Recon Reports     → paused
   • Bhugoal Report                  → bhugoal_generate_report.py
   • Callback Reports (Today+Overdue)→ generate_callback_reports.py
   • IVR Extension Report (Call x LMS)→ generate_ivr_extension_report.py
@@ -77,7 +77,7 @@ def _today_midnight_to_7pm():
 
 def _lms_yesterday():
     """10 AM IST (4:30 UTC): Last Activity report only, for previous day (IST)."""
-    return ['--yesterday', '--last-activity-only']
+    return ['--yesterday', '--last-activity-only', '--online-only']
 
 
 # ─── Call Report helpers ──────────────────────────────────────────────────────
@@ -159,14 +159,10 @@ _CALL_HOURS_UTC = list(range(4, 16, 1))   # 4,5,6,...,15 → hourly slots (real 
 _NEW_HOURS_UTC = list(range(4, 15, 2))    # 4,6,8,10,12,14 → IST 9:30,11:30,13:30,15:30,17:30,19:30
 
 SCHEDULE = [
-    (4,  30, "generate_all_recon_reports.py",  "Recon — Yesterday (full day)",               _yesterday_full),
-    (4,  35, "generate_all_recon_reports.py",  "Recon — Today (midnight → 10 AM)",           _today_cutoff_10am),
+    # Recon reports paused — no Recon jobs registered.
     (4,  30, "generate_all_lms_reports.py",    "LMS Reports — Morning (yesterday IST)",      _lms_yesterday),
     (5,  35, "tat_reports.py",                "TAT Reports — Online LOB (11:05 AM IST)",    None),
-    (6,  30, "generate_all_recon_reports.py",  "Recon — Today (midnight → 12 PM)",           _today_cutoff_12pm),
-    (10, 30, "generate_all_recon_reports.py",  "Recon — Today (midnight → 4 PM cumulative)", _today_midnight_to_4pm),
-    (13, 30, "generate_all_recon_reports.py",  "Recon — Today (midnight → 7 PM cumulative)", _today_midnight_to_7pm),
-    (15, 0,  "generate_all_lms_reports.py",    "LMS Reports (Online + Regular)",             lambda: ['--skip-last-activity']),
+    (15, 0,  "generate_all_lms_reports.py",    "Online LMS Reports",                         lambda: ['--skip-last-activity', '--online-only']),
     # Bhugoal Report paused — job not registered. Re-enable by uncommenting.
     # (4,  40, "bhugoal_generate_report.py",     "Bhugoal Report — 10:00 AM IST (yesterday)",  None),
     (4,  30, os.path.join("META", "daily_ad_alert.py"),
@@ -314,6 +310,24 @@ SERVICING_SCHEDULE.append(
 # 9:30 AM IST = UTC 4:00. Ingests *yesterday's* data (ad platforms need a day
 # to finalize spend/conversions). No WhatsApp send — just keeps the
 # degreefyd_marketing_hub.marketing_reports table current for the CAG dashboard.
+# Competitor blog alert: sitemap check every 2h, 9:00 AM - 9:00 PM IST (UTC h:30
+# = IST h+6:00). It only messages when a new blog has appeared, so quiet runs
+# send nothing.
+BLOG_SCHEDULE = [
+    (h, 30, os.path.join("META", "daily_blog_alert.py"),
+     f"Competitor Blog Alert — {h + 6:02d}:00 IST", None)
+    for h in range(3, 16, 2)
+]
+
+# Once a day, after the last regular check: opens every Jaro / Learning Routes
+# post (~4.5k pages, ~15 min) to catch edits their sitemaps cannot show. Needs
+# a longer timeout than the default 10 minutes.
+BLOG_DEEP_SCHEDULE = [
+    (15, 45, os.path.join("META", "daily_blog_alert.py"),
+     "Competitor Blog Alert — daily deep crawl 21:15 IST", lambda: ['--deep']),
+]
+BLOG_DEEP_TIMEOUT = 3000
+
 MARKETING_HUB_SCHEDULE = [
     (4, 0, "generate_marketing_hub_ingest.py",
      "Marketing Hub Ingest — 09:30 IST", None),
@@ -349,7 +363,7 @@ def cleanup_old_reports(max_age_days=2):
         print(f'[cleanup] Deleted {deleted} old report file(s) (>{max_age_days}d)', flush=True)
 
 
-def run_script(script, label, args_fn=None, extra_env=None):
+def run_script(script, label, args_fn=None, extra_env=None, timeout=600):
     script_path = os.path.join(BASE_DIR, script)
     extra_args = args_fn() if args_fn else []
     cmd = [sys.executable, script_path] + extra_args
@@ -370,7 +384,7 @@ def run_script(script, label, args_fn=None, extra_env=None):
             capture_output=True,
             text=True,
             cwd=BASE_DIR,
-            timeout=600,
+            timeout=timeout,
             env=extra_env,
         )
         elapsed = (ist_now() - start_dt).total_seconds()
@@ -481,6 +495,23 @@ def main():
             id=label,
         )
 
+    for hour, minute, script, label, args_fn in BLOG_SCHEDULE:
+        scheduler.add_job(
+            run_script,
+            trigger=CronTrigger(hour=hour, minute=minute),
+            args=[script, label, args_fn],
+            id=label,
+        )
+
+    for hour, minute, script, label, args_fn in BLOG_DEEP_SCHEDULE:
+        scheduler.add_job(
+            run_script,
+            trigger=CronTrigger(hour=hour, minute=minute),
+            args=[script, label, args_fn],
+            kwargs={'timeout': BLOG_DEEP_TIMEOUT},
+            id=label,
+        )
+
     scheduler.add_job(
         cleanup_old_reports,
         trigger=CronTrigger(hour=18, minute=30),  # midnight IST
@@ -494,7 +525,7 @@ def main():
     print(f"  Server time (IST): {datetime.now(IST).strftime('%Y-%m-%d %H:%M:%S %Z')}\n", flush=True)
 
     print("  SCHEDULE:", flush=True)
-    for h, m, _, label, _ in SCHEDULE + CALLBACK_SCHEDULE + SERVICING_SCHEDULE + MARKETING_HUB_SCHEDULE:
+    for h, m, _, label, _ in SCHEDULE + CALLBACK_SCHEDULE + SERVICING_SCHEDULE + MARKETING_HUB_SCHEDULE + BLOG_SCHEDULE + BLOG_DEEP_SCHEDULE:
         ist_h = (h + 5) % 24
         ist_m = m + 30
         if ist_m >= 60:
@@ -536,8 +567,8 @@ def main():
             print(f"  DEPLOY SMOKE TEST — Sending reports to admin group only ({_SMOKE_GROUP})...", flush=True)
             print(f"  CallInsight creds: email={os.getenv('CALLINSIGHT_EMAIL', 'NOT SET')!r}  password_len={len((os.getenv('CALLINSIGHT_PASSWORD') or '').strip())}", flush=True)
             print("=" * 70, flush=True)
-            run_script("generate_all_lms_reports.py",    "SMOKE TEST — LMS Reports (admin group only)",          None,            extra_env=_smoke_env)
-            run_script("generate_all_recon_reports.py",  "SMOKE TEST — Recon Report (yesterday full day)",       _yesterday_full, extra_env=_smoke_env)
+            run_script("generate_all_lms_reports.py",    "SMOKE TEST — Online LMS Reports (admin group only)",   lambda: ['--online-only'], extra_env=_smoke_env)
+            # Recon and Regular LMS reports paused — skip in smoke test too.
             # Outbound reports paused — skip in smoke test too.
             # run_script("generate_outbound_report.py",    "SMOKE TEST — Outbound Cumulative (admin group only)",
             #            lambda: ['--from-time', _smoke_from, '--to-time', _smoke_to, '--group', _SMOKE_GROUP], extra_env=_smoke_env)
